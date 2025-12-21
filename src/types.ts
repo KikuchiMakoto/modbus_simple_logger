@@ -4,22 +4,17 @@ export type AiCalibration = {
   c: number;
 };
 
-export type AoCalibration = {
-  a: number;
-  b: number;
-};
-
 export type AiChannel = {
   id: number;
   raw: number;
-  phy: number;
+  physical: number;
   label: string;
+  status: 'normal' | 'warning' | 'danger';
 };
 
 export type AoChannel = {
   id: number;
-  raw: number;
-  phy: number;
+  voltage: number;
   label: string;
 };
 
@@ -31,7 +26,6 @@ export type PollingRateOption = {
 export type DataPoint = {
   timestamp: number;
   ai: number[];
-  ao: number[];
 };
 
 export type SerialParity = 'none' | 'odd' | 'even';

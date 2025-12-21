@@ -31,6 +31,11 @@ export class WebSerialModbusClient {
       throw new Error('Web Serial API is not supported in this browser');
     }
 
+    // Clean up existing connection if any
+    if (this.port) {
+      await this.disconnect();
+    }
+
     // Request port from user
     this.port = await navigator.serial.requestPort();
 

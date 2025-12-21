@@ -1,35 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Line } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  LineElement,
-  PointElement,
-  LinearScale,
-  TimeScale,
-  Tooltip,
-  Legend,
-} from 'chart.js';
-import 'chartjs-adapter-date-fns';
+import Plot from 'react-plotly.js';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
-  AoCalibration,
   AiChannel,
-  AoChannel,
   PollingRateOption,
   DataPoint,
   SerialSettings,
 } from './types';
 import {
   aiToPhysical,
-  aoToPhysical,
   loadAiCalibration,
-  loadAoCalibration,
   saveAiCalibration,
-  saveAoCalibration,
+  getAiStatus,
 } from './utils/calibration';
-
-ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend);
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -45,7 +29,7 @@ const POLLING_OPTIONS: PollingRateOption[] = [
 ];
 
 const AI_CHANNELS = 16;
-const AO_CHANNELS = 8;
+const AO_CHANNELS = 8;  // Used only for initialization
 const BAUD_OPTIONS = [9600, 19200, 38400, 57600, 115200];
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
@@ -59,21 +43,19 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
 const AI_START_REGISTER = 0x0000;
 const AO_START_REGISTER = 0x0100;
 
-const createAiState = (calibration: AiCalibration[]): AiChannel[] =>
-  Array.from({ length: AI_CHANNELS }, (_, idx) => ({
-    id: idx,
-    raw: 0,
-    phy: 0,
-    label: `AI${idx + 1}`,
-  })).map((ch, idx) => ({ ...ch, phy: aiToPhysical(ch.raw, calibration[idx]) }));
+const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
+  Array.from({ length: AI_CHANNELS }, (_, idx) => {
+    const raw = 0;
+    const physical = aiToPhysical(raw, calibration[idx]);
+    return {
+      id: idx,
+      raw,
+      physical,
+      label: `AI${idx}`,
+      status: getAiStatus(raw),
+    };
+  });
 
-const createAoState = (calibration: AoCalibration[]): AoChannel[] =>
-  Array.from({ length: AO_CHANNELS }, (_, idx) => ({
-    id: idx,
-    raw: 0,
-    phy: 0,
-    label: `AO${idx + 1}`,
-  })).map((ch, idx) => ({ ...ch, phy: aoToPhysical(ch.raw, calibration[idx]) }));
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -96,8 +78,7 @@ function formatSerialSettings(settings: SerialSettings) {
 
 const axisOptions = [
   { key: 'time', label: 'Timestamp (ms)' },
-  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({ key: `ai${idx}`, label: `AI${idx + 1}` })),
-  ...Array.from({ length: AO_CHANNELS }, (_, idx) => ({ key: `ao${idx}`, label: `AO${idx + 1}` })),
+  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({ key: `ai${idx}`, label: `AI${idx}` })),
 ];
 
 function App() {
@@ -105,9 +86,7 @@ function App() {
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
-  const [aoCalibration, setAoCalibration] = useState<AoCalibration[]>(loadAoCalibration(AO_CHANNELS));
-  const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiState(aiCalibration));
-  const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoState(aoCalibration));
+  const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
   const [connected, setConnected] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
   const [status, setStatus] = useState('Disconnected');
@@ -122,63 +101,65 @@ function App() {
     saveAiCalibration(aiCalibration);
   }, [aiCalibration]);
 
-  useEffect(() => {
-    saveAoCalibration(aoCalibration);
-  }, [aoCalibration]);
-
   const resolveAxisValue = (point: DataPoint, key: string) => {
     if (key === 'time') return point.timestamp;
     if (key.startsWith('ai')) {
       const idx = Number(key.replace('ai', ''));
       return point.ai[idx];
     }
-    if (key.startsWith('ao')) {
-      const idx = Number(key.replace('ao', ''));
-      return point.ao[idx];
-    }
     return 0;
   };
 
-  const chartData = useMemo(() => {
-    const points = dataPoints.map((p) => ({
-      x: resolveAxisValue(p, chartX),
-      y: resolveAxisValue(p, chartY),
-    }));
-    return {
-      datasets: [
-        {
-          label: `${chartY} vs ${chartX}`,
-          data: points,
-          borderColor: '#34d399',
-          backgroundColor: 'rgba(52, 211, 153, 0.3)',
-          pointRadius: 2,
-        },
-      ],
-    };
+  const plotData = useMemo(() => {
+    const xData = dataPoints.map((p) => resolveAxisValue(p, chartX));
+    const yData = dataPoints.map((p) => resolveAxisValue(p, chartY));
+
+    return [
+      {
+        x: xData,
+        y: yData,
+        type: 'scattergl' as const,
+        mode: 'lines+markers' as const,
+        marker: { color: '#34d399', size: 3 },
+        line: { color: '#34d399', width: 2 },
+        name: `${chartY} vs ${chartX}`,
+      },
+    ];
   }, [chartX, chartY, dataPoints]);
 
-  const chartOptions = useMemo(
+  const plotLayout = useMemo(
     () => ({
-      responsive: true,
-      interaction: { mode: 'nearest', intersect: false },
-      scales: {
-        x: {
-          type: chartX === 'time' ? 'time' : 'linear',
-          title: { display: true, text: chartX },
-        },
-        y: {
-          type: 'linear',
-          title: { display: true, text: chartY },
-        },
+      autosize: true,
+      paper_bgcolor: '#0f172a',
+      plot_bgcolor: '#1e293b',
+      font: { color: '#cbd5e1' },
+      xaxis: {
+        title: chartX,
+        gridcolor: '#334155',
+        type: chartX === 'time' ? ('date' as const) : ('linear' as const),
       },
+      yaxis: {
+        title: chartY,
+        gridcolor: '#334155',
+      },
+      margin: { t: 40, r: 40, b: 60, l: 60 },
     }),
     [chartX, chartY],
   );
 
-  const updateDataHistory = (ai: number[], ao: number[]) => {
+  const plotConfig = useMemo(
+    () => ({
+      displayModeBar: true,
+      responsive: true,
+      displaylogo: false,
+    }),
+    [],
+  );
+
+  const updateDataHistory = (ai: number[]) => {
     const timestamp = Date.now();
     setDataPoints((prev) => {
-      const next = [...prev, { timestamp, ai, ao }];
+      const next = [...prev, { timestamp, ai }];
       if (acquiring) {
         if (next.length > 1024) {
           const stride = Math.ceil(next.length / 1024);
@@ -191,9 +172,9 @@ function App() {
     });
   };
 
-  const appendLog = async (ai: number[], ao: number[]) => {
+  const appendLog = async (ai: number[]) => {
     if (!logHandle) return;
-    const row = [formatTimestamp(Date.now()), ...ai, ...ao].join(',') + '\n';
+    const row = [formatTimestamp(Date.now()), ...ai].join('\t') + '\n';
     await logHandle.write(row);
   };
 
@@ -201,14 +182,22 @@ function App() {
     if (!clientRef.current) return;
     try {
       const aiRaw = await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
-      const aiPhy = aiRaw.map((value, idx) => aiToPhysical(value, aiCalibration[idx]));
-      setAiChannels((prev) => prev.map((ch, idx) => ({ ...ch, raw: aiRaw[idx], phy: aiPhy[idx] })));
+      const aiPhysical = aiRaw.map((value, idx) =>
+        aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
+      );
 
-      const aoRaw = aoChannels.map((ch) => ch.raw);
-      const aoPhy = aoRaw.map((value, idx) => aoToPhysical(value, aoCalibration[idx]));
-      setAoChannels((prev) => prev.map((ch, idx) => ({ ...ch, phy: aoPhy[idx] })));
-      updateDataHistory(aiPhy, aoPhy);
-      await appendLog(aiPhy, aoPhy);
+      setAiChannels((prev) =>
+        prev.map((ch, idx) => ({
+          ...ch,
+          raw: aiRaw[idx] ?? ch.raw,
+          physical: aiPhysical[idx] ?? ch.physical,
+          status: getAiStatus(aiRaw[idx] ?? ch.raw),
+        })),
+      );
+
+      updateDataHistory(aiPhysical);
+      appendLog(aiPhysical);
+
       setStatus('Polling');
     } catch (err) {
       console.error(err);
@@ -237,14 +226,30 @@ function App() {
 
   const handleConnect = async () => {
     try {
+      // Clean up any existing connection first
+      if (clientRef.current) {
+        await clientRef.current.disconnect();
+        clientRef.current = null;
+      }
+
       const client = new WebSerialModbusClient(slaveId, serialSettings);
       await client.connect();
       clientRef.current = client;
+
       setConnected(true);
+      setAcquiring(true);
       setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
     } catch (err) {
+      // Clean up on error
+      if (clientRef.current) {
+        await clientRef.current.disconnect();
+        clientRef.current = null;
+      }
+      setConnected(false);
+      setAcquiring(false);
+
       if (err instanceof DOMException && err.name === 'NotFoundError') {
-        setStatus('デバイス選択をキャンセルしました');
+        setStatus('Device selection cancelled');
         return;
       }
       setStatus((err as Error).message);
@@ -252,11 +257,19 @@ function App() {
   };
 
   const handleDisconnect = async () => {
-    stopPolling();
-    if (clientRef.current) await clientRef.current.disconnect();
-    setConnected(false);
     setAcquiring(false);
-    setStatus('Disconnected');
+    stopPolling();
+    try {
+      if (clientRef.current) {
+        await clientRef.current.disconnect();
+        clientRef.current = null;
+      }
+    } catch (err) {
+      console.error('Error during disconnect:', err);
+    } finally {
+      setConnected(false);
+      setStatus('Disconnected');
+    }
   };
 
   const updateAiCalibration = (idx: number, key: keyof AiCalibration, value: number) => {
@@ -264,73 +277,111 @@ function App() {
       const next = [...prev];
       next[idx] = { ...next[idx], [key]: value };
       setAiChannels((chs) =>
-        chs.map((ch, cIdx) =>
-          cIdx === idx ? { ...ch, phy: aiToPhysical(ch.raw, next[idx]) } : ch,
-        ),
+        chs.map((ch, cIdx) => {
+          if (cIdx !== idx) return ch;
+          const physical = aiToPhysical(ch.raw, next[idx]);
+          return { ...ch, physical, status: getAiStatus(ch.raw) };
+        }),
       );
       return next;
     });
   };
 
-  const updateAoCalibration = (idx: number, key: keyof AoCalibration, value: number) => {
-    setAoCalibration((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], [key]: value };
-      setAoChannels((chs) =>
-        chs.map((ch, cIdx) =>
-          cIdx === idx ? { ...ch, phy: aoToPhysical(ch.raw, next[idx]) } : ch,
-        ),
-      );
-      return next;
-    });
+
+  const handleDownloadCalibration = () => {
+    downloadJson('calibration.json', { ai: aiCalibration });
   };
 
-  const handleAoRawChange = (idx: number, value: number) => {
-    setAoChannels((prev) => {
-      const next = prev.map((ch, cIdx) =>
-        cIdx === idx ? { ...ch, raw: value, phy: aoToPhysical(value, aoCalibration[idx]) } : ch,
-      );
-      return next;
-    });
-    if (clientRef.current) {
-      clientRef.current
-        .writeSingleRegister(AO_START_REGISTER + idx, value)
-        .catch((err) => setStatus((err as Error).message));
+  const handleLoadCalibration = async () => {
+    try {
+      const [fileHandle] = await (window as any).showOpenFilePicker({
+        types: [
+          {
+            description: 'JSON Files',
+            accept: { 'application/json': ['.json'] },
+          },
+        ],
+      });
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (data.ai && Array.isArray(data.ai)) {
+        const loadedCalibration = data.ai.slice(0, AI_CHANNELS).map((cal: any) => ({
+          a: cal.a ?? 0,
+          b: cal.b ?? 1,
+          c: cal.c ?? 0,
+        }));
+
+        // Pad with defaults if needed
+        while (loadedCalibration.length < AI_CHANNELS) {
+          loadedCalibration.push({ a: 0, b: 1, c: 0 });
+        }
+
+        setAiCalibration(loadedCalibration);
+        setAiChannels((prev) =>
+          prev.map((ch, idx) => {
+            const physical = aiToPhysical(ch.raw, loadedCalibration[idx]);
+            return { ...ch, physical, status: getAiStatus(ch.raw) };
+          }),
+        );
+        setStatus('Calibration loaded successfully');
+      } else {
+        setStatus('Invalid calibration file format');
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      setStatus((err as Error).message);
     }
   };
 
-  const handleDownloadCalibration = () => {
-    downloadJson('calibration.json', {
-      ai: aiCalibration,
-      ao: aoCalibration,
-    });
-  };
-
-  const selectLogFile = async () => {
-    if (!('showDirectoryPicker' in window)) {
+  const handleStartSave = async () => {
+    if (!('showSaveFilePicker' in window)) {
       setStatus('File System Access API not supported');
       return;
     }
     try {
-      const dirHandle = await (window as any).showDirectoryPicker();
-      const fileHandle = await dirHandle.getFileHandle(
-        `modbus-log-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`,
-        { create: true },
-      );
+      const fileHandle = await (window as any).showSaveFilePicker({
+        suggestedName: `modbus-log-${new Date().toISOString().replace(/[:.]/g, '-')}.tsv`,
+        types: [
+          {
+            description: 'TSV Files',
+            accept: { 'text/tab-separated-values': ['.tsv'] },
+          },
+        ],
+      });
       const stream = await fileHandle.createWritable();
-      await stream.write('timestamp,' +
-        Array.from({ length: AI_CHANNELS }, (_, i) => `ai${i + 1}`).join(',') + ',' +
-        Array.from({ length: AO_CHANNELS }, (_, i) => `ao${i + 1}`).join(',') + '\n');
+      await stream.write(
+        'timestamp\t' +
+          Array.from({ length: AI_CHANNELS }, (_, i) => `ai${i}`).join('\t') +
+          '\n',
+      );
       setLogHandle(stream);
-      setStatus('Logging to selected folder');
+      setStatus('Saving data to file');
     } catch (err) {
       setStatus((err as Error).message);
     }
   };
 
-  const toggleAcquire = () => {
-    if (!connected) return;
-    setAcquiring((prev) => !prev);
+  const handleStopSave = async () => {
+    if (logHandle) {
+      await logHandle.close();
+      setLogHandle(null);
+      setStatus('Stopped saving');
+    }
+  };
+
+  const getStatusColor = (status: AiChannel['status']) => {
+    switch (status) {
+      case 'danger':
+        return 'text-red-400';
+      case 'warning':
+        return 'text-yellow-400';
+      default:
+        return 'text-emerald-300';
+    }
   };
 
   return (
@@ -339,16 +390,25 @@ function App() {
         <div>
           <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
           <p className="text-sm text-slate-400">
-            AI 16ch / AO 8ch - {formatSerialSettings(serialSettings)}
+            AI 16ch - {formatSerialSettings(serialSettings)}
           </p>
         </div>
         <div className="flex gap-2">
+          <button className="button-secondary" onClick={handleLoadCalibration}>
+            Load Calibration
+          </button>
           <button className="button-secondary" onClick={handleDownloadCalibration}>
-            キャリブレーションJSONダウンロード
+            Download Calibration
           </button>
-          <button className="button-secondary" onClick={selectLogFile}>
-            ローカル保存フォルダを選択
-          </button>
+          {!logHandle ? (
+            <button className="button-secondary" onClick={handleStartSave}>
+              Start Save
+            </button>
+          ) : (
+            <button className="button-secondary" onClick={handleStopSave}>
+              Stop Save
+            </button>
+          )}
         </div>
       </header>
 
@@ -443,7 +503,7 @@ function App() {
           </select>
         </div>
         <div>
-          <label className="block text-sm text-slate-400">ポーリング周期</label>
+          <label className="block text-sm text-slate-400">Polling Rate</label>
           <select
             value={pollingRate.valueMs}
             onChange={(e) => {
@@ -459,15 +519,12 @@ function App() {
             ))}
           </select>
         </div>
-        <div className="flex items-end gap-2 lg:col-span-2">
+        <div className="flex items-end gap-2">
           <button className="button-primary" onClick={handleConnect} disabled={connected}>
-            接続
+            Connect
           </button>
           <button className="button-secondary" onClick={handleDisconnect} disabled={!connected}>
-            切断
-          </button>
-          <button className="button-secondary" onClick={toggleAcquire} disabled={!connected}>
-            {acquiring ? '停止' : '取得開始'}
+            Disconnect
           </button>
         </div>
         <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
@@ -475,17 +532,17 @@ function App() {
 
       <section className="card">
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">AI 16ch</h2>
-          <span className="text-xs text-slate-500">raw / phy</span>
+          <h2 className="text-xl font-semibold">AI Channels (16)</h2>
+          <span className="text-xs text-slate-500">Raw | a·x² + b·x + c = Physical</span>
         </div>
         <div className="grid gap-1 text-base">
           <div className="grid grid-cols-6 gap-2 text-sm text-slate-500">
             <span>Name</span>
-            <span>Raw(x)</span>
+            <span>Raw (x)</span>
             <span>a</span>
             <span>b</span>
             <span>c</span>
-            <span>Phy(y)</span>
+            <span>Physical</span>
           </div>
           {aiChannels.map((ch, idx) => (
             <div
@@ -493,7 +550,9 @@ function App() {
               className="grid grid-cols-6 items-center gap-2 rounded-md bg-slate-900/60 px-2 py-2"
             >
               <span className="text-slate-200">{ch.label}</span>
-              <span className="font-semibold text-emerald-300 tabular-nums">{ch.raw}</span>
+              <span className={`font-semibold tabular-nums text-right ${getStatusColor(ch.status)}`}>
+                {ch.raw}
+              </span>
               <input
                 type="number"
                 step="0.001"
@@ -515,52 +574,9 @@ function App() {
                 onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
                 className="input-compact"
               />
-              <span className="font-semibold text-emerald-300 tabular-nums">{ch.phy.toFixed(3)}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">AO 8ch</h2>
-          <span className="text-xs text-slate-500">raw / phy</span>
-        </div>
-        <div className="grid gap-1 text-base">
-          <div className="grid grid-cols-5 gap-2 text-sm text-slate-500">
-            <span>Name</span>
-            <span>Raw(x)</span>
-            <span>a</span>
-            <span>b</span>
-            <span>Phy(y)</span>
-          </div>
-          {aoChannels.map((ch, idx) => (
-            <div
-              key={ch.id}
-              className="grid grid-cols-5 items-center gap-2 rounded-md bg-slate-900/60 px-2 py-2"
-            >
-              <span className="text-slate-200">{ch.label}</span>
-              <input
-                type="number"
-                value={ch.raw}
-                onChange={(e) => handleAoRawChange(idx, Number(e.target.value))}
-                className="input-compact input-raw"
-              />
-              <input
-                type="number"
-                step="0.001"
-                value={aoCalibration[idx].a}
-                onChange={(e) => updateAoCalibration(idx, 'a', Number(e.target.value))}
-                className="input-compact"
-              />
-              <input
-                type="number"
-                step="0.001"
-                value={aoCalibration[idx].b}
-                onChange={(e) => updateAoCalibration(idx, 'b', Number(e.target.value))}
-                className="input-compact"
-              />
-              <span className="font-semibold text-emerald-300 tabular-nums">{ch.phy.toFixed(3)}</span>
+              <span className="font-semibold text-emerald-300 tabular-nums text-right">
+                {ch.physical.toFixed(3)}
+              </span>
             </div>
           ))}
         </div>
@@ -569,7 +585,7 @@ function App() {
       <section className="card space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <label className="block text-xs text-slate-400">X軸</label>
+            <label className="block text-xs text-slate-400">X Axis</label>
             <select
               value={chartX}
               onChange={(e) => setChartX(e.target.value)}
@@ -583,7 +599,7 @@ function App() {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-slate-400">Y軸</label>
+            <label className="block text-xs text-slate-400">Y Axis</label>
             <select
               value={chartY}
               onChange={(e) => setChartY(e.target.value)}
@@ -599,7 +615,7 @@ function App() {
             </select>
           </div>
         </div>
-        <Line data={chartData} options={chartOptions} />
+        <Plot data={plotData} layout={plotLayout} config={plotConfig} style={{ width: '100%', height: '400px' }} />
       </section>
     </div>
   );

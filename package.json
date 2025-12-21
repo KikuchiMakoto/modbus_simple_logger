@@ -9,17 +9,17 @@
     "preview": "bunx vite preview"
   },
   "dependencies": {
-    "chart.js": "^4.4.4",
-    "chartjs-adapter-date-fns": "^3.0.0",
     "modbus-serial": "^8.0.23",
     "react": "^18.2.0",
-    "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.2.0",
+    "react-plotly.js": "^2.6.0",
+    "plotly.js": "^2.35.2",
     "buffer": "^6.0.3"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/plotly.js": "^2.33.4",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.35",
