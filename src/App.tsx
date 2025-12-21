@@ -10,7 +10,7 @@ import {
   Legend,
 } from 'chart.js';
 import 'chartjs-adapter-date-fns';
-import { WebUsbModbusClient } from './modbus/webusbClient';
+import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
   AoCalibration,
@@ -18,6 +18,7 @@ import {
   AoChannel,
   PollingRateOption,
   DataPoint,
+  SerialSettings,
 } from './types';
 import {
   aiToPhysical,
@@ -45,7 +46,16 @@ const POLLING_OPTIONS: PollingRateOption[] = [
 
 const AI_CHANNELS = 16;
 const AO_CHANNELS = 8;
-const DEFAULT_BAUD = 38400;
+const BAUD_OPTIONS = [9600, 19200, 38400, 57600, 115200];
+const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
+const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
+const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
+const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
+  baudRate: 38400,
+  dataBits: 8,
+  stopBits: 1,
+  parity: 'none',
+};
 const AI_START_REGISTER = 0x0000;
 const AO_START_REGISTER = 0x0100;
 
@@ -79,6 +89,11 @@ function formatTimestamp(ts: number) {
   return new Date(ts).toISOString();
 }
 
+function formatSerialSettings(settings: SerialSettings) {
+  const parityLetter = settings.parity === 'none' ? 'N' : settings.parity === 'even' ? 'E' : 'O';
+  return `${settings.baudRate}bps ${settings.dataBits}${parityLetter}${settings.stopBits}`;
+}
+
 const axisOptions = [
   { key: 'time', label: 'Timestamp (ms)' },
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({ key: `ai${idx}`, label: `AI${idx + 1}` })),
@@ -86,9 +101,8 @@ const axisOptions = [
 ];
 
 function App() {
-  const [vendorId, setVendorId] = useState('');
-  const [productId, setProductId] = useState('');
   const [slaveId, setSlaveId] = useState(1);
+  const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aoCalibration, setAoCalibration] = useState<AoCalibration[]>(loadAoCalibration(AO_CHANNELS));
@@ -101,14 +115,8 @@ function App() {
   const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
   const [chartX, setChartX] = useState('time');
   const [chartY, setChartY] = useState('ai0');
-  const clientRef = useRef<WebUsbModbusClient | null>(null);
+  const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
-
-  useEffect(() => {
-    if (clientRef.current) {
-      clientRef.current = new WebUsbModbusClient(slaveId);
-    }
-  }, [slaveId]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -228,17 +236,17 @@ function App() {
   }, [acquiring, pollingRate]);
 
   const handleConnect = async () => {
-    const filters = [] as USBDeviceFilter[];
-    if (vendorId) filters.push({ vendorId: parseInt(vendorId, 10) });
-    if (productId) filters.push({ productId: parseInt(productId, 10) });
-
     try {
-      const client = new WebUsbModbusClient(slaveId);
-      await client.connect(filters.length ? filters : [{ vendorId: 0x0403 }]);
+      const client = new WebSerialModbusClient(slaveId, serialSettings);
+      await client.connect();
       clientRef.current = client;
       setConnected(true);
-      setStatus(`Connected @ ${DEFAULT_BAUD}bps`);
+      setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotFoundError') {
+        setStatus('デバイス選択をキャンセルしました');
+        return;
+      }
       setStatus((err as Error).message);
     }
   };
@@ -329,8 +337,10 @@ function App() {
     <div className="p-6 space-y-6">
       <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU WebUSB Logger</h1>
-          <p className="text-sm text-slate-400">AI 16ch / AO 8ch ・ Baud {DEFAULT_BAUD}</p>
+          <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
+          <p className="text-sm text-slate-400">
+            AI 16ch / AO 8ch - {formatSerialSettings(serialSettings)}
+          </p>
         </div>
         <div className="flex gap-2">
           <button className="button-secondary" onClick={handleDownloadCalibration}>
@@ -342,35 +352,95 @@ function App() {
         </div>
       </header>
 
-      <section className="card grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <div>
-          <label className="block text-sm text-slate-400">Vendor ID</label>
-          <input
-            value={vendorId}
-            onChange={(e) => setVendorId(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2"
-            placeholder="0x2341"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-slate-400">Product ID</label>
-          <input
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2"
-            placeholder="0x8036"
-          />
-        </div>
+      <section className="card grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <div>
           <label className="block text-sm text-slate-400">Slave ID</label>
           <input
             type="number"
             value={slaveId}
             onChange={(e) => setSlaveId(parseInt(e.target.value, 10))}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2"
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
             min={1}
             max={247}
+            disabled={connected}
           />
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400">Baud rate</label>
+          <select
+            value={serialSettings.baudRate}
+            onChange={(e) =>
+              setSerialSettings((prev) => ({ ...prev, baudRate: Number(e.target.value) }))
+            }
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={connected}
+          >
+            {BAUD_OPTIONS.map((baud) => (
+              <option key={baud} value={baud}>
+                {baud} bps
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400">Data bits</label>
+          <select
+            value={serialSettings.dataBits}
+            onChange={(e) =>
+              setSerialSettings((prev) => ({
+                ...prev,
+                dataBits: Number(e.target.value) as SerialSettings['dataBits'],
+              }))
+            }
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={connected}
+          >
+            {DATA_BITS_OPTIONS.map((bits) => (
+              <option key={bits} value={bits}>
+                {bits}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400">Parity</label>
+          <select
+            value={serialSettings.parity}
+            onChange={(e) =>
+              setSerialSettings((prev) => ({
+                ...prev,
+                parity: e.target.value as SerialSettings['parity'],
+              }))
+            }
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={connected}
+          >
+            {PARITY_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt === 'none' ? 'None' : opt.charAt(0).toUpperCase() + opt.slice(1)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-slate-400">Stop bits</label>
+          <select
+            value={serialSettings.stopBits}
+            onChange={(e) =>
+              setSerialSettings((prev) => ({
+                ...prev,
+                stopBits: Number(e.target.value) as SerialSettings['stopBits'],
+              }))
+            }
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={connected}
+          >
+            {STOP_BITS_OPTIONS.map((bits) => (
+              <option key={bits} value={bits}>
+                {bits}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-sm text-slate-400">ポーリング周期</label>
@@ -389,7 +459,7 @@ function App() {
             ))}
           </select>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 lg:col-span-2">
           <button className="button-primary" onClick={handleConnect} disabled={connected}>
             接続
           </button>
@@ -400,97 +470,97 @@ function App() {
             {acquiring ? '停止' : '取得開始'}
           </button>
         </div>
-        <div className="text-sm text-emerald-300">Status: {status}</div>
+        <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
       </section>
 
       <section className="card">
-        <h2 className="text-xl font-semibold mb-3">AI 16ch</h2>
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">AI 16ch</h2>
+          <span className="text-xs text-slate-500">raw / phy</span>
+        </div>
+        <div className="grid gap-1 text-base">
+          <div className="grid grid-cols-6 gap-2 text-sm text-slate-500">
+            <span>Name</span>
+            <span>Raw(x)</span>
+            <span>a</span>
+            <span>b</span>
+            <span>c</span>
+            <span>Phy(y)</span>
+          </div>
           {aiChannels.map((ch, idx) => (
-            <div key={ch.id} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-              <div className="flex items-center justify-between text-sm text-slate-400">
-                <span>{ch.label}</span>
-                <span>raw / phy</span>
-              </div>
-              <div className="mt-2 text-lg font-semibold text-emerald-400">{ch.raw}</div>
-              <div className="text-sm text-slate-300">{ch.phy.toFixed(3)}</div>
-              <div className="mt-2 grid grid-cols-3 gap-1 text-xs text-slate-400">
-                <label className="flex items-center gap-1">
-                  a
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={aiCalibration[idx].a}
-                    onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
-                    className="w-full rounded border border-slate-800 bg-slate-800 px-1 py-0.5"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  b
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={aiCalibration[idx].b}
-                    onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
-                    className="w-full rounded border border-slate-800 bg-slate-800 px-1 py-0.5"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  c
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={aiCalibration[idx].c}
-                    onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
-                    className="w-full rounded border border-slate-800 bg-slate-800 px-1 py-0.5"
-                  />
-                </label>
-              </div>
+            <div
+              key={ch.id}
+              className="grid grid-cols-6 items-center gap-2 rounded-md bg-slate-900/60 px-2 py-2"
+            >
+              <span className="text-slate-200">{ch.label}</span>
+              <span className="font-semibold text-emerald-300 tabular-nums">{ch.raw}</span>
+              <input
+                type="number"
+                step="0.001"
+                value={aiCalibration[idx].a}
+                onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
+                className="input-compact"
+              />
+              <input
+                type="number"
+                step="0.001"
+                value={aiCalibration[idx].b}
+                onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
+                className="input-compact"
+              />
+              <input
+                type="number"
+                step="0.001"
+                value={aiCalibration[idx].c}
+                onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
+                className="input-compact"
+              />
+              <span className="font-semibold text-emerald-300 tabular-nums">{ch.phy.toFixed(3)}</span>
             </div>
           ))}
         </div>
       </section>
 
       <section className="card">
-        <h2 className="text-xl font-semibold mb-3">AO 8ch</h2>
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">AO 8ch</h2>
+          <span className="text-xs text-slate-500">raw / phy</span>
+        </div>
+        <div className="grid gap-1 text-base">
+          <div className="grid grid-cols-5 gap-2 text-sm text-slate-500">
+            <span>Name</span>
+            <span>Raw(x)</span>
+            <span>a</span>
+            <span>b</span>
+            <span>Phy(y)</span>
+          </div>
           {aoChannels.map((ch, idx) => (
-            <div key={ch.id} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-              <div className="flex items-center justify-between text-sm text-slate-400">
-                <span>{ch.label}</span>
-                <span>raw / phy</span>
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  type="number"
-                  value={ch.raw}
-                  onChange={(e) => handleAoRawChange(idx, Number(e.target.value))}
-                  className="w-full rounded border border-slate-800 bg-slate-800 px-2 py-1"
-                />
-                <span className="text-sm text-slate-300">{ch.phy.toFixed(3)}</span>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-slate-400">
-                <label className="flex items-center gap-1">
-                  a
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={aoCalibration[idx].a}
-                    onChange={(e) => updateAoCalibration(idx, 'a', Number(e.target.value))}
-                    className="w-full rounded border border-slate-800 bg-slate-800 px-1 py-0.5"
-                  />
-                </label>
-                <label className="flex items-center gap-1">
-                  b
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={aoCalibration[idx].b}
-                    onChange={(e) => updateAoCalibration(idx, 'b', Number(e.target.value))}
-                    className="w-full rounded border border-slate-800 bg-slate-800 px-1 py-0.5"
-                  />
-                </label>
-              </div>
+            <div
+              key={ch.id}
+              className="grid grid-cols-5 items-center gap-2 rounded-md bg-slate-900/60 px-2 py-2"
+            >
+              <span className="text-slate-200">{ch.label}</span>
+              <input
+                type="number"
+                value={ch.raw}
+                onChange={(e) => handleAoRawChange(idx, Number(e.target.value))}
+                className="input-compact input-raw"
+              />
+              <input
+                type="number"
+                step="0.001"
+                value={aoCalibration[idx].a}
+                onChange={(e) => updateAoCalibration(idx, 'a', Number(e.target.value))}
+                className="input-compact"
+              />
+              <input
+                type="number"
+                step="0.001"
+                value={aoCalibration[idx].b}
+                onChange={(e) => updateAoCalibration(idx, 'b', Number(e.target.value))}
+                className="input-compact"
+              />
+              <span className="font-semibold text-emerald-300 tabular-nums">{ch.phy.toFixed(3)}</span>
             </div>
           ))}
         </div>

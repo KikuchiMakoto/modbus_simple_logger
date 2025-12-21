@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "chart.js": "^4.4.4",
-    "modbus-serial": "^11.0.1",
+    "chartjs-adapter-date-fns": "^3.0.0",
+    "modbus-serial": "^8.0.23",
     "react": "^18.2.0",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.2.0",

@@ -4,6 +4,7 @@
  */
 import { Buffer } from 'buffer';
 import crc16 from 'modbus-serial/utils/crc16';
+import { SerialSettings } from '../types';
 
 type EndpointPair = {
   inEndpoint: USBEndpoint;
@@ -14,12 +15,29 @@ export class WebUsbModbusClient {
   private device: USBDevice | null = null;
   private endpoints: EndpointPair | null = null;
   private slaveId: number;
+  private serialSettings: SerialSettings;
+  private controlInterfaceNumber: number | null = null;
 
-  constructor(slaveId = 1) {
+  constructor(
+    slaveId = 1,
+    serialSettings: SerialSettings = {
+      baudRate: 38400,
+      dataBits: 8,
+      stopBits: 1,
+      parity: 'none',
+    },
+  ) {
     this.slaveId = slaveId;
+    this.serialSettings = serialSettings;
   }
 
-  async connect(filters: USBDeviceRequestOptions['filters']): Promise<void> {
+  async connect(
+    filters: USBDeviceRequestOptions['filters'] = [
+      { classCode: 0x02 },
+      { classCode: 0x0a },
+      { classCode: 0xff },
+    ],
+  ): Promise<boolean> {
     if (!('usb' in navigator)) {
       throw new Error('WebUSB is not supported in this browser');
     }
@@ -29,14 +47,40 @@ export class WebUsbModbusClient {
       await this.device.selectConfiguration(1);
     }
 
-    const iface = this.device.configuration?.interfaces.find((i) =>
-      i.alternates.some((alt) => alt.interfaceClass === 255 || alt.interfaceClass === 10),
-    ) ?? this.device.configuration?.interfaces[0];
+    const interfaces = this.device.configuration?.interfaces ?? [];
+    const controlIface = interfaces.find((i) =>
+      i.alternates.some((alt) => alt.interfaceClass === 2),
+    );
+    const dataIface = interfaces.find((i) =>
+      i.alternates.some((alt) => alt.interfaceClass === 10),
+    );
+    const vendorIface = interfaces.find((i) =>
+      i.alternates.some((alt) => alt.interfaceClass === 255),
+    );
+    const iface = dataIface ?? vendorIface ?? interfaces[0];
 
     if (!iface) throw new Error('No usable interface found');
     const alt = iface.alternates[0];
-    await this.device.claimInterface(iface.interfaceNumber);
-    await this.device.selectAlternateInterface(iface.interfaceNumber, alt.alternateSetting);
+    try {
+      await this.device.claimInterface(iface.interfaceNumber);
+      await this.device.selectAlternateInterface(iface.interfaceNumber, alt.alternateSetting);
+    } catch (err) {
+      throw new Error(
+        'Unable to claim interface. Close any app using this USB device and reconnect it.',
+      );
+    }
+
+    if (controlIface) {
+      this.controlInterfaceNumber = controlIface.interfaceNumber;
+      if (controlIface.interfaceNumber !== iface.interfaceNumber) {
+        const controlAlt = controlIface.alternates[0];
+        await this.device.claimInterface(controlIface.interfaceNumber);
+        await this.device.selectAlternateInterface(
+          controlIface.interfaceNumber,
+          controlAlt.alternateSetting,
+        );
+      }
+    }
 
     const inEndpoint = alt.endpoints.find((e) => e.direction === 'in');
     const outEndpoint = alt.endpoints.find((e) => e.direction === 'out');
@@ -44,6 +88,7 @@ export class WebUsbModbusClient {
       throw new Error('Failed to find bulk endpoints');
     }
     this.endpoints = { inEndpoint, outEndpoint };
+    return this.applyLineCoding();
   }
 
   async disconnect() {
@@ -53,6 +98,7 @@ export class WebUsbModbusClient {
       } finally {
         this.device = null;
         this.endpoints = null;
+        this.controlInterfaceNumber = null;
       }
     }
   }
@@ -78,6 +124,48 @@ export class WebUsbModbusClient {
     const result = await device.transferIn(endpoints.inEndpoint.endpointNumber, expectedLength);
     if (!result.data) throw new Error('No data from device');
     return result.data;
+  }
+
+  private async applyLineCoding(): Promise<boolean> {
+    if (!this.device || this.controlInterfaceNumber == null) {
+      return false;
+    }
+    const { baudRate, dataBits, stopBits, parity } = this.serialSettings;
+    const parityCode = parity === 'none' ? 0 : parity === 'odd' ? 1 : 2;
+    const stopBitsCode = stopBits === 1 ? 0 : 2;
+    const payload = new Uint8Array(7);
+    payload[0] = baudRate & 0xff;
+    payload[1] = (baudRate >> 8) & 0xff;
+    payload[2] = (baudRate >> 16) & 0xff;
+    payload[3] = (baudRate >> 24) & 0xff;
+    payload[4] = stopBitsCode;
+    payload[5] = parityCode;
+    payload[6] = dataBits;
+    try {
+      await this.device.controlTransferOut(
+        {
+          requestType: 'class',
+          recipient: 'interface',
+          request: 0x20,
+          value: 0x00,
+          index: this.controlInterfaceNumber,
+        },
+        payload,
+      );
+      await this.device.controlTransferOut(
+        {
+          requestType: 'class',
+          recipient: 'interface',
+          request: 0x22,
+          value: 0x03,
+          index: this.controlInterfaceNumber,
+        },
+      );
+      return true;
+    } catch (err) {
+      console.warn('Serial line coding not supported', err);
+      return false;
+    }
   }
 
   async readInputRegisters(start: number, count: number): Promise<number[]> {

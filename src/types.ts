@@ -33,3 +33,12 @@ export type DataPoint = {
   ai: number[];
   ao: number[];
 };
+
+export type SerialParity = 'none' | 'odd' | 'even';
+
+export type SerialSettings = {
+  baudRate: number;
+  dataBits: 7 | 8;
+  stopBits: 1 | 2;
+  parity: SerialParity;
+};
