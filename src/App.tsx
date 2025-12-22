@@ -338,6 +338,10 @@ function App() {
         clientRef.current = null;
       }
 
+      // Clear IndexedDB for new session
+      await dataStorage.clearAllData();
+      setDataPoints([]);
+
       const client = new WebSerialModbusClient(slaveId, serialSettings);
       await client.connect();
       clientRef.current = client;
@@ -370,6 +374,9 @@ function App() {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+      // Clear IndexedDB on disconnect
+      await dataStorage.clearAllData();
+      setDataPoints([]);
     } catch (err) {
       console.error('Error during disconnect:', err);
     } finally {
@@ -484,6 +491,11 @@ function App() {
       const header = ['timestamp', ...rawHeaders, ...phyHeaders].join('\t') + '\n';
 
       await stream.write(header);
+
+      // Clear IndexedDB when starting new recording session
+      await dataStorage.clearAllData();
+      setDataPoints([]);
+
       setLogHandle(stream);
       setStatus('Saving data to file');
     } catch (err) {
@@ -495,6 +507,11 @@ function App() {
     if (logHandle) {
       await logHandle.close();
       setLogHandle(null);
+
+      // When stopping save, keep only latest 512 points in IndexedDB
+      await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
+      await updateChartData();
+
       setStatus('Stopped saving');
     }
   };
