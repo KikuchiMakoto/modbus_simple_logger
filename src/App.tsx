@@ -355,54 +355,33 @@ function App() {
       const text = await file.text();
       const data = JSON.parse(text);
 
-      // Check if it's the new format with type field
-      if (data.type === 'Calibration') {
-        const loadedCalibration: AiCalibration[] = [];
-        for (let i = 0; i < AI_CHANNELS; i++) {
-          const key = i.toString().padStart(2, '0');
-          if (data[key]) {
-            loadedCalibration.push({
-              a: data[key].a ?? 0,
-              b: data[key].b ?? 1,
-              c: data[key].c ?? 0,
-            });
-          } else {
-            loadedCalibration.push({ a: 0, b: 1, c: 0 });
-          }
-        }
+      if (data.type !== 'Calibration') {
+        setStatus('Invalid calibration file format: missing "type": "Calibration" field');
+        return;
+      }
 
-        setAiCalibration(loadedCalibration);
-        setAiChannels((prev) =>
-          prev.map((ch, idx) => {
-            const physical = aiToPhysical(ch.raw, loadedCalibration[idx]);
-            return { ...ch, physical, status: getAiStatus(ch.raw) };
-          }),
-        );
-        setStatus('Calibration loaded successfully');
-      } else if (data.ai && Array.isArray(data.ai)) {
-        // Support legacy format for backward compatibility
-        const loadedCalibration = data.ai.slice(0, AI_CHANNELS).map((cal: any) => ({
-          a: cal.a ?? 0,
-          b: cal.b ?? 1,
-          c: cal.c ?? 0,
-        }));
-
-        // Pad with defaults if needed
-        while (loadedCalibration.length < AI_CHANNELS) {
+      const loadedCalibration: AiCalibration[] = [];
+      for (let i = 0; i < AI_CHANNELS; i++) {
+        const key = i.toString().padStart(2, '0');
+        if (data[key]) {
+          loadedCalibration.push({
+            a: data[key].a ?? 0,
+            b: data[key].b ?? 1,
+            c: data[key].c ?? 0,
+          });
+        } else {
           loadedCalibration.push({ a: 0, b: 1, c: 0 });
         }
-
-        setAiCalibration(loadedCalibration);
-        setAiChannels((prev) =>
-          prev.map((ch, idx) => {
-            const physical = aiToPhysical(ch.raw, loadedCalibration[idx]);
-            return { ...ch, physical, status: getAiStatus(ch.raw) };
-          }),
-        );
-        setStatus('Calibration loaded successfully (legacy format)');
-      } else {
-        setStatus('Invalid calibration file format: missing "type": "Calibration" field');
       }
+
+      setAiCalibration(loadedCalibration);
+      setAiChannels((prev) =>
+        prev.map((ch, idx) => {
+          const physical = aiToPhysical(ch.raw, loadedCalibration[idx]);
+          return { ...ch, physical, status: getAiStatus(ch.raw) };
+        }),
+      );
+      setStatus('Calibration loaded successfully');
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         return;
