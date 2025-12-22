@@ -92,8 +92,10 @@ function App() {
   const [status, setStatus] = useState('Disconnected');
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
-  const [chartX, setChartX] = useState('time');
-  const [chartY, setChartY] = useState('ai0');
+  const [chart1X, setChart1X] = useState('time');
+  const [chart1Y, setChart1Y] = useState('ai0');
+  const [chart2X, setChart2X] = useState('time');
+  const [chart2Y, setChart2Y] = useState('ai1');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
@@ -110,9 +112,9 @@ function App() {
     return 0;
   };
 
-  const plotData = useMemo(() => {
-    const xData = dataPoints.map((p) => resolveAxisValue(p, chartX));
-    const yData = dataPoints.map((p) => resolveAxisValue(p, chartY));
+  const plotData1 = useMemo(() => {
+    const xData = dataPoints.map((p) => resolveAxisValue(p, chart1X));
+    const yData = dataPoints.map((p) => resolveAxisValue(p, chart1Y));
 
     return [
       {
@@ -122,29 +124,66 @@ function App() {
         mode: 'lines+markers' as const,
         marker: { color: '#34d399', size: 3 },
         line: { color: '#34d399', width: 2 },
-        name: `${chartY} vs ${chartX}`,
+        name: `${chart1Y} vs ${chart1X}`,
       },
     ];
-  }, [chartX, chartY, dataPoints]);
+  }, [chart1X, chart1Y, dataPoints]);
 
-  const plotLayout = useMemo(
+  const plotLayout1 = useMemo(
     () => ({
       autosize: true,
       paper_bgcolor: '#0f172a',
       plot_bgcolor: '#1e293b',
       font: { color: '#cbd5e1' },
       xaxis: {
-        title: chartX,
+        title: chart1X,
         gridcolor: '#334155',
-        type: chartX === 'time' ? ('date' as const) : ('linear' as const),
+        type: chart1X === 'time' ? ('date' as const) : ('linear' as const),
       },
       yaxis: {
-        title: chartY,
+        title: chart1Y,
         gridcolor: '#334155',
       },
       margin: { t: 40, r: 40, b: 60, l: 60 },
     }),
-    [chartX, chartY],
+    [chart1X, chart1Y],
+  );
+
+  const plotData2 = useMemo(() => {
+    const xData = dataPoints.map((p) => resolveAxisValue(p, chart2X));
+    const yData = dataPoints.map((p) => resolveAxisValue(p, chart2Y));
+
+    return [
+      {
+        x: xData,
+        y: yData,
+        type: 'scattergl' as const,
+        mode: 'lines+markers' as const,
+        marker: { color: '#60a5fa', size: 3 },
+        line: { color: '#60a5fa', width: 2 },
+        name: `${chart2Y} vs ${chart2X}`,
+      },
+    ];
+  }, [chart2X, chart2Y, dataPoints]);
+
+  const plotLayout2 = useMemo(
+    () => ({
+      autosize: true,
+      paper_bgcolor: '#0f172a',
+      plot_bgcolor: '#1e293b',
+      font: { color: '#cbd5e1' },
+      xaxis: {
+        title: chart2X,
+        gridcolor: '#334155',
+        type: chart2X === 'time' ? ('date' as const) : ('linear' as const),
+      },
+      yaxis: {
+        title: chart2Y,
+        gridcolor: '#334155',
+      },
+      margin: { t: 40, r: 40, b: 60, l: 60 },
+    }),
+    [chart2X, chart2Y],
   );
 
   const plotConfig = useMemo(
@@ -289,7 +328,17 @@ function App() {
 
 
   const handleDownloadCalibration = () => {
-    downloadJson('calibration.json', { ai: aiCalibration });
+    const calibrationData: Record<string, any> = {};
+    aiCalibration.forEach((cal, idx) => {
+      const key = idx.toString().padStart(2, '0');
+      calibrationData[key] = {
+        a: cal.a,
+        b: cal.b,
+        c: cal.c,
+      };
+    });
+    calibrationData.type = 'Calibration';
+    downloadJson('calibration.json', calibrationData);
   };
 
   const handleLoadCalibration = async () => {
@@ -306,7 +355,32 @@ function App() {
       const text = await file.text();
       const data = JSON.parse(text);
 
-      if (data.ai && Array.isArray(data.ai)) {
+      // Check if it's the new format with type field
+      if (data.type === 'Calibration') {
+        const loadedCalibration: AiCalibration[] = [];
+        for (let i = 0; i < AI_CHANNELS; i++) {
+          const key = i.toString().padStart(2, '0');
+          if (data[key]) {
+            loadedCalibration.push({
+              a: data[key].a ?? 0,
+              b: data[key].b ?? 1,
+              c: data[key].c ?? 0,
+            });
+          } else {
+            loadedCalibration.push({ a: 0, b: 1, c: 0 });
+          }
+        }
+
+        setAiCalibration(loadedCalibration);
+        setAiChannels((prev) =>
+          prev.map((ch, idx) => {
+            const physical = aiToPhysical(ch.raw, loadedCalibration[idx]);
+            return { ...ch, physical, status: getAiStatus(ch.raw) };
+          }),
+        );
+        setStatus('Calibration loaded successfully');
+      } else if (data.ai && Array.isArray(data.ai)) {
+        // Support legacy format for backward compatibility
         const loadedCalibration = data.ai.slice(0, AI_CHANNELS).map((cal: any) => ({
           a: cal.a ?? 0,
           b: cal.b ?? 1,
@@ -325,9 +399,9 @@ function App() {
             return { ...ch, physical, status: getAiStatus(ch.raw) };
           }),
         );
-        setStatus('Calibration loaded successfully');
+        setStatus('Calibration loaded successfully (legacy format)');
       } else {
-        setStatus('Invalid calibration file format');
+        setStatus('Invalid calibration file format: missing "type": "Calibration" field');
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -582,41 +656,81 @@ function App() {
         </div>
       </section>
 
-      <section className="card space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div>
-            <label className="block text-xs text-slate-400">X Axis</label>
-            <select
-              value={chartX}
-              onChange={(e) => setChartX(e.target.value)}
-              className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
-            >
-              {axisOptions.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400">Y Axis</label>
-            <select
-              value={chartY}
-              onChange={(e) => setChartY(e.target.value)}
-              className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
-            >
-              {axisOptions
-                .filter((opt) => opt.key !== 'time')
-                .map((opt) => (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="card space-y-3">
+          <h2 className="text-lg font-semibold text-emerald-400">Chart 1</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <label className="block text-xs text-slate-400">X Axis</label>
+              <select
+                value={chart1X}
+                onChange={(e) => setChart1X(e.target.value)}
+                className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
+              >
+                {axisOptions.map((opt) => (
                   <option key={opt.key} value={opt.key}>
                     {opt.label}
                   </option>
                 ))}
-            </select>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400">Y Axis</label>
+              <select
+                value={chart1Y}
+                onChange={(e) => setChart1Y(e.target.value)}
+                className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
+              >
+                {axisOptions
+                  .filter((opt) => opt.key !== 'time')
+                  .map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label}
+                    </option>
+                  ))}
+              </select>
+            </div>
           </div>
-        </div>
-        <Plot data={plotData} layout={plotLayout} config={plotConfig} style={{ width: '100%', height: '400px' }} />
-      </section>
+          <Plot data={plotData1} layout={plotLayout1} config={plotConfig} style={{ width: '100%', height: '400px' }} />
+        </section>
+
+        <section className="card space-y-3">
+          <h2 className="text-lg font-semibold text-blue-400">Chart 2</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <label className="block text-xs text-slate-400">X Axis</label>
+              <select
+                value={chart2X}
+                onChange={(e) => setChart2X(e.target.value)}
+                className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
+              >
+                {axisOptions.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400">Y Axis</label>
+              <select
+                value={chart2Y}
+                onChange={(e) => setChart2Y(e.target.value)}
+                className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
+              >
+                {axisOptions
+                  .filter((opt) => opt.key !== 'time')
+                  .map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+          <Plot data={plotData2} layout={plotLayout2} config={plotConfig} style={{ width: '100%', height: '400px' }} />
+        </section>
+      </div>
     </div>
   );
 }
