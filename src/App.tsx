@@ -14,6 +14,7 @@ import {
   saveAiCalibration,
   getAiStatus,
 } from './utils/calibration';
+import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -68,7 +69,15 @@ function downloadJson(filename: string, data: unknown) {
 }
 
 function formatTimestamp(ts: number) {
-  return new Date(ts).toISOString();
+  const date = new Date(ts);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  const fff = String(date.getMilliseconds()).padStart(3, '0');
+  return `${yyyy}/${mm}/${dd} ${hh}:${min}:${ss}.${fff}`;
 }
 
 function formatSerialSettings(settings: SerialSettings) {
@@ -98,6 +107,14 @@ function App() {
   const [chart2Y, setChart2Y] = useState('ai1');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
+
+  // Initialize IndexedDB
+  useEffect(() => {
+    dataStorage.init().catch((err) => {
+      console.error('Failed to initialize IndexedDB:', err);
+      setStatus('IndexedDB initialization failed');
+    });
+  }, []);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -195,25 +212,73 @@ function App() {
     [],
   );
 
-  const updateDataHistory = (ai: number[]) => {
+  const updateDataHistory = async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
-    setDataPoints((prev) => {
-      const next = [...prev, { timestamp, ai }];
-      if (acquiring) {
-        if (next.length > 1024) {
-          const stride = Math.ceil(next.length / 1024);
-          return next.filter((_, idx) => idx % stride === 0);
-        }
-        return next;
+    const dataPoint: StoredDataPoint = {
+      timestamp,
+      aiRaw,
+      aiPhysical,
+    };
+
+    try {
+      // Save to IndexedDB
+      await dataStorage.addDataPoint(dataPoint);
+
+      // If not saving to file, keep only latest 512 points in IndexedDB
+      if (!logHandle) {
+        await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
       }
-      const cutoff = timestamp - 60000;
-      return next.filter((p) => p.timestamp >= cutoff);
-    });
+
+      // Update chart data from IndexedDB
+      await updateChartData();
+    } catch (err) {
+      console.error('Error updating data history:', err);
+    }
   };
 
-  const appendLog = async (ai: number[]) => {
+  const updateChartData = async () => {
+    try {
+      const allPoints = await dataStorage.getAllDataPoints();
+
+      let displayPoints: DataPoint[];
+
+      if (!logHandle) {
+        // Data save is OFF: display all points (should be max 512)
+        displayPoints = allPoints.map(p => ({
+          timestamp: p.timestamp,
+          ai: p.aiPhysical,
+        }));
+      } else {
+        // Data save is ON: decimate to max 512 points
+        if (allPoints.length <= MAX_POINTS_IN_MEMORY) {
+          displayPoints = allPoints.map(p => ({
+            timestamp: p.timestamp,
+            ai: p.aiPhysical,
+          }));
+        } else {
+          // Decimate by integer stride
+          const stride = Math.ceil(allPoints.length / MAX_POINTS_IN_MEMORY);
+          displayPoints = allPoints
+            .filter((_, idx) => idx % stride === 0)
+            .map(p => ({
+              timestamp: p.timestamp,
+              ai: p.aiPhysical,
+            }));
+        }
+      }
+
+      setDataPoints(displayPoints);
+    } catch (err) {
+      console.error('Error updating chart data:', err);
+    }
+  };
+
+  const appendLog = async (aiRaw: number[], aiPhysical: number[]) => {
     if (!logHandle) return;
-    const row = [formatTimestamp(Date.now()), ...ai].join('\t') + '\n';
+    const timestamp = formatTimestamp(Date.now());
+    const rawValues = aiRaw.map(v => v.toString());
+    const phyValues = aiPhysical.map(v => v.toFixed(3));
+    const row = [timestamp, ...rawValues, ...phyValues].join('\t') + '\n';
     await logHandle.write(row);
   };
 
@@ -234,8 +299,10 @@ function App() {
         })),
       );
 
-      updateDataHistory(aiPhysical);
-      appendLog(aiPhysical);
+      updateDataHistory(aiRaw, aiPhysical);
+      if (logHandle) {
+        await appendLog(aiRaw, aiPhysical);
+      }
 
       setStatus('Polling');
     } catch (err) {
@@ -406,11 +473,17 @@ function App() {
         ],
       });
       const stream = await fileHandle.createWritable();
-      await stream.write(
-        'timestamp\t' +
-          Array.from({ length: AI_CHANNELS }, (_, i) => `ai${i}`).join('\t') +
-          '\n',
+
+      // Create header with timestamp, ai_raw_XX, ai_phy_XX format
+      const rawHeaders = Array.from({ length: AI_CHANNELS }, (_, i) =>
+        `ai_raw_${i.toString().padStart(2, '0')}`
       );
+      const phyHeaders = Array.from({ length: AI_CHANNELS }, (_, i) =>
+        `ai_phy_${i.toString().padStart(2, '0')}`
+      );
+      const header = ['timestamp', ...rawHeaders, ...phyHeaders].join('\t') + '\n';
+
+      await stream.write(header);
       setLogHandle(stream);
       setStatus('Saving data to file');
     } catch (err) {
