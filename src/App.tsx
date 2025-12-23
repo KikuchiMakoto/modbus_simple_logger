@@ -528,7 +528,7 @@ function App() {
       case 'warning':
         return 'text-yellow-400';
       default:
-        return 'text-emerald-300';
+        return 'text-emerald-600 dark:text-emerald-400';
     }
   };
 
@@ -783,7 +783,7 @@ function App() {
                 </div>
                 <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
-                  <span className="font-bold text-emerald-300 tabular-nums text-xl">
+                  <span className="font-bold tabular-nums text-xl text-emerald-600 dark:text-emerald-400">
                     {ch.physical.toFixed(3)}
                   </span>
                 </div>
