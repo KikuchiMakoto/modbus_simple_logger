@@ -537,8 +537,10 @@ function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
+  const isDarkMode = theme === 'dark';
+
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
         <div className="p-4">
           <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -549,8 +551,40 @@ function App() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button className="button-secondary" onClick={handleToggleTheme}>
-                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isDarkMode}
+                aria-label="Toggle dark mode"
+                onClick={handleToggleTheme}
+                className="relative inline-flex h-10 w-20 items-center rounded-full border border-slate-300 bg-white px-2 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
+              >
+                <span className="sr-only">Toggle theme</span>
+                <span className="absolute left-3 text-slate-500 dark:text-slate-300" aria-hidden>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                    <path d="M12 6a1 1 0 0 1 1 1v1.25a1 1 0 1 1-2 0V7a1 1 0 0 1 1-1Zm0 8a1 1 0 0 1 1 1v1.25a1 1 0 1 1-2 0V15a1 1 0 0 1 1-1Zm4-4a1 1 0 0 1 1 1h1.25a1 1 0 1 1 0 2H17a1 1 0 0 1-1-1 1 1 0 0 1 1-1Zm-8 0a1 1 0 0 1 1 1 1 1 0 0 1-1 1H6.75a1 1 0 1 1 0-2H8Zm6.475-3.182a1 1 0 0 1 1.414 0l.884.884a1 1 0 1 1-1.414 1.414l-.884-.884a1 1 0 0 1 0-1.414Zm-6.182 6.182a1 1 0 0 1 1.414 0l.884.884a1 1 0 1 1-1.414 1.414l-.884-.884a1 1 0 0 1 0-1.414Zm8.48 2.298a1 1 0 0 1 0 1.414l-.884.884a1 1 0 0 1-1.414-1.414l.884-.884a1 1 0 0 1 1.414 0Zm-8.48-8.48a1 1 0 0 1 0 1.414l-.884.884A1 1 0 1 1 4.9 8.602l.884-.884a1 1 0 0 1 1.414 0Z" />
+                    <path d="M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z" />
+                  </svg>
+                </span>
+                <span className="absolute right-3 text-slate-500 dark:text-slate-300" aria-hidden>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                    <path d="M18.92 15.42A7 7 0 0 1 11.2 4.59a1 1 0 0 0-1.18-1.18A9 9 0 1 0 19.1 16.6a1 1 0 0 0-.18-1.18Z" />
+                  </svg>
+                </span>
+                <span
+                  className={`flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-8' : 'translate-x-0'}`}
+                  aria-hidden
+                >
+                  {isDarkMode ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                      <path d="M21.64 13a1 1 0 0 0-1.05-.14A8 8 0 0 1 11.1 4.41 1 1 0 0 0 9.76 3a10 10 0 1 0 12.3 10Z" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                      <path d="M12 4a1 1 0 0 1 1 1v1a1 1 0 0 1-2 0V5a1 1 0 0 1 1-1Zm0 13a1 1 0 0 1 1 1v1a1 1 0 0 1-2 0v-1a1 1 0 0 1 1-1Zm8-5a1 1 0 0 1-1 1h-1a1 1 0 0 1 0-2h1a1 1 0 0 1 1 1ZM6 12a1 1 0 0 1-1 1H4a1 1 0 0 1 0-2h1a1 1 0 0 1 1 1Zm10.95 5.54a1 1 0 0 1 0 1.41l-.7.71a1 1 0 1 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0ZM8.46 6.05a1 1 0 0 1 0 1.41l-.71.71A1 1 0 0 1 6.34 6.8l.71-.7a1 1 0 0 1 1.41 0Zm9.9 1.41a1 1 0 0 1-1.41 0l-.71-.71A1 1 0 0 1 17.9 5.34l.7.71a1 1 0 0 1 0 1.41ZM6.05 15.54a1 1 0 0 1-1.41 0l-.71-.7a1 1 0 0 1 1.42-1.42l.7.71a1 1 0 0 1 0 1.41ZM12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" />
+                    </svg>
+                  )}
+                </span>
               </button>
               <button className="button-secondary" onClick={handleLoadCalibration}>
                 Load Calibration
