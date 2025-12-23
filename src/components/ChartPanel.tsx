@@ -14,6 +14,7 @@ interface ChartPanelProps {
   axisOptions: AxisOption[];
   xAxis: string;
   yAxis: string;
+  isDarkMode: boolean;
   onXAxisChange: (value: string) => void;
   onYAxisChange: (value: string) => void;
 }
@@ -38,9 +39,28 @@ export function ChartPanel({
   axisOptions,
   xAxis,
   yAxis,
+  isDarkMode,
   onXAxisChange,
   onYAxisChange,
 }: ChartPanelProps) {
+  const palette = useMemo(
+    () =>
+      isDarkMode
+        ? {
+            paper: '#0f172a',
+            plot: '#1e293b',
+            grid: '#334155',
+            text: '#cbd5e1',
+          }
+        : {
+            paper: '#f8fafc',
+            plot: '#ffffff',
+            grid: '#e2e8f0',
+            text: '#0f172a',
+          },
+    [isDarkMode],
+  );
+
   const plotData = useMemo(() => {
     const xData = dataPoints.map((p) => resolveAxisValue(p, xAxis));
     const yData = dataPoints.map((p) => resolveAxisValue(p, yAxis));
@@ -61,21 +81,21 @@ export function ChartPanel({
   const plotLayout = useMemo(
     () => ({
       autosize: true,
-      paper_bgcolor: '#0f172a',
-      plot_bgcolor: '#1e293b',
-      font: { color: '#cbd5e1' },
+      paper_bgcolor: palette.paper,
+      plot_bgcolor: palette.plot,
+      font: { color: palette.text },
       xaxis: {
         title: xAxis,
-        gridcolor: '#334155',
+        gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
       },
       yaxis: {
         title: yAxis,
-        gridcolor: '#334155',
+        gridcolor: palette.grid,
       },
       margin: { t: 30, r: 30, b: 50, l: 50 },
     }),
-    [xAxis, yAxis],
+    [xAxis, yAxis, palette],
   );
 
   const plotConfig = useMemo(
@@ -102,7 +122,7 @@ export function ChartPanel({
         <select
           value={xAxis}
           onChange={(e) => onXAxisChange(e.target.value)}
-          className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-sm"
+          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
         >
           {axisOptions.map((opt) => (
             <option key={opt.key} value={opt.key}>
@@ -114,7 +134,7 @@ export function ChartPanel({
         <select
           value={yAxis}
           onChange={(e) => onYAxisChange(e.target.value)}
-          className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-sm"
+          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
         >
           {axisOptions
             .filter((opt) => opt.key !== 'time')
