@@ -168,6 +168,12 @@ export class WebUsbModbusClient {
     }
   }
 
+  /**
+   * Read Input Registers (Function Code 4)
+   * @param start - Starting register address
+   * @param count - Number of registers to read
+   * @returns Array of signed 16-bit register values
+   */
   async readInputRegisters(start: number, count: number): Promise<number[]> {
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(4, payload);
@@ -181,9 +187,79 @@ export class WebUsbModbusClient {
     return values;
   }
 
+  /**
+   * Read Input Registers as Float32 values with ABCD byte order
+   * Each float32 value is stored in 2 consecutive registers (4 bytes)
+   * ABCD byte order: [Register N: AB] [Register N+1: CD]
+   * @param start - Starting register address (e.g., 5000)
+   * @param count - Number of float32 values to read (will read count*2 registers)
+   * @returns Array of float32 values
+   */
+  async readInputRegistersAsFloat32Abcd(start: number, count: number): Promise<number[]> {
+    // Read twice as many registers since each float32 needs 2 registers
+    const registerCount = count * 2;
+    const payload = [start >> 8, start & 0xff, registerCount >> 8, registerCount & 0xff];
+    const frame = this.buildFrame(4, payload);
+    const expected = 5 + registerCount * 2; // addr + fc + byteCount + data + crc
+    const view = await this.transfer(frame, expected);
+
+    const values: number[] = [];
+    const byteCount = view.getUint8(2);
+
+    // Process pairs of registers as float32 (ABCD byte order = big-endian)
+    for (let i = 0; i < byteCount; i += 4) {
+      const float32Value = view.getFloat32(3 + i, false); // false = big-endian (ABCD)
+      values.push(float32Value);
+    }
+
+    return values;
+  }
+
+  /**
+   * Write Single Register (Function Code 6)
+   * @param address - Register address
+   * @param value - 16-bit value to write
+   */
   async writeSingleRegister(address: number, value: number): Promise<void> {
     const payload = [address >> 8, address & 0xff, value >> 8, value & 0xff];
     const frame = this.buildFrame(6, payload);
     await this.transfer(frame, 8);
+  }
+
+  /**
+   * Write Multiple Holding Registers (Function Code 16)
+   * Writes an array of uint16 values to consecutive Holding Registers
+   * @param start - Starting register address
+   * @param values - Array of uint16 values to write (max 123 registers per Modbus spec)
+   */
+  async writeMultipleHoldingRegisters(start: number, values: number[]): Promise<void> {
+    if (values.length === 0) {
+      throw new Error('No values provided to write');
+    }
+    if (values.length > 123) {
+      throw new Error('Cannot write more than 123 registers in a single request');
+    }
+
+    const count = values.length;
+    const byteCount = count * 2;
+
+    // Build payload: start address (2 bytes) + count (2 bytes) + byte count (1 byte) + data
+    const payload: number[] = [
+      start >> 8,
+      start & 0xff,
+      count >> 8,
+      count & 0xff,
+      byteCount,
+    ];
+
+    // Add register values (each as 2 bytes, big-endian)
+    for (const value of values) {
+      const unsigned = value & 0xffff; // Ensure uint16
+      payload.push(unsigned >> 8, unsigned & 0xff);
+    }
+
+    const frame = this.buildFrame(16, payload);
+    const expected = 8; // addr + fc + start address + count + crc
+    await this.transfer(frame, expected);
   }
 }
