@@ -627,7 +627,7 @@ function App() {
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">a</span>
+                  <span className="text-slate-300 font-medium">Calib(a)</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].a}
@@ -636,7 +636,7 @@ function App() {
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">b</span>
+                  <span className="text-slate-300 font-medium">Calib(b)</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].b}
@@ -645,7 +645,7 @@ function App() {
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">c</span>
+                  <span className="text-slate-300 font-medium">Calib(c)</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].c}
