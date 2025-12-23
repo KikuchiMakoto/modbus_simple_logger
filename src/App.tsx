@@ -105,6 +105,10 @@ function App() {
   const [chart1Y, setChart1Y] = useState('ai0');
   const [chart2X, setChart2X] = useState('time');
   const [chart2Y, setChart2Y] = useState('ai1');
+  const [chart3X, setChart3X] = useState('time');
+  const [chart3Y, setChart3Y] = useState('ai2');
+  const [chart4X, setChart4X] = useState('time');
+  const [chart4Y, setChart4Y] = useState('ai3');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
@@ -651,7 +655,7 @@ function App() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
         <ChartPanel
           title="Chart 1"
           color="#34d399"
@@ -671,6 +675,26 @@ function App() {
           yAxis={chart2Y}
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
+        />
+        <ChartPanel
+          title="Chart 3"
+          color="#f59e0b"
+          dataPoints={dataPoints}
+          axisOptions={axisOptions}
+          xAxis={chart3X}
+          yAxis={chart3Y}
+          onXAxisChange={setChart3X}
+          onYAxisChange={setChart3Y}
+        />
+        <ChartPanel
+          title="Chart 4"
+          color="#ec4899"
+          dataPoints={dataPoints}
+          axisOptions={axisOptions}
+          xAxis={chart4X}
+          yAxis={chart4Y}
+          onXAxisChange={setChart4X}
+          onYAxisChange={setChart4Y}
         />
       </div>
       </div>

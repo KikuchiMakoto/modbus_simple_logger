@@ -69,7 +69,7 @@ export function ChartPanel({
         title: yAxis,
         gridcolor: '#334155',
       },
-      margin: { t: 40, r: 40, b: 60, l: 60 },
+      margin: { t: 30, r: 30, b: 50, l: 50 },
     }),
     [xAxis, yAxis],
   );
@@ -84,8 +84,13 @@ export function ChartPanel({
   );
 
   return (
-    <section className="card space-y-3">
-      <h2 className={`text-lg font-semibold ${color === '#34d399' ? 'text-emerald-400' : 'text-blue-400'}`}>
+    <section className="card space-y-2">
+      <h2 className={`text-lg font-semibold ${
+        color === '#34d399' ? 'text-emerald-400' :
+        color === '#60a5fa' ? 'text-blue-400' :
+        color === '#f59e0b' ? 'text-amber-400' :
+        'text-pink-400'
+      }`}>
         {title}
       </h2>
       <div className="flex flex-wrap items-center gap-3">
@@ -120,7 +125,7 @@ export function ChartPanel({
           </select>
         </div>
       </div>
-      <Plot data={plotData} layout={plotLayout} config={plotConfig} style={{ width: '100%', height: '400px' }} />
+      <Plot data={plotData} layout={plotLayout} config={plotConfig} style={{ width: '100%', height: '300px' }} />
     </section>
   );
 }
