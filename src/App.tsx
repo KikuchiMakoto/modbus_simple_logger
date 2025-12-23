@@ -15,6 +15,7 @@ import {
 } from './utils/calibration';
 import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
 import { ChartPanel } from './components/ChartPanel';
+import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -98,7 +99,44 @@ const axisOptions = [
   })),
 ];
 
+type ThemeMode = 'light' | 'dark';
+
+type ChartAxisSelections = {
+  chart1: { x: string; y: string };
+  chart2: { x: string; y: string };
+  chart3: { x: string; y: string };
+  chart4: { x: string; y: string };
+};
+
+const THEME_COOKIE_KEY = 'theme_preference_v1';
+const CHART_AXES_COOKIE_KEY = 'chart_axes_v1';
+
+const DEFAULT_CHART_AXES: ChartAxisSelections = {
+  chart1: { x: 'time', y: 'raw_00' },
+  chart2: { x: 'time', y: 'raw_01' },
+  chart3: { x: 'time', y: 'raw_02' },
+  chart4: { x: 'time', y: 'raw_03' },
+};
+
+const getSystemTheme = (): ThemeMode => {
+  if (typeof window === 'undefined') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
+
+const loadChartAxes = (): ChartAxisSelections => {
+  const saved = readJsonCookie<Partial<ChartAxisSelections>>(CHART_AXES_COOKIE_KEY) ?? {};
+  return {
+    chart1: { ...DEFAULT_CHART_AXES.chart1, ...saved.chart1 },
+    chart2: { ...DEFAULT_CHART_AXES.chart2, ...saved.chart2 },
+    chart3: { ...DEFAULT_CHART_AXES.chart3, ...saved.chart3 },
+    chart4: { ...DEFAULT_CHART_AXES.chart4, ...saved.chart4 },
+  };
+};
+
 function App() {
+  const savedTheme = useMemo(() => readJsonCookie<ThemeMode>(THEME_COOKIE_KEY), []);
+  const [hasUserThemePreference, setHasUserThemePreference] = useState(() => savedTheme !== null);
+  const [theme, setTheme] = useState<ThemeMode>(() => savedTheme ?? getSystemTheme());
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
@@ -109,14 +147,15 @@ function App() {
   const [status, setStatus] = useState('Disconnected');
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
-  const [chart1X, setChart1X] = useState('time');
-  const [chart1Y, setChart1Y] = useState('raw_00');
-  const [chart2X, setChart2X] = useState('time');
-  const [chart2Y, setChart2Y] = useState('raw_01');
-  const [chart3X, setChart3X] = useState('time');
-  const [chart3Y, setChart3Y] = useState('raw_02');
-  const [chart4X, setChart4X] = useState('time');
-  const [chart4Y, setChart4Y] = useState('raw_03');
+  const initialAxes = useMemo(() => loadChartAxes(), []);
+  const [chart1X, setChart1X] = useState(initialAxes.chart1.x);
+  const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
+  const [chart2X, setChart2X] = useState(initialAxes.chart2.x);
+  const [chart2Y, setChart2Y] = useState(initialAxes.chart2.y);
+  const [chart3X, setChart3X] = useState(initialAxes.chart3.x);
+  const [chart3Y, setChart3Y] = useState(initialAxes.chart3.y);
+  const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
+  const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
@@ -129,8 +168,38 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', theme === 'dark');
+    root.style.colorScheme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    if (!hasUserThemePreference) return;
+    writeJsonCookie(THEME_COOKIE_KEY, theme);
+  }, [theme, hasUserThemePreference]);
+
+  useEffect(() => {
+    if (hasUserThemePreference) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (event: MediaQueryListEvent) => {
+      setTheme(event.matches ? 'dark' : 'light');
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [hasUserThemePreference]);
+
+  useEffect(() => {
     saveAiCalibration(aiCalibration);
   }, [aiCalibration]);
+
+  useEffect(() => {
+    writeJsonCookie(CHART_AXES_COOKIE_KEY, {
+      chart1: { x: chart1X, y: chart1Y },
+      chart2: { x: chart2X, y: chart2Y },
+      chart3: { x: chart3X, y: chart3Y },
+      chart4: { x: chart4X, y: chart4Y },
+    });
+  }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y]);
 
   const updateDataHistory = async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
@@ -463,18 +532,26 @@ function App() {
     }
   };
 
+  const handleToggleTheme = () => {
+    setHasUserThemePreference(true);
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   return (
     <div className="min-h-screen">
-      <div className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
         <div className="p-4">
           <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
-              <p className="text-sm text-slate-400">
+              <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">ModbusRTU Web Serial Logger</h1>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
                 AI 16ch - {formatSerialSettings(serialSettings)}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button className="button-secondary" onClick={handleToggleTheme}>
+                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+              </button>
               <button className="button-secondary" onClick={handleLoadCalibration}>
                 Load Calibration
               </button>
@@ -498,25 +575,25 @@ function App() {
       <div className="p-4 space-y-4">
         <section className="card grid gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           <div>
-            <label className="block text-sm text-slate-400">Slave ID</label>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Slave ID</label>
             <input
               type="number"
               value={slaveId}
               onChange={(e) => setSlaveId(parseInt(e.target.value, 10))}
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               min={1}
               max={247}
               disabled={connected}
             />
           </div>
           <div>
-            <label className="block text-sm text-slate-400">Baud rate</label>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Baud rate</label>
             <select
               value={serialSettings.baudRate}
               onChange={(e) =>
                 setSerialSettings((prev) => ({ ...prev, baudRate: Number(e.target.value) }))
               }
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               disabled={connected}
             >
               {BAUD_OPTIONS.map((baud) => (
@@ -527,7 +604,7 @@ function App() {
             </select>
           </div>
           <div>
-            <label className="block text-sm text-slate-400">Data bits</label>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Data bits</label>
             <select
               value={serialSettings.dataBits}
               onChange={(e) =>
@@ -536,7 +613,7 @@ function App() {
                   dataBits: Number(e.target.value) as SerialSettings['dataBits'],
                 }))
               }
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               disabled={connected}
             >
               {DATA_BITS_OPTIONS.map((bits) => (
@@ -547,7 +624,7 @@ function App() {
             </select>
           </div>
           <div>
-            <label className="block text-sm text-slate-400">Parity</label>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Parity</label>
             <select
               value={serialSettings.parity}
               onChange={(e) =>
@@ -556,7 +633,7 @@ function App() {
                   parity: e.target.value as SerialSettings['parity'],
                 }))
               }
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               disabled={connected}
             >
               {PARITY_OPTIONS.map((opt) => (
@@ -567,7 +644,7 @@ function App() {
             </select>
           </div>
           <div>
-            <label className="block text-sm text-slate-400">Stop bits</label>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Stop bits</label>
             <select
               value={serialSettings.stopBits}
               onChange={(e) =>
@@ -576,7 +653,7 @@ function App() {
                   stopBits: Number(e.target.value) as SerialSettings['stopBits'],
                 }))
               }
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               disabled={connected}
             >
               {STOP_BITS_OPTIONS.map((bits) => (
@@ -587,14 +664,14 @@ function App() {
             </select>
           </div>
           <div>
-            <label className="block text-sm text-slate-400">Polling Rate</label>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Polling Rate</label>
             <select
               value={pollingRate.valueMs}
               onChange={(e) => {
                 const next = POLLING_OPTIONS.find((p) => p.valueMs === Number(e.target.value));
                 if (next) setPollingRate(next);
               }}
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5"
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               {POLLING_OPTIONS.map((opt) => (
                 <option key={opt.valueMs} value={opt.valueMs}>
@@ -622,20 +699,20 @@ function App() {
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
-              className="rounded-lg bg-slate-900/60 border border-slate-700/50 p-2.5 space-y-1"
+              className="rounded-lg bg-slate-100 border border-slate-200 p-2.5 space-y-1 dark:bg-slate-900/60 dark:border-slate-700/50"
             >
-              <div className="text-center font-semibold text-slate-200 pb-0.5 border-b border-slate-700 text-base">
+              <div className="text-center font-semibold text-slate-700 pb-0.5 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
                 {ch.label}
               </div>
               <div className="space-y-1 text-base">
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">Raw(x)</span>
+                  <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
                   <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
                     {ch.raw}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">Calib(a)</span>
+                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(a)</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].a}
@@ -644,7 +721,7 @@ function App() {
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">Calib(b)</span>
+                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(b)</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].b}
@@ -653,7 +730,7 @@ function App() {
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-300 font-medium">Calib(c)</span>
+                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(c)</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].c}
@@ -661,8 +738,8 @@ function App() {
                     className="input-compact w-24"
                   />
                 </div>
-                <div className="flex justify-between items-center pt-0.5 border-t border-slate-700">
-                  <span className="text-slate-300 font-medium">Phy(y)</span>
+                <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
                   <span className="font-bold text-emerald-300 tabular-nums text-xl">
                     {ch.physical.toFixed(3)}
                   </span>
@@ -681,6 +758,7 @@ function App() {
           axisOptions={axisOptions}
           xAxis={chart1X}
           yAxis={chart1Y}
+          isDarkMode={theme === 'dark'}
           onXAxisChange={setChart1X}
           onYAxisChange={setChart1Y}
         />
@@ -691,6 +769,7 @@ function App() {
           axisOptions={axisOptions}
           xAxis={chart2X}
           yAxis={chart2Y}
+          isDarkMode={theme === 'dark'}
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
@@ -701,6 +780,7 @@ function App() {
           axisOptions={axisOptions}
           xAxis={chart3X}
           yAxis={chart3Y}
+          isDarkMode={theme === 'dark'}
           onXAxisChange={setChart3X}
           onYAxisChange={setChart3Y}
         />
@@ -711,6 +791,7 @@ function App() {
           axisOptions={axisOptions}
           xAxis={chart4X}
           yAxis={chart4Y}
+          isDarkMode={theme === 'dark'}
           onXAxisChange={setChart4X}
           onYAxisChange={setChart4Y}
         />
