@@ -12,15 +12,15 @@ body {
 }
 
 .card {
-  @apply rounded-xl bg-slate-900 shadow-lg border border-slate-800 p-4;
+  @apply rounded-xl bg-slate-900 shadow-lg border border-slate-800 p-3;
 }
 
 .button-primary {
-  @apply rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-900 shadow hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed;
+  @apply rounded-lg bg-emerald-500 px-4 py-1.5 font-semibold text-slate-900 shadow hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed;
 }
 
 .button-secondary {
-  @apply rounded-lg border border-slate-700 px-3 py-2 font-semibold text-slate-50 hover:border-emerald-400;
+  @apply rounded-lg border border-slate-700 px-3 py-1.5 font-semibold text-slate-50 hover:border-emerald-400;
 }
 
 .input-compact {

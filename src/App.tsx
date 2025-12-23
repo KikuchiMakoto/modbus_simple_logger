@@ -457,8 +457,8 @@ function App() {
   return (
     <div className="min-h-screen">
       <div className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800">
-        <div className="p-6">
-          <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="p-4">
+          <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
               <p className="text-sm text-slate-400">
@@ -486,127 +486,127 @@ function App() {
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
-        <section className="card grid gap-4 md:grid-cols-4 lg:grid-cols-8">
-        <div>
-          <label className="block text-sm text-slate-400">Slave ID</label>
-          <input
-            type="number"
-            value={slaveId}
-            onChange={(e) => setSlaveId(parseInt(e.target.value, 10))}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
-            min={1}
-            max={247}
-            disabled={connected}
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-slate-400">Baud rate</label>
-          <select
-            value={serialSettings.baudRate}
-            onChange={(e) =>
-              setSerialSettings((prev) => ({ ...prev, baudRate: Number(e.target.value) }))
-            }
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={connected}
-          >
-            {BAUD_OPTIONS.map((baud) => (
-              <option key={baud} value={baud}>
-                {baud} bps
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm text-slate-400">Data bits</label>
-          <select
-            value={serialSettings.dataBits}
-            onChange={(e) =>
-              setSerialSettings((prev) => ({
-                ...prev,
-                dataBits: Number(e.target.value) as SerialSettings['dataBits'],
-              }))
-            }
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={connected}
-          >
-            {DATA_BITS_OPTIONS.map((bits) => (
-              <option key={bits} value={bits}>
-                {bits}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm text-slate-400">Parity</label>
-          <select
-            value={serialSettings.parity}
-            onChange={(e) =>
-              setSerialSettings((prev) => ({
-                ...prev,
-                parity: e.target.value as SerialSettings['parity'],
-              }))
-            }
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={connected}
-          >
-            {PARITY_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt === 'none' ? 'None' : opt.charAt(0).toUpperCase() + opt.slice(1)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm text-slate-400">Stop bits</label>
-          <select
-            value={serialSettings.stopBits}
-            onChange={(e) =>
-              setSerialSettings((prev) => ({
-                ...prev,
-                stopBits: Number(e.target.value) as SerialSettings['stopBits'],
-              }))
-            }
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={connected}
-          >
-            {STOP_BITS_OPTIONS.map((bits) => (
-              <option key={bits} value={bits}>
-                {bits}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm text-slate-400">Polling Rate</label>
-          <select
-            value={pollingRate.valueMs}
-            onChange={(e) => {
-              const next = POLLING_OPTIONS.find((p) => p.valueMs === Number(e.target.value));
-              if (next) setPollingRate(next);
-            }}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2"
-          >
-            {POLLING_OPTIONS.map((opt) => (
-              <option key={opt.valueMs} value={opt.valueMs}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-end gap-2">
-          <button className="button-primary" onClick={handleConnect} disabled={connected}>
-            Connect
-          </button>
-          <button className="button-secondary" onClick={handleDisconnect} disabled={!connected}>
-            Disconnect
-          </button>
-        </div>
-        <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
-      </section>
+      <div className="p-4 space-y-4">
+        <section className="card grid gap-3 md:grid-cols-4 lg:grid-cols-8">
+          <div>
+            <label className="block text-sm text-slate-400">Slave ID</label>
+            <input
+              type="number"
+              value={slaveId}
+              onChange={(e) => setSlaveId(parseInt(e.target.value, 10))}
+              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              min={1}
+              max={247}
+              disabled={connected}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400">Baud rate</label>
+            <select
+              value={serialSettings.baudRate}
+              onChange={(e) =>
+                setSerialSettings((prev) => ({ ...prev, baudRate: Number(e.target.value) }))
+              }
+              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={connected}
+            >
+              {BAUD_OPTIONS.map((baud) => (
+                <option key={baud} value={baud}>
+                  {baud} bps
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400">Data bits</label>
+            <select
+              value={serialSettings.dataBits}
+              onChange={(e) =>
+                setSerialSettings((prev) => ({
+                  ...prev,
+                  dataBits: Number(e.target.value) as SerialSettings['dataBits'],
+                }))
+              }
+              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={connected}
+            >
+              {DATA_BITS_OPTIONS.map((bits) => (
+                <option key={bits} value={bits}>
+                  {bits}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400">Parity</label>
+            <select
+              value={serialSettings.parity}
+              onChange={(e) =>
+                setSerialSettings((prev) => ({
+                  ...prev,
+                  parity: e.target.value as SerialSettings['parity'],
+                }))
+              }
+              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={connected}
+            >
+              {PARITY_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt === 'none' ? 'None' : opt.charAt(0).toUpperCase() + opt.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400">Stop bits</label>
+            <select
+              value={serialSettings.stopBits}
+              onChange={(e) =>
+                setSerialSettings((prev) => ({
+                  ...prev,
+                  stopBits: Number(e.target.value) as SerialSettings['stopBits'],
+                }))
+              }
+              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={connected}
+            >
+              {STOP_BITS_OPTIONS.map((bits) => (
+                <option key={bits} value={bits}>
+                  {bits}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400">Polling Rate</label>
+            <select
+              value={pollingRate.valueMs}
+              onChange={(e) => {
+                const next = POLLING_OPTIONS.find((p) => p.valueMs === Number(e.target.value));
+                if (next) setPollingRate(next);
+              }}
+              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5"
+            >
+              {POLLING_OPTIONS.map((opt) => (
+                <option key={opt.valueMs} value={opt.valueMs}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end gap-2">
+            <button className="button-primary" onClick={handleConnect} disabled={connected}>
+              Connect
+            </button>
+            <button className="button-secondary" onClick={handleDisconnect} disabled={!connected}>
+              Disconnect
+            </button>
+          </div>
+          <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
+        </section>
 
         <section className="card">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-2.5 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
           <span className="text-2xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
@@ -614,9 +614,9 @@ function App() {
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
-              className="rounded-lg bg-slate-900/60 border border-slate-700/50 p-3 space-y-1.5"
+              className="rounded-lg bg-slate-900/60 border border-slate-700/50 p-2.5 space-y-1"
             >
-              <div className="text-center font-semibold text-slate-200 pb-1 border-b border-slate-700 text-base">
+              <div className="text-center font-semibold text-slate-200 pb-0.5 border-b border-slate-700 text-base">
                 {ch.label}
               </div>
               <div className="space-y-1 text-base">
@@ -653,7 +653,7 @@ function App() {
                     className="input-compact w-24"
                   />
                 </div>
-                <div className="flex justify-between items-center pt-1 border-t border-slate-700">
+                <div className="flex justify-between items-center pt-0.5 border-t border-slate-700">
                   <span className="text-slate-300 font-medium">Phy(y)</span>
                   <span className="font-bold text-emerald-300 tabular-nums text-xl">
                     {ch.physical.toFixed(3)}
