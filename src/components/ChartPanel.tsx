@@ -89,45 +89,41 @@ export function ChartPanel({
 
   return (
     <section className="card space-y-2">
-      <h2 className={`text-lg font-semibold ${
-        color === '#34d399' ? 'text-emerald-400' :
-        color === '#60a5fa' ? 'text-blue-400' :
-        color === '#f59e0b' ? 'text-amber-400' :
-        'text-pink-400'
-      }`}>
-        {title}
-      </h2>
-      <div className="flex flex-wrap items-center gap-3">
-        <div>
-          <label className="block text-xs text-slate-400">X Axis</label>
-          <select
-            value={xAxis}
-            onChange={(e) => onXAxisChange(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
-          >
-            {axisOptions.map((opt) => (
+      <div className="flex items-center gap-3">
+        <h2 className={`text-lg font-semibold ${
+          color === '#34d399' ? 'text-emerald-400' :
+          color === '#60a5fa' ? 'text-blue-400' :
+          color === '#f59e0b' ? 'text-amber-400' :
+          'text-pink-400'
+        }`}>
+          {title}
+        </h2>
+        <span className="text-xs text-slate-400">X:</span>
+        <select
+          value={xAxis}
+          onChange={(e) => onXAxisChange(e.target.value)}
+          className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm"
+        >
+          {axisOptions.map((opt) => (
+            <option key={opt.key} value={opt.key}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-slate-400">Y:</span>
+        <select
+          value={yAxis}
+          onChange={(e) => onYAxisChange(e.target.value)}
+          className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm"
+        >
+          {axisOptions
+            .filter((opt) => opt.key !== 'time')
+            .map((opt) => (
               <option key={opt.key} value={opt.key}>
                 {opt.label}
               </option>
             ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-slate-400">Y Axis</label>
-          <select
-            value={yAxis}
-            onChange={(e) => onYAxisChange(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-2"
-          >
-            {axisOptions
-              .filter((opt) => opt.key !== 'time')
-              .map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
-          </select>
-        </div>
+        </select>
       </div>
       <Plot data={plotData} layout={plotLayout} config={plotConfig} style={{ width: '100%', height: '300px' }} />
     </section>
