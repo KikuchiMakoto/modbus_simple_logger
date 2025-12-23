@@ -23,6 +23,7 @@ const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '2 s', valueMs: 2000 },
   { label: '5 s', valueMs: 5000 },
   { label: '10 s', valueMs: 10000 },
+  { label: '20 s', valueMs: 20000 },
   { label: '30 s', valueMs: 30000 },
   { label: '1 min', valueMs: 60000 },
   { label: '2 min', valueMs: 120000 },
