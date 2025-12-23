@@ -441,34 +441,36 @@ function App() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
-          <p className="text-sm text-slate-400">
-            AI 16ch - {formatSerialSettings(serialSettings)}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button className="button-secondary" onClick={handleLoadCalibration}>
-            Load Calibration
-          </button>
-          <button className="button-secondary" onClick={handleDownloadCalibration}>
-            Download Calibration
-          </button>
-          {!logHandle ? (
-            <button className="button-secondary" onClick={handleStartSave}>
-              Start Save
-            </button>
-          ) : (
-            <button className="button-secondary" onClick={handleStopSave}>
-              Stop Save
-            </button>
-          )}
-        </div>
-      </header>
+    <div className="min-h-screen">
+      <div className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800">
+        <div className="p-6 pb-0 space-y-6">
+          <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
+              <p className="text-sm text-slate-400">
+                AI 16ch - {formatSerialSettings(serialSettings)}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button className="button-secondary" onClick={handleLoadCalibration}>
+                Load Calibration
+              </button>
+              <button className="button-secondary" onClick={handleDownloadCalibration}>
+                Download Calibration
+              </button>
+              {!logHandle ? (
+                <button className="button-secondary" onClick={handleStartSave}>
+                  Start Save
+                </button>
+              ) : (
+                <button className="button-secondary" onClick={handleStopSave}>
+                  Stop Save
+                </button>
+              )}
+            </div>
+          </header>
 
-      <section className="card grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <section className="card grid gap-4 md:grid-cols-4 lg:grid-cols-8 mb-6">
         <div>
           <label className="block text-sm text-slate-400">Slave ID</label>
           <input
@@ -585,54 +587,68 @@ function App() {
         </div>
         <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
       </section>
+        </div>
+      </div>
 
-      <section className="card">
-        <div className="mb-2 flex items-center justify-between">
+      <div className="p-6 space-y-6">
+        <section className="card">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
           <span className="text-xs text-slate-500">Raw | a·x² + b·x + c = Physical</span>
         </div>
-        <div className="grid gap-1 text-base">
-          <div className="grid grid-cols-6 gap-2 text-sm text-slate-500">
-            <span>Name</span>
-            <span>Raw (x)</span>
-            <span>a</span>
-            <span>b</span>
-            <span>c</span>
-            <span>Physical</span>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
-              className="grid grid-cols-6 items-center gap-2 rounded-md bg-slate-900/60 px-2 py-2"
+              className="rounded-lg bg-slate-900/60 border border-slate-700/50 p-3 space-y-2"
             >
-              <span className="text-slate-200">{ch.label}</span>
-              <span className={`font-semibold tabular-nums text-right ${getStatusColor(ch.status)}`}>
-                {ch.raw}
-              </span>
-              <input
-                type="number"
-                step="0.001"
-                value={aiCalibration[idx].a}
-                onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
-                className="input-compact"
-              />
-              <input
-                type="number"
-                step="0.001"
-                value={aiCalibration[idx].b}
-                onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
-                className="input-compact"
-              />
-              <input
-                type="number"
-                step="0.001"
-                value={aiCalibration[idx].c}
-                onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
-                className="input-compact"
-              />
-              <span className="font-semibold text-emerald-300 tabular-nums text-right">
-                {ch.physical.toFixed(3)}
-              </span>
+              <div className="text-center font-semibold text-slate-200 pb-1 border-b border-slate-700">
+                {ch.label}
+              </div>
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">Raw</span>
+                  <span className={`font-semibold tabular-nums ${getStatusColor(ch.status)}`}>
+                    {ch.raw}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">a</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={aiCalibration[idx].a}
+                    onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
+                    className="input-compact w-20 text-xs"
+                  />
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">b</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={aiCalibration[idx].b}
+                    onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
+                    className="input-compact w-20 text-xs"
+                  />
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">c</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={aiCalibration[idx].c}
+                    onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
+                    className="input-compact w-20 text-xs"
+                  />
+                </div>
+                <div className="flex justify-between items-center pt-1 border-t border-slate-700">
+                  <span className="text-slate-400 text-xs font-semibold">Phy (ax²+bx+c)</span>
+                  <span className="font-semibold text-emerald-300 tabular-nums text-xs">
+                    {ch.physical.toFixed(3)}
+                  </span>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -659,6 +675,7 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
+      </div>
       </div>
     </div>
   );
