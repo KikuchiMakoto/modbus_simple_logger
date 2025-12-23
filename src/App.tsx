@@ -608,7 +608,7 @@ function App() {
         <section className="card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
-          <span className="text-sm font-semibold text-emerald-400">a·x² + b·x + c = y</span>
+          <span className="text-xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
           {aiChannels.map((ch, idx) => (
