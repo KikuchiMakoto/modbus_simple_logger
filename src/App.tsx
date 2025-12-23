@@ -487,7 +487,7 @@ function App() {
       </div>
 
       <div className="p-4 space-y-4">
-        <section className="card grid gap-3 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-6 xl2:grid-cols-8">
+        <section className="card grid gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           <div>
             <label className="block text-sm text-slate-400">Slave ID</label>
             <input
@@ -610,7 +610,7 @@ function App() {
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
           <span className="text-2xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
