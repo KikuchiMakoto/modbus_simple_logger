@@ -52,7 +52,7 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
       id: idx,
       raw,
       physical,
-      label: `AI${idx}`,
+      label: `CH ${idx.toString().padStart(2, '0')}`,
       status: getAiStatus(raw),
     };
   });
