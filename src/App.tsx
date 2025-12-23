@@ -14,6 +14,7 @@ import {
   getAiStatus,
 } from './utils/calibration';
 import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
+import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
@@ -68,18 +69,6 @@ function downloadJson(filename: string, data: unknown) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
-}
-
-function formatTimestamp(ts: number) {
-  const date = new Date(ts);
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  const ss = String(date.getSeconds()).padStart(2, '0');
-  const fff = String(date.getMilliseconds()).padStart(3, '0');
-  return `${yyyy}/${mm}/${dd} ${hh}:${min}:${ss}.${fff}`;
 }
 
 function formatSerialSettings(settings: SerialSettings) {
@@ -146,7 +135,7 @@ function App() {
   const [acquiring, setAcquiring] = useState(false);
   const [status, setStatus] = useState('Disconnected');
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
-  const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
+  const [tsvWriter, setTsvWriter] = useState<TsvWriter | null>(null);
   const initialAxes = useMemo(() => loadChartAxes(), []);
   const [chart1X, setChart1X] = useState(initialAxes.chart1.x);
   const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
@@ -214,7 +203,7 @@ function App() {
       await dataStorage.addDataPoint(dataPoint);
 
       // If not saving to file, keep only latest 512 points in IndexedDB
-      if (!logHandle) {
+      if (!tsvWriter) {
         await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
       }
 
@@ -233,7 +222,7 @@ function App() {
 
       let displayPoints: DataPoint[];
 
-      if (!logHandle) {
+      if (!tsvWriter) {
         // Data save is OFF: display all points (should be max 512)
         displayPoints = allPoints.map(p => ({
           timestamp: p.timestamp,
@@ -268,15 +257,6 @@ function App() {
     }
   };
 
-  const appendLog = async (aiRaw: number[], aiPhysical: number[]) => {
-    if (!logHandle) return;
-    const timestamp = formatTimestamp(Date.now());
-    const rawValues = aiRaw.map(v => v.toString());
-    const phyValues = aiPhysical.map(v => v.toFixed(3));
-    const row = [timestamp, ...rawValues, ...phyValues].join('\t') + '\n';
-    await logHandle.write(row);
-  };
-
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     try {
@@ -297,8 +277,9 @@ function App() {
       // Wait for data history update to complete
       await updateDataHistory(aiRaw, aiPhysical);
 
-      if (logHandle) {
-        await appendLog(aiRaw, aiPhysical);
+      // Write to TSV file if recording is active
+      if (tsvWriter) {
+        await tsvWriter.writeRow(Date.now(), aiRaw, aiPhysical);
       }
 
       setStatus('Polling');
@@ -306,7 +287,7 @@ function App() {
       console.error(err);
       setStatus((err as Error).message);
     }
-  }, [aiCalibration, logHandle]);
+  }, [aiCalibration, tsvWriter]);
 
   const startPolling = useCallback(() => {
     if (pollTimer.current) window.clearInterval(pollTimer.current);
@@ -470,48 +451,29 @@ function App() {
   };
 
   const handleStartSave = async () => {
-    if (!('showSaveFilePicker' in window)) {
-      setStatus('File System Access API not supported');
-      return;
-    }
     try {
-      const fileHandle = await window.showSaveFilePicker({
-        suggestedName: `modbus-log-${new Date().toISOString().replace(/[:.]/g, '-')}.tsv`,
-        types: [
-          {
-            description: 'TSV Files',
-            accept: { 'text/tab-separated-values': ['.tsv'] },
-          },
-        ],
-      });
-      const stream = await fileHandle.createWritable();
-
-      // Create header with timestamp, ai_raw_XX, ai_phy_XX format
-      const rawHeaders = Array.from({ length: AI_CHANNELS }, (_, i) =>
-        `ai_raw_${i.toString().padStart(2, '0')}`
-      );
-      const phyHeaders = Array.from({ length: AI_CHANNELS }, (_, i) =>
-        `ai_phy_${i.toString().padStart(2, '0')}`
-      );
-      const header = ['timestamp', ...rawHeaders, ...phyHeaders].join('\t') + '\n';
-
-      await stream.write(header);
+      // Create TSV writer (this will prompt user for file location)
+      const writer = await createTsvWriter(AI_CHANNELS);
 
       // Clear IndexedDB when starting new recording session
       await dataStorage.clearAllData();
       setDataPoints([]);
 
-      setLogHandle(stream);
+      setTsvWriter(writer);
       setStatus('Saving data to file');
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // User cancelled the file picker
+        return;
+      }
       setStatus((err as Error).message);
     }
   };
 
   const handleStopSave = async () => {
-    if (logHandle) {
-      await logHandle.close();
-      setLogHandle(null);
+    if (tsvWriter) {
+      await tsvWriter.close();
+      setTsvWriter(null);
 
       // When stopping save, keep only latest 512 points in IndexedDB
       await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
@@ -601,7 +563,7 @@ function App() {
               <button className="button-secondary" onClick={handleDownloadCalibration}>
                 Download Calibration
               </button>
-              {!logHandle ? (
+              {!tsvWriter ? (
                 <button className="button-primary" onClick={handleStartSave}>
                   Start Save
                 </button>
