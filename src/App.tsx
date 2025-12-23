@@ -606,56 +606,56 @@ function App() {
       </section>
 
         <section className="card">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
-          <span className="text-xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
+          <span className="text-2xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
-              className="rounded-lg bg-slate-900/60 border border-slate-700/50 p-3 space-y-2"
+              className="rounded-lg bg-slate-900/60 border border-slate-700/50 p-3 space-y-1.5"
             >
-              <div className="text-center font-semibold text-slate-200 pb-1 border-b border-slate-700">
+              <div className="text-center font-semibold text-slate-200 pb-1 border-b border-slate-700 text-base">
                 {ch.label}
               </div>
-              <div className="space-y-1.5 text-sm">
+              <div className="space-y-1 text-base">
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 text-xs">Raw(x)</span>
-                  <span className={`font-semibold tabular-nums ${getStatusColor(ch.status)}`}>
+                  <span className="text-slate-300 font-medium">Raw(x)</span>
+                  <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
                     {ch.raw}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 text-xs">a</span>
+                  <span className="text-slate-300 font-medium">a</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].a}
                     onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
-                    className="input-compact w-20 text-xs"
+                    className="input-compact w-24"
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 text-xs">b</span>
+                  <span className="text-slate-300 font-medium">b</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].b}
                     onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
-                    className="input-compact w-20 text-xs"
+                    className="input-compact w-24"
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 text-xs">c</span>
+                  <span className="text-slate-300 font-medium">c</span>
                   <input
                     type="number"
                     value={aiCalibration[idx].c}
                     onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
-                    className="input-compact w-20 text-xs"
+                    className="input-compact w-24"
                   />
                 </div>
                 <div className="flex justify-between items-center pt-1 border-t border-slate-700">
-                  <span className="text-slate-400 text-xs">Phy(y)</span>
-                  <span className="font-semibold text-emerald-300 tabular-nums text-xs">
+                  <span className="text-slate-300 font-medium">Phy(y)</span>
+                  <span className="font-bold text-emerald-300 tabular-nums text-xl">
                     {ch.physical.toFixed(3)}
                   </span>
                 </div>
