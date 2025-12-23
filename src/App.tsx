@@ -87,7 +87,14 @@ function formatSerialSettings(settings: SerialSettings) {
 
 const axisOptions = [
   { key: 'time', label: 'Timestamp (ms)' },
-  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({ key: `ai${idx}`, label: `AI${idx}` })),
+  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
+    key: `raw_${idx.toString().padStart(2, '0')}`,
+    label: `raw_${idx.toString().padStart(2, '0')}`
+  })),
+  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
+    key: `phy_${idx.toString().padStart(2, '0')}`,
+    label: `phy_${idx.toString().padStart(2, '0')}`
+  })),
 ];
 
 function App() {
@@ -102,9 +109,13 @@ function App() {
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
   const [chart1X, setChart1X] = useState('time');
-  const [chart1Y, setChart1Y] = useState('ai0');
+  const [chart1Y, setChart1Y] = useState('phy_00');
   const [chart2X, setChart2X] = useState('time');
-  const [chart2Y, setChart2Y] = useState('ai1');
+  const [chart2Y, setChart2Y] = useState('phy_01');
+  const [chart3X, setChart3X] = useState('time');
+  const [chart3Y, setChart3Y] = useState('phy_02');
+  const [chart4X, setChart4X] = useState('time');
+  const [chart4Y, setChart4Y] = useState('phy_03');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
@@ -156,14 +167,16 @@ function App() {
         // Data save is OFF: display all points (should be max 512)
         displayPoints = allPoints.map(p => ({
           timestamp: p.timestamp,
-          ai: p.aiPhysical,
+          aiRaw: p.aiRaw,
+          aiPhysical: p.aiPhysical,
         }));
       } else {
         // Data save is ON: decimate to max 512 points
         if (allPoints.length <= MAX_POINTS_IN_MEMORY) {
           displayPoints = allPoints.map(p => ({
             timestamp: p.timestamp,
-            ai: p.aiPhysical,
+            aiRaw: p.aiRaw,
+            aiPhysical: p.aiPhysical,
           }));
         } else {
           // Decimate by integer stride
@@ -172,7 +185,8 @@ function App() {
             .filter((_, idx) => idx % stride === 0)
             .map(p => ({
               timestamp: p.timestamp,
-              ai: p.aiPhysical,
+              aiRaw: p.aiRaw,
+              aiPhysical: p.aiPhysical,
             }));
         }
       }
@@ -443,7 +457,7 @@ function App() {
   return (
     <div className="min-h-screen">
       <div className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800">
-        <div className="p-6 pb-0 space-y-6">
+        <div className="p-6">
           <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
@@ -469,8 +483,11 @@ function App() {
               )}
             </div>
           </header>
+        </div>
+      </div>
 
-          <section className="card grid gap-4 md:grid-cols-4 lg:grid-cols-8 mb-6">
+      <div className="p-6 space-y-6">
+        <section className="card grid gap-4 md:grid-cols-4 lg:grid-cols-8">
         <div>
           <label className="block text-sm text-slate-400">Slave ID</label>
           <input
@@ -587,16 +604,13 @@ function App() {
         </div>
         <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
       </section>
-        </div>
-      </div>
 
-      <div className="p-6 space-y-6">
         <section className="card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
-          <span className="text-xs text-slate-500">Raw | a·x² + b·x + c = Physical</span>
+          <span className="text-sm font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-3">
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
@@ -616,7 +630,6 @@ function App() {
                   <span className="text-slate-400 text-xs">a</span>
                   <input
                     type="number"
-                    step="0.001"
                     value={aiCalibration[idx].a}
                     onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
                     className="input-compact w-20 text-xs"
@@ -626,7 +639,6 @@ function App() {
                   <span className="text-slate-400 text-xs">b</span>
                   <input
                     type="number"
-                    step="0.001"
                     value={aiCalibration[idx].b}
                     onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
                     className="input-compact w-20 text-xs"
@@ -636,14 +648,13 @@ function App() {
                   <span className="text-slate-400 text-xs">c</span>
                   <input
                     type="number"
-                    step="0.001"
                     value={aiCalibration[idx].c}
                     onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
                     className="input-compact w-20 text-xs"
                   />
                 </div>
                 <div className="flex justify-between items-center pt-1 border-t border-slate-700">
-                  <span className="text-slate-400 text-xs font-semibold">Phy (ax²+bx+c)</span>
+                  <span className="text-slate-400 text-xs">Phy(y)</span>
                   <span className="font-semibold text-emerald-300 tabular-nums text-xs">
                     {ch.physical.toFixed(3)}
                   </span>
@@ -654,7 +665,7 @@ function App() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
         <ChartPanel
           title="Chart 1"
           color="#34d399"
@@ -674,6 +685,26 @@ function App() {
           yAxis={chart2Y}
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
+        />
+        <ChartPanel
+          title="Chart 3"
+          color="#f59e0b"
+          dataPoints={dataPoints}
+          axisOptions={axisOptions}
+          xAxis={chart3X}
+          yAxis={chart3Y}
+          onXAxisChange={setChart3X}
+          onYAxisChange={setChart3Y}
+        />
+        <ChartPanel
+          title="Chart 4"
+          color="#ec4899"
+          dataPoints={dataPoints}
+          axisOptions={axisOptions}
+          xAxis={chart4X}
+          yAxis={chart4Y}
+          onXAxisChange={setChart4X}
+          onYAxisChange={setChart4Y}
         />
       </div>
       </div>
