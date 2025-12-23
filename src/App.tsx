@@ -328,7 +328,7 @@ function App() {
       stopPolling();
     }
     return () => stopPolling();
-  }, [acquiring, pollingRate]);
+  }, [acquiring, pollingRate, aiCalibration, logHandle]);
 
   const handleConnect = async () => {
     try {
