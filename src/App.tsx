@@ -109,13 +109,13 @@ function App() {
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
   const [chart1X, setChart1X] = useState('time');
-  const [chart1Y, setChart1Y] = useState('phy_00');
+  const [chart1Y, setChart1Y] = useState('raw_00');
   const [chart2X, setChart2X] = useState('time');
-  const [chart2Y, setChart2Y] = useState('phy_01');
+  const [chart2Y, setChart2Y] = useState('raw_01');
   const [chart3X, setChart3X] = useState('time');
-  const [chart3Y, setChart3Y] = useState('phy_02');
+  const [chart3Y, setChart3Y] = useState('raw_02');
   const [chart4X, setChart4X] = useState('time');
-  const [chart4Y, setChart4Y] = useState('phy_03');
+  const [chart4Y, setChart4Y] = useState('raw_03');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
