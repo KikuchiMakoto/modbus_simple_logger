@@ -25,7 +25,8 @@ export type PollingRateOption = {
 
 export type DataPoint = {
   timestamp: number;
-  ai: number[];
+  aiRaw: number[];
+  aiPhysical: number[];
 };
 
 export type SerialParity = 'none' | 'odd' | 'even';

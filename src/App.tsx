@@ -87,7 +87,14 @@ function formatSerialSettings(settings: SerialSettings) {
 
 const axisOptions = [
   { key: 'time', label: 'Timestamp (ms)' },
-  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({ key: `ai${idx}`, label: `AI${idx}` })),
+  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
+    key: `raw_${idx.toString().padStart(2, '0')}`,
+    label: `raw_${idx.toString().padStart(2, '0')}`
+  })),
+  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
+    key: `phy_${idx.toString().padStart(2, '0')}`,
+    label: `phy_${idx.toString().padStart(2, '0')}`
+  })),
 ];
 
 function App() {
@@ -102,13 +109,13 @@ function App() {
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [logHandle, setLogHandle] = useState<FileSystemWritableFileStream | null>(null);
   const [chart1X, setChart1X] = useState('time');
-  const [chart1Y, setChart1Y] = useState('ai0');
+  const [chart1Y, setChart1Y] = useState('phy_00');
   const [chart2X, setChart2X] = useState('time');
-  const [chart2Y, setChart2Y] = useState('ai1');
+  const [chart2Y, setChart2Y] = useState('phy_01');
   const [chart3X, setChart3X] = useState('time');
-  const [chart3Y, setChart3Y] = useState('ai2');
+  const [chart3Y, setChart3Y] = useState('phy_02');
   const [chart4X, setChart4X] = useState('time');
-  const [chart4Y, setChart4Y] = useState('ai3');
+  const [chart4Y, setChart4Y] = useState('phy_03');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
@@ -160,14 +167,16 @@ function App() {
         // Data save is OFF: display all points (should be max 512)
         displayPoints = allPoints.map(p => ({
           timestamp: p.timestamp,
-          ai: p.aiPhysical,
+          aiRaw: p.aiRaw,
+          aiPhysical: p.aiPhysical,
         }));
       } else {
         // Data save is ON: decimate to max 512 points
         if (allPoints.length <= MAX_POINTS_IN_MEMORY) {
           displayPoints = allPoints.map(p => ({
             timestamp: p.timestamp,
-            ai: p.aiPhysical,
+            aiRaw: p.aiRaw,
+            aiPhysical: p.aiPhysical,
           }));
         } else {
           // Decimate by integer stride
@@ -176,7 +185,8 @@ function App() {
             .filter((_, idx) => idx % stride === 0)
             .map(p => ({
               timestamp: p.timestamp,
-              ai: p.aiPhysical,
+              aiRaw: p.aiRaw,
+              aiPhysical: p.aiPhysical,
             }));
         }
       }

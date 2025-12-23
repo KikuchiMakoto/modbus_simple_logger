@@ -20,9 +20,13 @@ interface ChartPanelProps {
 
 function resolveAxisValue(point: DataPoint, key: string): number {
   if (key === 'time') return point.timestamp;
-  if (key.startsWith('ai')) {
-    const idx = Number(key.replace('ai', ''));
-    return point.ai[idx];
+  if (key.startsWith('raw_')) {
+    const idx = Number(key.replace('raw_', ''));
+    return point.aiRaw[idx];
+  }
+  if (key.startsWith('phy_')) {
+    const idx = Number(key.replace('phy_', ''));
+    return point.aiPhysical[idx];
   }
   return 0;
 }
