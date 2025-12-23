@@ -4,7 +4,7 @@
 
 body {
   @apply bg-slate-50 text-slate-900 min-h-screen dark:bg-slate-950 dark:text-slate-100;
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .card {
