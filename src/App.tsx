@@ -86,7 +86,7 @@ function formatSerialSettings(settings: SerialSettings) {
 }
 
 const axisOptions = [
-  { key: 'time', label: 'Timestamp (ms)' },
+  { key: 'time', label: 'Time' },
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
     key: `raw_${idx.toString().padStart(2, '0')}`,
     label: `raw_${idx.toString().padStart(2, '0')}`
