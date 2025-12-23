@@ -443,7 +443,7 @@ function App() {
   return (
     <div className="min-h-screen">
       <div className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800">
-        <div className="p-6 pb-0 space-y-6">
+        <div className="p-6">
           <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-emerald-400">ModbusRTU Web Serial Logger</h1>
@@ -469,8 +469,11 @@ function App() {
               )}
             </div>
           </header>
+        </div>
+      </div>
 
-          <section className="card grid gap-4 md:grid-cols-4 lg:grid-cols-8 mb-6">
+      <div className="p-6 space-y-6">
+        <section className="card grid gap-4 md:grid-cols-4 lg:grid-cols-8">
         <div>
           <label className="block text-sm text-slate-400">Slave ID</label>
           <input
@@ -587,16 +590,13 @@ function App() {
         </div>
         <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
       </section>
-        </div>
-      </div>
 
-      <div className="p-6 space-y-6">
         <section className="card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
-          <span className="text-xs text-slate-500">Raw | a·x² + b·x + c = Physical</span>
+          <span className="text-sm font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-3">
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
@@ -616,7 +616,6 @@ function App() {
                   <span className="text-slate-400 text-xs">a</span>
                   <input
                     type="number"
-                    step="0.001"
                     value={aiCalibration[idx].a}
                     onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
                     className="input-compact w-20 text-xs"
@@ -626,7 +625,6 @@ function App() {
                   <span className="text-slate-400 text-xs">b</span>
                   <input
                     type="number"
-                    step="0.001"
                     value={aiCalibration[idx].b}
                     onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
                     className="input-compact w-20 text-xs"
@@ -636,14 +634,13 @@ function App() {
                   <span className="text-slate-400 text-xs">c</span>
                   <input
                     type="number"
-                    step="0.001"
                     value={aiCalibration[idx].c}
                     onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
                     className="input-compact w-20 text-xs"
                   />
                 </div>
                 <div className="flex justify-between items-center pt-1 border-t border-slate-700">
-                  <span className="text-slate-400 text-xs font-semibold">Phy (ax²+bx+c)</span>
+                  <span className="text-slate-400 text-xs">Phy(y)</span>
                   <span className="font-semibold text-emerald-300 tabular-nums text-xs">
                     {ch.physical.toFixed(3)}
                   </span>
