@@ -312,6 +312,14 @@ function App() {
     }
   };
 
+  const handleToggleConnection = async () => {
+    if (connected) {
+      await handleDisconnect();
+    } else {
+      await handleConnect();
+    }
+  };
+
   const updateAiCalibration = (idx: number, key: keyof AiCalibration, value: number) => {
     setAiCalibration((prev) => {
       const next = [...prev];
@@ -595,11 +603,11 @@ function App() {
             </select>
           </div>
           <div className="flex items-end gap-2">
-            <button className="button-primary" onClick={handleConnect} disabled={connected}>
-              Connect
-            </button>
-            <button className="button-secondary" onClick={handleDisconnect} disabled={!connected}>
-              Disconnect
+            <button
+              className={connected ? 'button-secondary' : 'button-primary'}
+              onClick={handleToggleConnection}
+            >
+              {connected ? 'Disconnect' : 'Connect'}
             </button>
           </div>
           <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
