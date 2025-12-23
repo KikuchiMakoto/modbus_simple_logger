@@ -31,7 +31,7 @@ const POLLING_OPTIONS: PollingRateOption[] = [
 
 const AI_CHANNELS = 16;
 const AO_CHANNELS = 8;  // Used only for initialization
-const BAUD_OPTIONS = [9600, 19200, 38400, 57600, 115200];
+const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
 const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
