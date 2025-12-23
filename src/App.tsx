@@ -481,11 +481,11 @@ function App() {
                 Download Calibration
               </button>
               {!logHandle ? (
-                <button className="button-secondary" onClick={handleStartSave}>
+                <button className="button-primary" onClick={handleStartSave}>
                   Start Save
                 </button>
               ) : (
-                <button className="button-secondary" onClick={handleStopSave}>
+                <button className="button-primary" onClick={handleStopSave}>
                   Stop Save
                 </button>
               )}
@@ -610,7 +610,6 @@ function App() {
               {connected ? 'Disconnect' : 'Connect'}
             </button>
           </div>
-          <div className="text-sm text-emerald-300 lg:col-span-2">Status: {status}</div>
         </section>
 
         <section className="card">
