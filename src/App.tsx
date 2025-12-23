@@ -621,7 +621,7 @@ function App() {
               </div>
               <div className="space-y-1.5 text-sm">
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 text-xs">Raw</span>
+                  <span className="text-slate-400 text-xs">Raw(x)</span>
                   <span className={`font-semibold tabular-nums ${getStatusColor(ch.status)}`}>
                     {ch.raw}
                   </span>
