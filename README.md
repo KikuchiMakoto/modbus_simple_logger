@@ -1,6 +1,13 @@
 # modbus_simple_logger
 
-Bun + React + TypeScript + Tailwind 製の WebUSB Modbus RTU ロガー SPA です。AI16ch / AO8ch 対応、38400bps デフォルトのポーリング設定、キャリブレーション保存・ダウンロード、ローカルフォルダへのストリーミング保存、散布ラインチャート表示を備えています。
+Bun + React + TypeScript + Tailwind 製の WebUSB Modbus RTU ロガー SPA です。  
+AI16ch 対応、38400bps デフォルトのポーリング設定、  
+キャリブレーション保存・ダウンロード、  
+ローカルフォルダへのストリーミング保存、  
+散布ラインチャート表示を備えています。  
+
+## WebApp
+https://kikuchimakoto.github.io/modbus_simple_logger/
 
 ## セットアップ
 
