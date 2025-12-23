@@ -88,8 +88,8 @@ export function ChartPanel({
   );
 
   return (
-    <section className="card space-y-2">
-      <div className="flex items-center gap-3">
+    <section className="card space-y-1.5">
+      <div className="flex items-center gap-2">
         <h2 className={`text-lg font-semibold ${
           color === '#34d399' ? 'text-emerald-400' :
           color === '#60a5fa' ? 'text-blue-400' :
@@ -102,7 +102,7 @@ export function ChartPanel({
         <select
           value={xAxis}
           onChange={(e) => onXAxisChange(e.target.value)}
-          className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm"
+          className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-sm"
         >
           {axisOptions.map((opt) => (
             <option key={opt.key} value={opt.key}>
@@ -114,7 +114,7 @@ export function ChartPanel({
         <select
           value={yAxis}
           onChange={(e) => onYAxisChange(e.target.value)}
-          className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm"
+          className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-sm"
         >
           {axisOptions
             .filter((opt) => opt.key !== 'time')
