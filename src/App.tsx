@@ -507,7 +507,7 @@ function App() {
         <div className="p-4">
           <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">ModbusRTU Web Serial Logger</h1>
+              <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">Modbus Simple Logger</h1>
               <p className="text-sm text-slate-600 dark:text-slate-400">
                 AI 16ch - {formatSerialSettings(serialSettings)}
               </p>
