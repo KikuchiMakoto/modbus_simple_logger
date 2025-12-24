@@ -605,7 +605,7 @@ function App() {
       </div>
 
       <div className="p-4 space-y-4">
-        <section className="card grid gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+        <section className="card grid gap-3 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
           <div>
             <label className="block text-sm text-slate-600 dark:text-slate-400">Slave ID</label>
             <input
