@@ -11,3 +11,18 @@ if (rootElement) {
     </React.StrictMode>,
   );
 }
+
+// Service Worker登録（PWA機能）
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
+    navigator.serviceWorker
+      .register(swUrl)
+      .then((registration) => {
+        console.log('SW registered:', registration);
+      })
+      .catch((error) => {
+        console.log('SW registration failed:', error);
+      });
+  });
+}

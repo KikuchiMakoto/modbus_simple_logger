@@ -1,0 +1,25 @@
+{
+  "name": "Modbus WebUSB Logger",
+  "short_name": "Modbus Logger",
+  "description": "Modbus WebUSB data logger and visualization tool",
+  "start_url": "/modbus_simple_logger/",
+  "scope": "/modbus_simple_logger/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#0f172a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/modbus_simple_logger/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/modbus_simple_logger/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
