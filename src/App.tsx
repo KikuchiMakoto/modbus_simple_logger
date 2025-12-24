@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { WebUsbModbusClient } from './modbus/webusbClient';
+import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
   AiChannel,
@@ -17,6 +17,14 @@ import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/data
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
+
+// Polyfill Web Serial API for environments without native support (e.g., Android)
+// Uses WebUSB as fallback when Web Serial API is not available
+import { serial as serialPolyfill } from 'web-serial-polyfill';
+if (!('serial' in navigator)) {
+  // @ts-ignore - Add polyfill to navigator
+  navigator.serial = serialPolyfill;
+}
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -59,7 +67,6 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
       status: getAiStatus(raw),
     };
   });
-
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -145,7 +152,7 @@ function App() {
   const [chart3Y, setChart3Y] = useState(initialAxes.chart3.y);
   const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
-  const clientRef = useRef<WebUsbModbusClient | null>(null);
+  const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
   // Initialize IndexedDB
@@ -320,7 +327,9 @@ function App() {
       await dataStorage.clearAllData();
       setDataPoints([]);
 
-      const client = new WebUsbModbusClient(slaveId, serialSettings);
+      // Always use WebSerialModbusClient
+      // web-serial-polyfill automatically falls back to WebUSB on unsupported platforms
+      const client = new WebSerialModbusClient(slaveId, serialSettings);
       await client.connect();
       clientRef.current = client;
 

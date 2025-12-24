@@ -132,6 +132,20 @@ export class WebSerialModbusClient {
 
     // Convert to DataView
     const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
+
+    // Validate CRC16 of received data
+    if (responseArray.length < 3) {
+      throw new Error('Response too short for CRC validation');
+    }
+
+    const dataWithoutCrc = responseArray.slice(0, -2);
+    const receivedCrc = responseArray[responseArray.length - 2] | (responseArray[responseArray.length - 1] << 8);
+    const calculatedCrc = crc16(Buffer.from(dataWithoutCrc));
+
+    if (receivedCrc !== calculatedCrc) {
+      throw new Error(`CRC mismatch: expected 0x${calculatedCrc.toString(16)}, got 0x${receivedCrc.toString(16)}`);
+    }
+
     return new DataView(responseArray.buffer);
   }
 
