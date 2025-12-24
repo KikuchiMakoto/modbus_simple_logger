@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { WebUsbModbusClient } from './modbus/webusbClient';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -19,8 +18,13 @@ import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
-// Common interface for both client types
-type ModbusClient = WebUsbModbusClient | WebSerialModbusClient;
+// Polyfill Web Serial API for environments without native support (e.g., Android)
+// Uses WebUSB as fallback when Web Serial API is not available
+import { serial as serialPolyfill } from 'web-serial-polyfill';
+if (!('serial' in navigator)) {
+  // @ts-ignore - Add polyfill to navigator
+  navigator.serial = serialPolyfill;
+}
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -63,14 +67,6 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
       status: getAiStatus(raw),
     };
   });
-
-/**
- * Check if Web Serial API is available (preferred for Windows/macOS/Linux)
- * Falls back to WebUSB for Android and environments without CDC-ACM drivers
- */
-function isWebSerialAvailable(): boolean {
-  return typeof navigator !== 'undefined' && 'serial' in navigator;
-}
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -156,7 +152,7 @@ function App() {
   const [chart3Y, setChart3Y] = useState(initialAxes.chart3.y);
   const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
-  const clientRef = useRef<ModbusClient | null>(null);
+  const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
   // Initialize IndexedDB
@@ -331,26 +327,15 @@ function App() {
       await dataStorage.clearAllData();
       setDataPoints([]);
 
-      // Auto-detect: Prefer WebSerial (Windows/macOS/Linux), fallback to WebUSB (Android)
-      let client: ModbusClient;
-      let clientType: string;
-
-      if (isWebSerialAvailable()) {
-        // Use WebSerial for better compatibility with CDC-ACM devices
-        client = new WebSerialModbusClient(slaveId, serialSettings);
-        clientType = 'WebSerial';
-      } else {
-        // Fallback to WebUSB for Android and environments without CDC-ACM drivers
-        client = new WebUsbModbusClient(slaveId, serialSettings);
-        clientType = 'WebUSB';
-      }
-
+      // Always use WebSerialModbusClient
+      // web-serial-polyfill automatically falls back to WebUSB on unsupported platforms
+      const client = new WebSerialModbusClient(slaveId, serialSettings);
       await client.connect();
       clientRef.current = client;
 
       setConnected(true);
       setAcquiring(true);
-      setStatus(`Connected (${clientType}) @ ${formatSerialSettings(serialSettings)}`);
+      setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
     } catch (err) {
       // Clean up on error
       if (clientRef.current) {
