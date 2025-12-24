@@ -12,6 +12,7 @@ export class WebSerialModbusClient {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private slaveId: number;
   private serialSettings: SerialSettings;
+  private serialApi: Serial;
 
   constructor(
     slaveId = 1,
@@ -21,13 +22,15 @@ export class WebSerialModbusClient {
       stopBits: 1,
       parity: 'none',
     },
+    serialApi?: Serial,
   ) {
     this.slaveId = slaveId;
     this.serialSettings = serialSettings;
+    this.serialApi = serialApi || navigator.serial;
   }
 
   async connect(): Promise<boolean> {
-    if (!('serial' in navigator)) {
+    if (!this.serialApi) {
       throw new Error('Web Serial API is not supported in this browser');
     }
 
@@ -37,7 +40,7 @@ export class WebSerialModbusClient {
     }
 
     // Request port from user
-    this.port = await navigator.serial.requestPort();
+    this.port = await this.serialApi.requestPort();
 
     // Open with serial settings
     await this.port.open({
@@ -98,10 +101,8 @@ export class WebSerialModbusClient {
 
   private async transfer(frame: Uint8Array, expectedLength: number): Promise<DataView> {
     this.ensureReady();
-    const { writer, reader } = this as {
-      writer: WritableStreamDefaultWriter<Uint8Array>;
-      reader: ReadableStreamDefaultReader<Uint8Array>;
-    };
+    const writer = this.writer!;
+    const reader = this.reader!;
 
     // Write frame
     await writer.write(frame);

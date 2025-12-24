@@ -38,12 +38,11 @@ function isMobileDevice(): boolean {
   return isMobileUA || (isTouchDevice && isSmallScreen);
 }
 
+// Select which Serial API to use
 // On mobile devices, always use polyfill for better compatibility
 // On desktop, use polyfill only if native Web Serial API is not available
-if (isMobileDevice() || !('serial' in navigator)) {
-  // @ts-ignore - Add polyfill to navigator
-  navigator.serial = serialPolyfill;
-}
+const serial: Serial = (isMobileDevice() || !('serial' in navigator)) ? serialPolyfill as unknown as Serial : navigator.serial;
+const isUsingPolyfill = isMobileDevice() || !('serial' in navigator);
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -346,9 +345,9 @@ function App() {
       await dataStorage.clearAllData();
       setDataPoints([]);
 
-      // Always use WebSerialModbusClient
-      // web-serial-polyfill automatically falls back to WebUSB on unsupported platforms
-      const client = new WebSerialModbusClient(slaveId, serialSettings);
+      // Use WebSerialModbusClient with the selected Serial API (native or polyfill)
+      // On Android and unsupported platforms, this will use web-serial-polyfill with WebUSB
+      const client = new WebSerialModbusClient(slaveId, serialSettings, serial);
       await client.connect();
       clientRef.current = client;
 
@@ -537,7 +536,7 @@ function App() {
             <div>
               <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
               <p className="text-sm text-slate-600 dark:text-slate-400">
-                AI 16ch - {formatSerialSettings(serialSettings)}
+                {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
