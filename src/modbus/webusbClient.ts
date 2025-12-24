@@ -121,8 +121,31 @@ export class WebUsbModbusClient {
     const { device, endpoints } = this as { device: USBDevice; endpoints: EndpointPair };
 
     await device.transferOut(endpoints.outEndpoint.endpointNumber, frame);
-    const result = await device.transferIn(endpoints.inEndpoint.endpointNumber, expectedLength);
+
+    // Add timeout protection (1 second, same as WebSerial implementation)
+    const timeout = 1000;
+    const transferPromise = device.transferIn(endpoints.inEndpoint.endpointNumber, expectedLength);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout waiting for response')), timeout)
+    );
+
+    const result = await Promise.race([transferPromise, timeoutPromise]);
     if (!result.data) throw new Error('No data from device');
+
+    // Validate CRC16 of received data
+    const receivedData = new Uint8Array(result.data.buffer);
+    if (receivedData.length < 3) {
+      throw new Error('Response too short for CRC validation');
+    }
+
+    const dataWithoutCrc = receivedData.slice(0, -2);
+    const receivedCrc = receivedData[receivedData.length - 2] | (receivedData[receivedData.length - 1] << 8);
+    const calculatedCrc = crc16(Buffer.from(dataWithoutCrc));
+
+    if (receivedCrc !== calculatedCrc) {
+      throw new Error(`CRC mismatch: expected 0x${calculatedCrc.toString(16)}, got 0x${receivedCrc.toString(16)}`);
+    }
+
     return result.data;
   }
 
