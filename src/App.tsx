@@ -145,7 +145,7 @@ function App() {
   const [chart3Y, setChart3Y] = useState(initialAxes.chart3.y);
   const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
-  const clientRef = useRef<WebSerialModbusClient | null>(null);
+  const clientRef = useRef<WebSerialClient | null>(null);
   const pollTimer = useRef<number>();
 
   // Initialize IndexedDB
@@ -320,7 +320,7 @@ function App() {
       await dataStorage.clearAllData();
       setDataPoints([]);
 
-      const client = new WebSerialModbusClient(slaveId, serialSettings);
+      const client = new WebSerialClient(slaveId, serialSettings);
       await client.connect();
       clientRef.current = client;
 
@@ -507,7 +507,7 @@ function App() {
         <div className="p-4">
           <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">Modbus Simple Logger</h1>
+              <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
               <p className="text-sm text-slate-600 dark:text-slate-400">
                 AI 16ch - {formatSerialSettings(serialSettings)}
               </p>
