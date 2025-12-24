@@ -151,6 +151,54 @@ export class WebSerialModbusClient {
   }
 
   /**
+   * Read Coils (Function Code 1)
+   * @param start - Starting coil address
+   * @param count - Number of coils to read (1-2000)
+   * @returns Array of boolean values (true = ON, false = OFF)
+   */
+  async readCoils(start: number, count: number): Promise<boolean[]> {
+    if (count < 1 || count > 2000) {
+      throw new Error('Count must be between 1 and 2000');
+    }
+    const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
+    const frame = this.buildFrame(1, payload);
+    const byteCount = Math.ceil(count / 8);
+    const expected = 3 + byteCount + 2; // addr + fc + byteCount + data + crc
+    const view = await this.transfer(frame, expected);
+
+    const values: boolean[] = [];
+    const responseByteCount = view.getUint8(2);
+
+    for (let i = 0; i < count; i += 1) {
+      const byteIndex = Math.floor(i / 8);
+      const bitIndex = i % 8;
+      const byte = view.getUint8(3 + byteIndex);
+      values.push((byte & (1 << bitIndex)) !== 0);
+    }
+
+    return values;
+  }
+
+  /**
+   * Read Holding Registers (Function Code 3)
+   * @param start - Starting register address
+   * @param count - Number of registers to read
+   * @returns Array of signed 16-bit register values
+   */
+  async readHoldingRegisters(start: number, count: number): Promise<number[]> {
+    const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
+    const frame = this.buildFrame(3, payload);
+    const expected = 5 + count * 2; // addr + fc + byteCount + data + crc
+    const view = await this.transfer(frame, expected);
+    const values: number[] = [];
+    const byteCount = view.getUint8(2);
+    for (let i = 0; i < byteCount / 2; i += 1) {
+      values.push(view.getInt16(3 + i * 2, false));
+    }
+    return values;
+  }
+
+  /**
    * Read Input Registers (Function Code 4)
    * @param start - Starting register address
    * @param count - Number of registers to read
@@ -198,6 +246,18 @@ export class WebSerialModbusClient {
   }
 
   /**
+   * Write Single Coil (Function Code 5)
+   * @param address - Coil address
+   * @param value - Coil state (true = ON, false = OFF)
+   */
+  async writeSingleCoil(address: number, value: boolean): Promise<void> {
+    const coilValue = value ? 0xff00 : 0x0000;
+    const payload = [address >> 8, address & 0xff, coilValue >> 8, coilValue & 0xff];
+    const frame = this.buildFrame(5, payload);
+    await this.transfer(frame, 8); // addr + fc + address + value + crc
+  }
+
+  /**
    * Write Single Register (Function Code 6)
    * @param address - Register address
    * @param value - 16-bit value to write
@@ -206,6 +266,48 @@ export class WebSerialModbusClient {
     const payload = [address >> 8, address & 0xff, value >> 8, value & 0xff];
     const frame = this.buildFrame(6, payload);
     await this.transfer(frame, 8);
+  }
+
+  /**
+   * Write Multiple Coils (Function Code 15)
+   * @param start - Starting coil address
+   * @param values - Array of boolean values to write (max 1968 coils per Modbus spec)
+   */
+  async writeMultipleCoils(start: number, values: boolean[]): Promise<void> {
+    if (values.length === 0) {
+      throw new Error('No values provided to write');
+    }
+    if (values.length > 1968) {
+      throw new Error('Cannot write more than 1968 coils in a single request');
+    }
+
+    const count = values.length;
+    const byteCount = Math.ceil(count / 8);
+
+    // Build payload: start address (2 bytes) + count (2 bytes) + byte count (1 byte) + data
+    const payload: number[] = [
+      start >> 8,
+      start & 0xff,
+      count >> 8,
+      count & 0xff,
+      byteCount,
+    ];
+
+    // Pack boolean values into bytes (LSB first)
+    for (let i = 0; i < byteCount; i += 1) {
+      let byte = 0;
+      for (let bit = 0; bit < 8; bit += 1) {
+        const index = i * 8 + bit;
+        if (index < values.length && values[index]) {
+          byte |= 1 << bit;
+        }
+      }
+      payload.push(byte);
+    }
+
+    const frame = this.buildFrame(15, payload);
+    const expected = 8; // addr + fc + start address + count + crc
+    await this.transfer(frame, expected);
   }
 
   /**
