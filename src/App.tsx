@@ -47,10 +47,10 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
 const AI_START_REGISTER = 0x0000;
 const AO_START_REGISTER = 0x0100;
 
-const createAiChannels = (: Ai[]): AiChannel[] =>
+const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
-    const physical = aiToPhysical(raw, [idx]);
+    const physical = aiToPhysical(raw, calibration[idx]);
     return {
       id: idx,
       raw,
