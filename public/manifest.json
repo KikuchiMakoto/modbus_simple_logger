@@ -1,5 +1,5 @@
 {
-  "name": "Modbus Simple Logger",
+  "name": "ModbusSimpleLogger",
   "short_name": "MSL",
   "description": "ModbusRTU WebUSB data logger and visualization tool",
   "start_url": "/modbus_simple_logger/",
