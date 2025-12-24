@@ -736,12 +736,12 @@ function App() {
           {aiChannels.map((ch, idx) => (
             <div
               key={ch.id}
-              className="rounded-lg bg-slate-100 border border-slate-200 p-2.5 space-y-1 dark:bg-slate-900/60 dark:border-slate-700/50"
+              className="rounded-lg bg-slate-100 border border-slate-200 p-2 space-y-0.5 dark:bg-slate-900/60 dark:border-slate-700/50"
             >
-              <div className="text-center font-semibold text-slate-700 pb-0.5 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
+              <div className="text-center font-semibold text-slate-700 pb-0 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
                 {ch.label}
               </div>
-              <div className="space-y-1 text-base">
+              <div className="space-y-0.5 text-base">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
                   <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
