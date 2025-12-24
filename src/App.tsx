@@ -21,7 +21,26 @@ import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 // Polyfill Web Serial API for environments without native support (e.g., Android)
 // Uses WebUSB as fallback when Web Serial API is not available
 import { serial as serialPolyfill } from 'web-serial-polyfill';
-if (!('serial' in navigator)) {
+
+// Detect if the device is mobile
+function isMobileDevice(): boolean {
+  // Check user agent for mobile keywords
+  const userAgent = navigator.userAgent.toLowerCase();
+  const mobileKeywords = ['android', 'webos', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone', 'mobile'];
+  const isMobileUA = mobileKeywords.some(keyword => userAgent.includes(keyword));
+
+  // Check if it's a touch device
+  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+  // Check screen size (optional additional check)
+  const isSmallScreen = window.innerWidth <= 768;
+
+  return isMobileUA || (isTouchDevice && isSmallScreen);
+}
+
+// On mobile devices, always use polyfill for better compatibility
+// On desktop, use polyfill only if native Web Serial API is not available
+if (isMobileDevice() || !('serial' in navigator)) {
   // @ts-ignore - Add polyfill to navigator
   navigator.serial = serialPolyfill;
 }
