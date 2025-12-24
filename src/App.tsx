@@ -47,10 +47,10 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
 const AI_START_REGISTER = 0x0000;
 const AO_START_REGISTER = 0x0100;
 
-const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
+const createAiChannels = (: Ai[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
-    const physical = aiToPhysical(raw, calibration[idx]);
+    const physical = aiToPhysical(raw, [idx]);
     return {
       id: idx,
       raw,
@@ -558,10 +558,10 @@ function App() {
                 </span>
               </button>
               <button className="button-secondary" onClick={handleLoadCalibration}>
-                Load Calibration
+                Load Calib
               </button>
               <button className="button-secondary" onClick={handleDownloadCalibration}>
-                Download Calibration
+                Save Calib
               </button>
               {!tsvWriter ? (
                 <button className="button-primary" onClick={handleStartSave}>
