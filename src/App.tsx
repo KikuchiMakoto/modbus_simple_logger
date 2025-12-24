@@ -429,6 +429,10 @@ function App() {
   };
 
   const handleLoadCalibration = async () => {
+    if (!('showOpenFilePicker' in window)) {
+      setStatus('File System Access API not supported in this browser');
+      return;
+    }
     try {
       const [fileHandle] = await window.showOpenFilePicker({
         types: [
@@ -584,18 +588,18 @@ function App() {
                   )}
                 </span>
               </button>
-              <button className="button-secondary" onClick={handleLoadCalibration}>
+              <button type="button" className="button-secondary" onClick={handleLoadCalibration}>
                 Load Calib
               </button>
-              <button className="button-secondary" onClick={handleDownloadCalibration}>
+              <button type="button" className="button-secondary" onClick={handleDownloadCalibration}>
                 Save Calib
               </button>
               {!tsvWriter ? (
-                <button className="button-primary" onClick={handleStartSave}>
+                <button type="button" className="button-primary" onClick={handleStartSave}>
                   Start Save
                 </button>
               ) : (
-                <button className="button-primary" onClick={handleStopSave}>
+                <button type="button" className="button-primary" onClick={handleStopSave}>
                   Stop Save
                 </button>
               )}
@@ -714,6 +718,7 @@ function App() {
           </div>
           <div className="flex items-end gap-2">
             <button
+              type="button"
               className={connected ? 'button-secondary' : 'button-primary'}
               onClick={handleToggleConnection}
             >
