@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { WebSerialModbusClient } from './modbus/webserialClient';
+import { WebUsbModbusClient } from './modbus/webusbClient';
 import {
   AiCalibration,
   AiChannel,
@@ -145,7 +145,7 @@ function App() {
   const [chart3Y, setChart3Y] = useState(initialAxes.chart3.y);
   const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
-  const clientRef = useRef<WebSerialClient | null>(null);
+  const clientRef = useRef<WebUsbModbusClient | null>(null);
   const pollTimer = useRef<number>();
 
   // Initialize IndexedDB
@@ -320,7 +320,7 @@ function App() {
       await dataStorage.clearAllData();
       setDataPoints([]);
 
-      const client = new WebSerialClient(slaveId, serialSettings);
+      const client = new WebUsbModbusClient(slaveId, serialSettings);
       await client.connect();
       clientRef.current = client;
 
