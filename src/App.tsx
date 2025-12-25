@@ -172,6 +172,7 @@ function App() {
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const pollTimer = useRef<number>();
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -324,6 +325,31 @@ function App() {
     pollTimer.current = undefined;
   }, []);
 
+  const requestWakeLock = useCallback(async () => {
+    if (!('wakeLock' in navigator)) return;
+    if (wakeLockRef.current) return;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      wakeLockRef.current = lock;
+      lock.addEventListener('release', () => {
+        wakeLockRef.current = null;
+      });
+    } catch (err) {
+      console.warn('Wake Lock request failed:', err);
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (!wakeLockRef.current) return;
+    try {
+      await wakeLockRef.current.release();
+    } catch (err) {
+      console.warn('Wake Lock release failed:', err);
+    } finally {
+      wakeLockRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (acquiring) {
       startPolling();
@@ -354,12 +380,14 @@ function App() {
       setConnected(true);
       setAcquiring(true);
       setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
+      await requestWakeLock();
     } catch (err) {
       // Clean up on error
       if (clientRef.current) {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+      await releaseWakeLock();
       setConnected(false);
       setAcquiring(false);
 
@@ -385,6 +413,7 @@ function App() {
     } catch (err) {
       console.error('Error during disconnect:', err);
     } finally {
+      await releaseWakeLock();
       setConnected(false);
       setStatus('Disconnected');
     }
