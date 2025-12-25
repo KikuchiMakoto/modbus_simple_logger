@@ -43,7 +43,8 @@ export class WebSerialModbusClient {
   private serialApi: Serial;
   private transferMutex = new AsyncMutex();
   private lastTransferTime = 0;
-  private readonly MIN_MESSAGE_INTERVAL_MS = 10;
+  private minMessageIntervalMs: number;
+  private isExtendedPrecision = false;
 
   constructor(
     slaveId = 1,
@@ -54,10 +55,48 @@ export class WebSerialModbusClient {
       parity: 'none',
     },
     serialApi?: Serial,
+    isExtendedPrecision = false,
   ) {
     this.slaveId = slaveId;
     this.serialSettings = serialSettings;
     this.serialApi = serialApi || navigator.serial;
+    this.isExtendedPrecision = isExtendedPrecision;
+    this.minMessageIntervalMs = this.calculateMinInterval();
+  }
+
+  /**
+   * Calculate minimum message interval based on Modbus RTU specification
+   * and precision mode.
+   *
+   * Modbus RTU requires 3.5 character times of silent interval.
+   * For stability, we use 5 character times.
+   *
+   * @returns Minimum interval in milliseconds
+   */
+  private calculateMinInterval(): number {
+    // Base interval depends on precision mode
+    const baseIntervalMs = this.isExtendedPrecision ? 1 : 10;
+
+    // Calculate 5 character times based on serial settings
+    // 1 character = 1 start bit + data bits + parity bit (if any) + stop bits
+    const bitsPerChar = 1 +
+                        this.serialSettings.dataBits +
+                        (this.serialSettings.parity !== 'none' ? 1 : 0) +
+                        this.serialSettings.stopBits;
+
+    // 5 characters worth of time in milliseconds
+    const silentIntervalMs = (bitsPerChar * 5 * 1000) / this.serialSettings.baudRate;
+
+    // Use the larger of the two
+    return Math.max(baseIntervalMs, silentIntervalMs);
+  }
+
+  /**
+   * Update precision mode and recalculate minimum interval
+   */
+  setPrecisionMode(isExtended: boolean): void {
+    this.isExtendedPrecision = isExtended;
+    this.minMessageIntervalMs = this.calculateMinInterval();
   }
 
   async connect(): Promise<boolean> {
@@ -140,11 +179,11 @@ export class WebSerialModbusClient {
       const writer = this.writer!;
       const reader = this.reader!;
 
-      // Ensure minimum interval between messages (10ms)
+      // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)
       const now = Date.now();
       const timeSinceLastTransfer = now - this.lastTransferTime;
-      if (timeSinceLastTransfer < this.MIN_MESSAGE_INTERVAL_MS) {
-        const waitTime = this.MIN_MESSAGE_INTERVAL_MS - timeSinceLastTransfer;
+      if (timeSinceLastTransfer < this.minMessageIntervalMs) {
+        const waitTime = this.minMessageIntervalMs - timeSinceLastTransfer;
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
 

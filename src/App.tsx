@@ -397,7 +397,12 @@ function App() {
 
       // Use WebSerialModbusClient with the selected Serial API (native or polyfill)
       // On Android and unsupported platforms, this will use web-serial-polyfill with WebUSB
-      const client = new WebSerialModbusClient(slaveId, serialSettings, serial);
+      const client = new WebSerialModbusClient(
+        slaveId,
+        serialSettings,
+        serial,
+        modbusPrecision === 'extended'
+      );
       await client.connect();
       clientRef.current = client;
 
