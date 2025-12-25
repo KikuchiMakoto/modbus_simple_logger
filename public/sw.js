@@ -89,8 +89,9 @@ self.addEventListener('fetch', (event) => {
       const networkPromise = fetch(request)
         .then((response) => {
           if (response && response.status === 200 && response.type === 'basic') {
+            const responseClone = response.clone(); // Clone immediately before body is consumed
             caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, response.clone());
+              cache.put(request, responseClone);
             });
           }
           return response;
