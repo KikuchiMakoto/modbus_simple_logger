@@ -299,9 +299,7 @@ function App() {
         ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
       aiRawSourceRef.current = aiSourceValues;
-      const aiRaw = modbusPrecision === 'extended'
-        ? aiSourceValues.map((value) => Math.trunc(value))
-        : aiSourceValues;
+      const aiRaw = aiSourceValues;
       const aiPhysical = aiSourceValues.map((value, idx) =>
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
@@ -806,7 +804,7 @@ function App() {
                 <div className="flex justify-between items-center">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
                   <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
-                    {ch.raw}
+                    {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
