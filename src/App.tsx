@@ -487,21 +487,18 @@ function App() {
     downloadJson('calibration.json', calibrationData);
   };
 
-  const handleLoadCalibration = async () => {
-    if (!('showOpenFilePicker' in window)) {
-      setStatus('File System Access API not supported in this browser');
-      return;
-    }
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLoadCalibration = () => {
+    // Trigger file input click
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
     try {
-      const [fileHandle] = await window.showOpenFilePicker({
-        types: [
-          {
-            description: 'JSON Files',
-            accept: { 'application/json': ['.json'] },
-          },
-        ],
-      });
-      const file = await fileHandle.getFile();
       const text = await file.text();
       const data = JSON.parse(text);
 
@@ -534,10 +531,12 @@ function App() {
       );
       setStatus('Calibration loaded successfully');
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        return;
-      }
       setStatus((err as Error).message);
+    } finally {
+      // Reset the input value to allow loading the same file again
+      if (event.target) {
+        event.target.value = '';
+      }
     }
   };
 
@@ -648,6 +647,13 @@ function App() {
                   )}
                 </span>
               </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+              />
               <button type="button" className="button-secondary" onClick={handleLoadCalibration}>
                 Load Calib
               </button>
