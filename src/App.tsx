@@ -74,8 +74,9 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
   stopBits: 1,
   parity: 'none',
 };
-const AI_START_REGISTER = 0x0000;
-const AO_START_REGISTER = 0x0100;
+const AI_START_REGISTER = 0;
+const AI_FLOAT_START_REGISTER = 5000;
+const AO_START_REGISTER = 0;
 
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
@@ -295,7 +296,7 @@ function App() {
     if (!clientRef.current) return;
     try {
       const aiSourceValues = modbusPrecision === 'extended'
-        ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_START_REGISTER, AI_CHANNELS)
+        ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
       aiRawSourceRef.current = aiSourceValues;
       const aiRaw = modbusPrecision === 'extended'
