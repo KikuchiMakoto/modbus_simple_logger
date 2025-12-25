@@ -65,8 +65,8 @@ const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
 const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
 const PRECISION_OPTIONS: { label: string; value: ModbusPrecision }[] = [
-  { label: 'Normal Precision (Int16)', value: 'normal' },
-  { label: 'Extended Precision (Float32)', value: 'extended' },
+  { label: 'Normal(i16t)', value: 'normal' },
+  { label: 'Extended(f32t)', value: 'extended' },
 ];
 const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
