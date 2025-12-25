@@ -325,17 +325,28 @@ function App() {
     } catch (err) {
       console.error(err);
       setStatus((err as Error).message);
+    } finally {
+      // Schedule next poll after current one completes
+      if (pollTimer.current !== undefined) {
+        pollTimer.current = window.setTimeout(pollOnce, pollingRate.valueMs);
+      }
     }
-  }, [aiCalibration, modbusPrecision, tsvWriter]);
+  }, [aiCalibration, modbusPrecision, tsvWriter, pollingRate.valueMs]);
 
   const startPolling = useCallback(() => {
-    if (pollTimer.current) window.clearInterval(pollTimer.current);
-    pollTimer.current = window.setInterval(pollOnce, pollingRate.valueMs);
-  }, [pollOnce, pollingRate.valueMs]);
+    // Clear any existing timer
+    if (pollTimer.current !== undefined) {
+      window.clearTimeout(pollTimer.current);
+    }
+    // Start first poll immediately, which will schedule the next one
+    pollTimer.current = window.setTimeout(pollOnce, 0);
+  }, [pollOnce]);
 
   const stopPolling = useCallback(() => {
-    if (pollTimer.current) window.clearInterval(pollTimer.current);
-    pollTimer.current = undefined;
+    if (pollTimer.current !== undefined) {
+      window.clearTimeout(pollTimer.current);
+      pollTimer.current = undefined;
+    }
   }, []);
 
   const requestWakeLock = useCallback(async () => {
@@ -386,7 +397,12 @@ function App() {
 
       // Use WebSerialModbusClient with the selected Serial API (native or polyfill)
       // On Android and unsupported platforms, this will use web-serial-polyfill with WebUSB
-      const client = new WebSerialModbusClient(slaveId, serialSettings, serial);
+      const client = new WebSerialModbusClient(
+        slaveId,
+        serialSettings,
+        serial,
+        modbusPrecision === 'extended'
+      );
       await client.connect();
       clientRef.current = client;
 
