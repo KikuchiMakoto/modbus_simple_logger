@@ -64,6 +64,10 @@ const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 4
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
 const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
+const PRECISION_OPTIONS: { label: string; value: ModbusPrecision }[] = [
+  { label: 'Normal Precision (Int16)', value: 'normal' },
+  { label: 'Extended Precision (Float32)', value: 'extended' },
+];
 const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
   dataBits: 8,
@@ -122,6 +126,8 @@ type ChartAxisSelections = {
   chart4: { x: string; y: string };
 };
 
+type ModbusPrecision = 'normal' | 'extended';
+
 const THEME_COOKIE_KEY = 'theme_preference_v1';
 const CHART_AXES_COOKIE_KEY = 'chart_axes_v1';
 
@@ -153,6 +159,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => savedTheme ?? getSystemTheme());
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
+  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
@@ -171,6 +178,7 @@ function App() {
   const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
   const clientRef = useRef<WebSerialModbusClient | null>(null);
+  const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const pollTimer = useRef<number>();
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
@@ -286,8 +294,14 @@ function App() {
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     try {
-      const aiRaw = await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
-      const aiPhysical = aiRaw.map((value, idx) =>
+      const aiSourceValues = modbusPrecision === 'extended'
+        ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_START_REGISTER, AI_CHANNELS)
+        : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
+      aiRawSourceRef.current = aiSourceValues;
+      const aiRaw = modbusPrecision === 'extended'
+        ? aiSourceValues.map((value) => Math.trunc(value))
+        : aiSourceValues;
+      const aiPhysical = aiSourceValues.map((value, idx) =>
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
 
@@ -313,7 +327,7 @@ function App() {
       console.error(err);
       setStatus((err as Error).message);
     }
-  }, [aiCalibration, tsvWriter]);
+  }, [aiCalibration, modbusPrecision, tsvWriter]);
 
   const startPolling = useCallback(() => {
     if (pollTimer.current) window.clearInterval(pollTimer.current);
@@ -434,7 +448,8 @@ function App() {
       setAiChannels((chs) =>
         chs.map((ch, cIdx) => {
           if (cIdx !== idx) return ch;
-          const physical = aiToPhysical(ch.raw, next[idx]);
+          const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
+          const physical = aiToPhysical(rawValue, next[idx]);
           return { ...ch, physical, status: getAiStatus(ch.raw) };
         }),
       );
@@ -497,7 +512,8 @@ function App() {
       setAiCalibration(loadedCalibration);
       setAiChannels((prev) =>
         prev.map((ch, idx) => {
-          const physical = aiToPhysical(ch.raw, loadedCalibration[idx]);
+          const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
+          const physical = aiToPhysical(rawValue, loadedCalibration[idx]);
           return { ...ch, physical, status: getAiStatus(ch.raw) };
         }),
       );
@@ -740,6 +756,21 @@ function App() {
             >
               {POLLING_OPTIONS.map((opt) => (
                 <option key={opt.valueMs} value={opt.valueMs}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Precision</label>
+            <select
+              value={modbusPrecision}
+              onChange={(e) => setModbusPrecision(e.target.value as ModbusPrecision)}
+              className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              disabled={connected}
+            >
+              {PRECISION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
               ))}
