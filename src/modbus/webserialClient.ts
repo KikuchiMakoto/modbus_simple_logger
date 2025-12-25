@@ -6,6 +6,34 @@ import { Buffer } from 'buffer';
 import crc16 from 'modbus-serial/utils/crc16';
 import { SerialSettings } from '../types';
 
+/**
+ * Simple async mutex implementation for exclusive access control
+ */
+class AsyncMutex {
+  private locked = false;
+  private waiters: Array<() => void> = [];
+
+  async acquire(): Promise<void> {
+    if (!this.locked) {
+      this.locked = true;
+      return;
+    }
+    // Wait until the mutex is released
+    await new Promise<void>((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  release(): void {
+    if (this.waiters.length > 0) {
+      const resolve = this.waiters.shift()!;
+      resolve();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
 export class WebSerialModbusClient {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -13,6 +41,9 @@ export class WebSerialModbusClient {
   private slaveId: number;
   private serialSettings: SerialSettings;
   private serialApi: Serial;
+  private transferMutex = new AsyncMutex();
+  private lastTransferTime = 0;
+  private readonly MIN_MESSAGE_INTERVAL_MS = 10;
 
   constructor(
     slaveId = 1,
@@ -101,53 +132,73 @@ export class WebSerialModbusClient {
 
   private async transfer(frame: Uint8Array, expectedLength: number): Promise<DataView> {
     this.ensureReady();
-    const writer = this.writer!;
-    const reader = this.reader!;
 
-    // Write frame
-    await writer.write(frame);
+    // Acquire mutex to ensure only one transfer at a time
+    await this.transferMutex.acquire();
 
-    // Read response with timeout
-    const timeout = 1000; // 1 second timeout
-    const buffer: number[] = [];
-    const startTime = Date.now();
+    try {
+      const writer = this.writer!;
+      const reader = this.reader!;
 
-    while (buffer.length < expectedLength) {
-      if (Date.now() - startTime > timeout) {
-        throw new Error('Timeout waiting for response');
+      // Ensure minimum interval between messages (10ms)
+      const now = Date.now();
+      const timeSinceLastTransfer = now - this.lastTransferTime;
+      if (timeSinceLastTransfer < this.MIN_MESSAGE_INTERVAL_MS) {
+        const waitTime = this.MIN_MESSAGE_INTERVAL_MS - timeSinceLastTransfer;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
 
-      const { value, done } = await reader.read();
-      if (done) {
-        throw new Error('Stream closed unexpectedly');
-      }
-      if (value) {
-        buffer.push(...Array.from(value));
+      // Write frame
+      await writer.write(frame);
+
+      // Read response with timeout
+      const timeout = 1000; // 1 second timeout
+      const buffer: number[] = [];
+      const startTime = Date.now();
+
+      while (buffer.length < expectedLength) {
+        if (Date.now() - startTime > timeout) {
+          throw new Error('Timeout waiting for response');
+        }
+
+        const { value, done } = await reader.read();
+        if (done) {
+          throw new Error('Stream closed unexpectedly');
+        }
+        if (value) {
+          buffer.push(...Array.from(value));
+        }
+
+        // Check if we have enough data
+        if (buffer.length >= expectedLength) {
+          break;
+        }
       }
 
-      // Check if we have enough data
-      if (buffer.length >= expectedLength) {
-        break;
+      // Convert to DataView
+      const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
+
+      // Validate CRC16 of received data
+      if (responseArray.length < 3) {
+        throw new Error('Response too short for CRC validation');
       }
+
+      const dataWithoutCrc = responseArray.slice(0, -2);
+      const receivedCrc = responseArray[responseArray.length - 2] | (responseArray[responseArray.length - 1] << 8);
+      const calculatedCrc = crc16(Buffer.from(dataWithoutCrc));
+
+      if (receivedCrc !== calculatedCrc) {
+        throw new Error(`CRC mismatch: expected 0x${calculatedCrc.toString(16)}, got 0x${receivedCrc.toString(16)}`);
+      }
+
+      // Update last transfer time
+      this.lastTransferTime = Date.now();
+
+      return new DataView(responseArray.buffer);
+    } finally {
+      // Always release the mutex
+      this.transferMutex.release();
     }
-
-    // Convert to DataView
-    const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
-
-    // Validate CRC16 of received data
-    if (responseArray.length < 3) {
-      throw new Error('Response too short for CRC validation');
-    }
-
-    const dataWithoutCrc = responseArray.slice(0, -2);
-    const receivedCrc = responseArray[responseArray.length - 2] | (responseArray[responseArray.length - 1] << 8);
-    const calculatedCrc = crc16(Buffer.from(dataWithoutCrc));
-
-    if (receivedCrc !== calculatedCrc) {
-      throw new Error(`CRC mismatch: expected 0x${calculatedCrc.toString(16)}, got 0x${receivedCrc.toString(16)}`);
-    }
-
-    return new DataView(responseArray.buffer);
   }
 
   /**
