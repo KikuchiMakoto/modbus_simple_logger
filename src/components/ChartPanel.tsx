@@ -70,9 +70,7 @@ export function ChartPanel({
         x: xData,
         y: yData,
         type: 'scattergl' as const,
-        // Use lines only for better performance with many points
-        mode: dataPoints.length > 200 ? ('lines' as const) : ('lines+markers' as const),
-        marker: { color, size: 2 },
+        mode: 'lines' as const,
         line: { color, width: 1.5 },
         name: `${yAxis} vs ${xAxis}`,
       },
