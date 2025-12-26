@@ -228,15 +228,6 @@ function App() {
     });
   }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y]);
 
-  // Reload chart data from IndexedDB when XY axis selection changes
-  // This is the only time we access IndexedDB for chart display
-  useEffect(() => {
-    // Only reload if we have data in IndexedDB (i.e., after connection)
-    if (connected) {
-      loadChartDataFromDB();
-    }
-  }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y, connected, loadChartDataFromDB]);
-
   // Flush pending data points to chart (batched update)
   const flushPendingDataPoints = useCallback(() => {
     if (pendingDataPoints.current.length === 0) return;
@@ -291,6 +282,15 @@ function App() {
       setStatus(`Chart update error: ${(err as Error).message}`);
     }
   }, []);
+
+  // Reload chart data from IndexedDB when XY axis selection changes
+  // This is the only time we access IndexedDB for chart display
+  useEffect(() => {
+    // Only reload if we have data in IndexedDB (i.e., after connection)
+    if (connected) {
+      loadChartDataFromDB();
+    }
+  }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y, connected, loadChartDataFromDB]);
 
   const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
