@@ -96,9 +96,11 @@ export function ChartPanel({
       // Preserve UI state (zoom, pan) across updates
       uirevision: `${xAxis}-${yAxis}`,
       // Help Plotly detect data changes efficiently
-      datarevision: dataPoints.length,
+      // Use timestamp of latest data point to ensure Plotly detects changes
+      // even when the number of points stays constant (e.g., at max limit of 256)
+      datarevision: dataPoints.length > 0 ? dataPoints[dataPoints.length - 1].timestamp : 0,
     }),
-    [xAxis, yAxis, palette, dataPoints.length],
+    [xAxis, yAxis, palette, dataPoints],
   );
 
   const plotConfig = useMemo(
