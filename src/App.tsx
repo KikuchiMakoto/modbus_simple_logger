@@ -184,6 +184,7 @@ function App() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number>();
+  const tsvWriterRef = useRef<TsvWriter | null>(null);
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -239,13 +240,13 @@ function App() {
 
       // If not saving to file, keep only latest 1024 points for memory efficiency
       // If saving to file, show all data points
-      if (!tsvWriter && newPoints.length > MAX_POINTS_IN_MEMORY) {
+      if (!tsvWriterRef.current && newPoints.length > MAX_POINTS_IN_MEMORY) {
         return newPoints.slice(-MAX_POINTS_IN_MEMORY);
       }
 
       return newPoints;
     });
-  }, [tsvWriter]);
+  }, []);
 
   // Load all data from IndexedDB and apply display limit based on save mode
   const loadChartDataFromDB = useCallback(async () => {
@@ -260,7 +261,7 @@ function App() {
 
       // If not saving to file, keep only latest 1024 points for display
       // If saving to file, show all data points
-      if (!tsvWriter && displayPoints.length > MAX_POINTS_IN_MEMORY) {
+      if (!tsvWriterRef.current && displayPoints.length > MAX_POINTS_IN_MEMORY) {
         setDataPoints(displayPoints.slice(-MAX_POINTS_IN_MEMORY));
       } else {
         setDataPoints(displayPoints);
@@ -269,7 +270,7 @@ function App() {
       console.error('Error loading chart data from IndexedDB:', err);
       setStatus(`Chart update error: ${(err as Error).message}`);
     }
-  }, [tsvWriter]);
+  }, []);
 
   const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
@@ -340,8 +341,19 @@ function App() {
       await updateDataHistory(aiRaw, aiPhysical);
 
       // Write to TSV file if recording is active
-      if (tsvWriter) {
-        await tsvWriter.writeRow(Date.now(), aiRaw, aiPhysical);
+      // Use ref to avoid race condition when closing the writer
+      const writer = tsvWriterRef.current;
+      if (writer) {
+        try {
+          await writer.writeRow(Date.now(), aiRaw, aiPhysical);
+        } catch (err) {
+          // Ignore errors if stream is closing
+          if (err instanceof TypeError && (err as Error).message.includes('closing')) {
+            console.warn('Stream is closing, skipping write');
+          } else {
+            throw err;
+          }
+        }
       }
 
       setStatus('Polling');
@@ -579,9 +591,16 @@ function App() {
       // Create TSV writer (this will prompt user for file location)
       const writer = await createTsvWriter(AI_CHANNELS);
 
-      // When starting save, keep existing data and switch to showing all points
-      // No need to clear IndexedDB or dataPoints - just change display mode
+      // Clear pending data points buffer
+      pendingDataPoints.current = [];
+
+      // Clear chart data and IndexedDB for fresh start
+      await dataStorage.clearAllData();
+      setDataPoints([]);
+
+      // Update both state and ref
       setTsvWriter(writer);
+      tsvWriterRef.current = writer;
       setStatus('Saving data to file');
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -594,11 +613,26 @@ function App() {
 
   const handleStopSave = async () => {
     if (tsvWriter) {
-      await tsvWriter.close();
+      // Clear ref first to prevent pollOnce from writing to closing stream
+      const writerToClose = tsvWriterRef.current;
+      tsvWriterRef.current = null;
       setTsvWriter(null);
 
-      // When stopping save, reload from IndexedDB and limit to 1024 points
-      await loadChartDataFromDB();
+      // Close the writer if it exists
+      if (writerToClose) {
+        try {
+          await writerToClose.close();
+        } catch (err) {
+          console.warn('Error closing TSV writer:', err);
+        }
+      }
+
+      // Clear pending data points buffer
+      pendingDataPoints.current = [];
+
+      // Clear chart data and IndexedDB
+      await dataStorage.clearAllData();
+      setDataPoints([]);
 
       setStatus('Stopped saving');
     }
