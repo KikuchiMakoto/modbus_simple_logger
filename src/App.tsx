@@ -182,6 +182,8 @@ function App() {
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const pollTimer = useRef<number>();
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const pendingDataPoints = useRef<DataPoint[]>([]);
+  const batchUpdateTimer = useRef<number>();
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -225,7 +227,51 @@ function App() {
     });
   }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y]);
 
-  const updateDataHistory = async (aiRaw: number[], aiPhysical: number[]) => {
+  // Flush pending data points to chart (batched update)
+  const flushPendingDataPoints = useCallback(() => {
+    if (pendingDataPoints.current.length === 0) return;
+
+    const pointsToAdd = [...pendingDataPoints.current];
+    pendingDataPoints.current = [];
+
+    setDataPoints((prev) => {
+      const newPoints = [...prev, ...pointsToAdd];
+
+      // If not saving to file, keep only latest 1024 points for memory efficiency
+      // If saving to file, show all data points
+      if (!tsvWriter && newPoints.length > MAX_POINTS_IN_MEMORY) {
+        return newPoints.slice(-MAX_POINTS_IN_MEMORY);
+      }
+
+      return newPoints;
+    });
+  }, [tsvWriter]);
+
+  // Load all data from IndexedDB and apply display limit based on save mode
+  const loadChartDataFromDB = useCallback(async () => {
+    try {
+      const allPoints = await dataStorage.getAllDataPoints();
+
+      const displayPoints: DataPoint[] = allPoints.map(p => ({
+        timestamp: p.timestamp,
+        aiRaw: p.aiRaw,
+        aiPhysical: p.aiPhysical,
+      }));
+
+      // If not saving to file, keep only latest 1024 points for display
+      // If saving to file, show all data points
+      if (!tsvWriter && displayPoints.length > MAX_POINTS_IN_MEMORY) {
+        setDataPoints(displayPoints.slice(-MAX_POINTS_IN_MEMORY));
+      } else {
+        setDataPoints(displayPoints);
+      }
+    } catch (err) {
+      console.error('Error loading chart data from IndexedDB:', err);
+      setStatus(`Chart update error: ${(err as Error).message}`);
+    }
+  }, [tsvWriter]);
+
+  const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
     const dataPoint: StoredDataPoint = {
       timestamp,
@@ -234,63 +280,40 @@ function App() {
     };
 
     try {
-      // Save to IndexedDB
-      await dataStorage.addDataPoint(dataPoint);
+      // Save to IndexedDB (store all data for chart display)
+      const savePromise = dataStorage.addDataPoint(dataPoint);
 
-      // If not saving to file, keep only latest 512 points in IndexedDB
-      if (!tsvWriter) {
-        await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
+      // Add new point to pending buffer for incremental chart update
+      pendingDataPoints.current.push({
+        timestamp,
+        aiRaw,
+        aiPhysical,
+      });
+
+      // Batch update: flush every 5 points or after 100ms
+      if (pendingDataPoints.current.length >= 5) {
+        // Clear any pending timer
+        if (batchUpdateTimer.current !== undefined) {
+          window.clearTimeout(batchUpdateTimer.current);
+          batchUpdateTimer.current = undefined;
+        }
+        flushPendingDataPoints();
+      } else if (batchUpdateTimer.current === undefined) {
+        // Schedule flush after 100ms if not already scheduled
+        batchUpdateTimer.current = window.setTimeout(() => {
+          batchUpdateTimer.current = undefined;
+          flushPendingDataPoints();
+        }, 100);
       }
 
-      // Update chart data from IndexedDB
-      await updateChartData();
+      // Wait for save to complete for error handling
+      await savePromise;
     } catch (err) {
       console.error('Error updating data history:', err);
       setStatus(`IndexedDB error: ${(err as Error).message}`);
       // Don't throw - allow polling to continue
     }
-  };
-
-  const updateChartData = async () => {
-    try {
-      const allPoints = await dataStorage.getAllDataPoints();
-
-      let displayPoints: DataPoint[];
-
-      if (!tsvWriter) {
-        // Data save is OFF: display all points (should be max 512)
-        displayPoints = allPoints.map(p => ({
-          timestamp: p.timestamp,
-          aiRaw: p.aiRaw,
-          aiPhysical: p.aiPhysical,
-        }));
-      } else {
-        // Data save is ON: decimate to max 512 points
-        if (allPoints.length <= MAX_POINTS_IN_MEMORY) {
-          displayPoints = allPoints.map(p => ({
-            timestamp: p.timestamp,
-            aiRaw: p.aiRaw,
-            aiPhysical: p.aiPhysical,
-          }));
-        } else {
-          // Decimate by integer stride
-          const stride = Math.ceil(allPoints.length / MAX_POINTS_IN_MEMORY);
-          displayPoints = allPoints
-            .filter((_, idx) => idx % stride === 0)
-            .map(p => ({
-              timestamp: p.timestamp,
-              aiRaw: p.aiRaw,
-              aiPhysical: p.aiPhysical,
-            }));
-        }
-      }
-
-      setDataPoints(displayPoints);
-    } catch (err) {
-      console.error('Error updating chart data:', err);
-      setStatus(`Chart update error: ${(err as Error).message}`);
-    }
-  };
+  }, [flushPendingDataPoints]);
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
@@ -347,7 +370,13 @@ function App() {
       window.clearTimeout(pollTimer.current);
       pollTimer.current = undefined;
     }
-  }, []);
+    // Flush any pending data points when stopping
+    if (batchUpdateTimer.current !== undefined) {
+      window.clearTimeout(batchUpdateTimer.current);
+      batchUpdateTimer.current = undefined;
+    }
+    flushPendingDataPoints();
+  }, [flushPendingDataPoints]);
 
   const requestWakeLock = useCallback(async () => {
     if (!('wakeLock' in navigator)) return;
@@ -390,6 +419,9 @@ function App() {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+
+      // Clear pending data points buffer
+      pendingDataPoints.current = [];
 
       // Clear IndexedDB for new session
       await dataStorage.clearAllData();
@@ -436,6 +468,8 @@ function App() {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+      // Clear pending data points buffer
+      pendingDataPoints.current = [];
       // Clear IndexedDB on disconnect
       await dataStorage.clearAllData();
       setDataPoints([]);
@@ -545,10 +579,8 @@ function App() {
       // Create TSV writer (this will prompt user for file location)
       const writer = await createTsvWriter(AI_CHANNELS);
 
-      // Clear IndexedDB when starting new recording session
-      await dataStorage.clearAllData();
-      setDataPoints([]);
-
+      // When starting save, keep existing data and switch to showing all points
+      // No need to clear IndexedDB or dataPoints - just change display mode
       setTsvWriter(writer);
       setStatus('Saving data to file');
     } catch (err) {
@@ -565,9 +597,8 @@ function App() {
       await tsvWriter.close();
       setTsvWriter(null);
 
-      // When stopping save, keep only latest 512 points in IndexedDB
-      await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
-      await updateChartData();
+      // When stopping save, reload from IndexedDB and limit to 1024 points
+      await loadChartDataFromDB();
 
       setStatus('Stopped saving');
     }
