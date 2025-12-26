@@ -184,7 +184,6 @@ function App() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number>();
-  const decimationCounter = useRef<number>(0);
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -238,7 +237,8 @@ function App() {
     setDataPoints((prev) => {
       const newPoints = [...prev, ...pointsToAdd];
 
-      // If not saving to file, keep only latest MAX_POINTS_IN_MEMORY points
+      // If not saving to file, keep only latest 1024 points for memory efficiency
+      // If saving to file, show all data points
       if (!tsvWriter && newPoints.length > MAX_POINTS_IN_MEMORY) {
         return newPoints.slice(-MAX_POINTS_IN_MEMORY);
       }
@@ -247,45 +247,26 @@ function App() {
     });
   }, [tsvWriter]);
 
-  // Full chart data update from IndexedDB (only used when needed)
-  const updateChartDataFull = useCallback(async () => {
+  // Load all data from IndexedDB and apply display limit based on save mode
+  const loadChartDataFromDB = useCallback(async () => {
     try {
       const allPoints = await dataStorage.getAllDataPoints();
 
-      let displayPoints: DataPoint[];
+      const displayPoints: DataPoint[] = allPoints.map(p => ({
+        timestamp: p.timestamp,
+        aiRaw: p.aiRaw,
+        aiPhysical: p.aiPhysical,
+      }));
 
-      if (!tsvWriter) {
-        // Data save is OFF: display all points (should be max 512)
-        displayPoints = allPoints.map(p => ({
-          timestamp: p.timestamp,
-          aiRaw: p.aiRaw,
-          aiPhysical: p.aiPhysical,
-        }));
+      // If not saving to file, keep only latest 1024 points for display
+      // If saving to file, show all data points
+      if (!tsvWriter && displayPoints.length > MAX_POINTS_IN_MEMORY) {
+        setDataPoints(displayPoints.slice(-MAX_POINTS_IN_MEMORY));
       } else {
-        // Data save is ON: decimate to max 512 points
-        if (allPoints.length <= MAX_POINTS_IN_MEMORY) {
-          displayPoints = allPoints.map(p => ({
-            timestamp: p.timestamp,
-            aiRaw: p.aiRaw,
-            aiPhysical: p.aiPhysical,
-          }));
-        } else {
-          // Decimate by integer stride
-          const stride = Math.ceil(allPoints.length / MAX_POINTS_IN_MEMORY);
-          displayPoints = allPoints
-            .filter((_, idx) => idx % stride === 0)
-            .map(p => ({
-              timestamp: p.timestamp,
-              aiRaw: p.aiRaw,
-              aiPhysical: p.aiPhysical,
-            }));
-        }
+        setDataPoints(displayPoints);
       }
-
-      setDataPoints(displayPoints);
-      decimationCounter.current = 0; // Reset decimation counter
     } catch (err) {
-      console.error('Error updating chart data:', err);
+      console.error('Error loading chart data from IndexedDB:', err);
       setStatus(`Chart update error: ${(err as Error).message}`);
     }
   }, [tsvWriter]);
@@ -299,7 +280,7 @@ function App() {
     };
 
     try {
-      // Save to IndexedDB (don't wait for completion to avoid blocking)
+      // Save to IndexedDB (store all data for chart display)
       const savePromise = dataStorage.addDataPoint(dataPoint);
 
       // Add new point to pending buffer for incremental chart update
@@ -325,21 +306,6 @@ function App() {
         }, 100);
       }
 
-      // If saving to file, periodically update with decimation (every 50 points)
-      if (tsvWriter) {
-        decimationCounter.current++;
-        if (decimationCounter.current >= 50) {
-          await updateChartDataFull();
-        }
-      }
-
-      // If not saving to file, keep only latest points in IndexedDB (async)
-      if (!tsvWriter) {
-        dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
-          console.error('Error keeping latest points:', err);
-        });
-      }
-
       // Wait for save to complete for error handling
       await savePromise;
     } catch (err) {
@@ -347,7 +313,7 @@ function App() {
       setStatus(`IndexedDB error: ${(err as Error).message}`);
       // Don't throw - allow polling to continue
     }
-  }, [tsvWriter, flushPendingDataPoints, updateChartDataFull]);
+  }, [flushPendingDataPoints]);
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
@@ -454,9 +420,8 @@ function App() {
         clientRef.current = null;
       }
 
-      // Clear pending data points buffer and counters
+      // Clear pending data points buffer
       pendingDataPoints.current = [];
-      decimationCounter.current = 0;
 
       // Clear IndexedDB for new session
       await dataStorage.clearAllData();
@@ -505,7 +470,6 @@ function App() {
       }
       // Clear pending data points buffer
       pendingDataPoints.current = [];
-      decimationCounter.current = 0;
       // Clear IndexedDB on disconnect
       await dataStorage.clearAllData();
       setDataPoints([]);
@@ -615,12 +579,8 @@ function App() {
       // Create TSV writer (this will prompt user for file location)
       const writer = await createTsvWriter(AI_CHANNELS);
 
-      // Clear IndexedDB when starting new recording session
-      await dataStorage.clearAllData();
-      setDataPoints([]);
-      pendingDataPoints.current = [];
-      decimationCounter.current = 0;
-
+      // When starting save, keep existing data and switch to showing all points
+      // No need to clear IndexedDB or dataPoints - just change display mode
       setTsvWriter(writer);
       setStatus('Saving data to file');
     } catch (err) {
@@ -637,9 +597,8 @@ function App() {
       await tsvWriter.close();
       setTsvWriter(null);
 
-      // When stopping save, keep only latest 512 points in IndexedDB
-      await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
-      await updateChartDataFull();
+      // When stopping save, reload from IndexedDB and limit to 1024 points
+      await loadChartDataFromDB();
 
       setStatus('Stopped saving');
     }
