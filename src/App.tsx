@@ -236,15 +236,24 @@ function App() {
     pendingDataPoints.current = [];
 
     setDataPoints((prev) => {
-      const newPoints = [...prev, ...pointsToAdd];
-
-      // If not saving to file, keep only latest 1024 points for memory efficiency
+      // If not saving to file, maintain exactly MAX_POINTS_IN_MEMORY by removing old points
+      // as new points are added (FIFO replacement)
       // If saving to file, show all data points
-      if (!tsvWriterRef.current && newPoints.length > MAX_POINTS_IN_MEMORY) {
-        return newPoints.slice(-MAX_POINTS_IN_MEMORY);
+      if (!tsvWriterRef.current) {
+        const currentCount = prev.length;
+        const pointsToAddCount = pointsToAdd.length;
+
+        // Calculate how many old points need to be removed
+        const totalAfterAdd = currentCount + pointsToAddCount;
+        if (totalAfterAdd > MAX_POINTS_IN_MEMORY) {
+          const pointsToRemove = totalAfterAdd - MAX_POINTS_IN_MEMORY;
+          // Remove old points from the beginning, then add new points
+          return [...prev.slice(pointsToRemove), ...pointsToAdd];
+        }
       }
 
-      return newPoints;
+      // Add all new points if under the limit or saving to file
+      return [...prev, ...pointsToAdd];
     });
   }, []);
 
@@ -253,7 +262,7 @@ function App() {
     try {
       const allPoints = await dataStorage.getAllDataPoints();
 
-      const displayPoints: DataPoint[] = allPoints.map(p => ({
+      let displayPoints: DataPoint[] = allPoints.map(p => ({
         timestamp: p.timestamp,
         aiRaw: p.aiRaw,
         aiPhysical: p.aiPhysical,
@@ -262,10 +271,10 @@ function App() {
       // If not saving to file, keep only latest 1024 points for display
       // If saving to file, show all data points
       if (!tsvWriterRef.current && displayPoints.length > MAX_POINTS_IN_MEMORY) {
-        setDataPoints(displayPoints.slice(-MAX_POINTS_IN_MEMORY));
-      } else {
-        setDataPoints(displayPoints);
+        displayPoints = displayPoints.slice(-MAX_POINTS_IN_MEMORY);
       }
+
+      setDataPoints(displayPoints);
     } catch (err) {
       console.error('Error loading chart data from IndexedDB:', err);
       setStatus(`Chart update error: ${(err as Error).message}`);
