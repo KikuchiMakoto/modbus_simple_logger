@@ -228,6 +228,15 @@ function App() {
     });
   }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y]);
 
+  // Reload chart data from IndexedDB when XY axis selection changes
+  // This is the only time we access IndexedDB for chart display
+  useEffect(() => {
+    // Only reload if we have data in IndexedDB (i.e., after connection)
+    if (connected) {
+      loadChartDataFromDB();
+    }
+  }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y, connected, loadChartDataFromDB]);
+
   // Flush pending data points to chart (batched update)
   const flushPendingDataPoints = useCallback(() => {
     if (pendingDataPoints.current.length === 0) return;
@@ -257,7 +266,9 @@ function App() {
     });
   }, []);
 
-  // Load all data from IndexedDB and apply display limit based on save mode
+  // Load data from IndexedDB based on save mode
+  // Non-saving mode: Load latest 256 points only
+  // Saving mode: Load all data points
   const loadChartDataFromDB = useCallback(async () => {
     try {
       const allPoints = await dataStorage.getAllDataPoints();
@@ -268,7 +279,7 @@ function App() {
         aiPhysical: p.aiPhysical,
       }));
 
-      // If not saving to file, keep only latest 1024 points for display
+      // If not saving to file, keep only latest 256 points for display
       // If saving to file, show all data points
       if (!tsvWriterRef.current && displayPoints.length > MAX_POINTS_IN_MEMORY) {
         displayPoints = displayPoints.slice(-MAX_POINTS_IN_MEMORY);
@@ -290,10 +301,16 @@ function App() {
     };
 
     try {
-      // Save to IndexedDB (store all data for chart display)
-      const savePromise = dataStorage.addDataPoint(dataPoint);
+      // Save to IndexedDB
+      await dataStorage.addDataPoint(dataPoint);
+
+      // If not saving to file, maintain FIFO: keep only latest 256 points in IndexedDB
+      if (!tsvWriterRef.current) {
+        await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
+      }
 
       // Add new point to pending buffer for incremental chart update
+      // This updates the chart without accessing IndexedDB
       pendingDataPoints.current.push({
         timestamp,
         aiRaw,
@@ -315,9 +332,6 @@ function App() {
           flushPendingDataPoints();
         }, 100);
       }
-
-      // Wait for save to complete for error handling
-      await savePromise;
     } catch (err) {
       console.error('Error updating data history:', err);
       setStatus(`IndexedDB error: ${(err as Error).message}`);
