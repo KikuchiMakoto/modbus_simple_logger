@@ -70,9 +70,10 @@ export function ChartPanel({
         x: xData,
         y: yData,
         type: 'scattergl' as const,
-        mode: 'lines+markers' as const,
-        marker: { color, size: 3 },
-        line: { color, width: 2 },
+        // Use lines only for better performance with many points
+        mode: dataPoints.length > 200 ? ('lines' as const) : ('lines+markers' as const),
+        marker: { color, size: 2 },
+        line: { color, width: 1.5 },
         name: `${yAxis} vs ${xAxis}`,
       },
     ];
@@ -94,8 +95,12 @@ export function ChartPanel({
         gridcolor: palette.grid,
       },
       margin: { t: 30, r: 30, b: 50, l: 50 },
+      // Preserve UI state (zoom, pan) across updates
+      uirevision: `${xAxis}-${yAxis}`,
+      // Help Plotly detect data changes efficiently
+      datarevision: dataPoints.length,
     }),
-    [xAxis, yAxis, palette],
+    [xAxis, yAxis, palette, dataPoints.length],
   );
 
   const plotConfig = useMemo(
@@ -103,6 +108,9 @@ export function ChartPanel({
       displayModeBar: true,
       responsive: true,
       displaylogo: false,
+      // Optimize rendering performance
+      scrollZoom: true,
+      doubleClick: 'reset' as const,
     }),
     [],
   );

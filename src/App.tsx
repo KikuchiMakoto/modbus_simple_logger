@@ -182,6 +182,9 @@ function App() {
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const pollTimer = useRef<number>();
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const pendingDataPoints = useRef<DataPoint[]>([]);
+  const batchUpdateTimer = useRef<number>();
+  const decimationCounter = useRef<number>(0);
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -225,33 +228,27 @@ function App() {
     });
   }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y]);
 
-  const updateDataHistory = async (aiRaw: number[], aiPhysical: number[]) => {
-    const timestamp = Date.now();
-    const dataPoint: StoredDataPoint = {
-      timestamp,
-      aiRaw,
-      aiPhysical,
-    };
+  // Flush pending data points to chart (batched update)
+  const flushPendingDataPoints = useCallback(() => {
+    if (pendingDataPoints.current.length === 0) return;
 
-    try {
-      // Save to IndexedDB
-      await dataStorage.addDataPoint(dataPoint);
+    const pointsToAdd = [...pendingDataPoints.current];
+    pendingDataPoints.current = [];
 
-      // If not saving to file, keep only latest 512 points in IndexedDB
-      if (!tsvWriter) {
-        await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
+    setDataPoints((prev) => {
+      const newPoints = [...prev, ...pointsToAdd];
+
+      // If not saving to file, keep only latest MAX_POINTS_IN_MEMORY points
+      if (!tsvWriter && newPoints.length > MAX_POINTS_IN_MEMORY) {
+        return newPoints.slice(-MAX_POINTS_IN_MEMORY);
       }
 
-      // Update chart data from IndexedDB
-      await updateChartData();
-    } catch (err) {
-      console.error('Error updating data history:', err);
-      setStatus(`IndexedDB error: ${(err as Error).message}`);
-      // Don't throw - allow polling to continue
-    }
-  };
+      return newPoints;
+    });
+  }, [tsvWriter]);
 
-  const updateChartData = async () => {
+  // Full chart data update from IndexedDB (only used when needed)
+  const updateChartDataFull = useCallback(async () => {
     try {
       const allPoints = await dataStorage.getAllDataPoints();
 
@@ -286,11 +283,71 @@ function App() {
       }
 
       setDataPoints(displayPoints);
+      decimationCounter.current = 0; // Reset decimation counter
     } catch (err) {
       console.error('Error updating chart data:', err);
       setStatus(`Chart update error: ${(err as Error).message}`);
     }
-  };
+  }, [tsvWriter]);
+
+  const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
+    const timestamp = Date.now();
+    const dataPoint: StoredDataPoint = {
+      timestamp,
+      aiRaw,
+      aiPhysical,
+    };
+
+    try {
+      // Save to IndexedDB (don't wait for completion to avoid blocking)
+      const savePromise = dataStorage.addDataPoint(dataPoint);
+
+      // Add new point to pending buffer for incremental chart update
+      pendingDataPoints.current.push({
+        timestamp,
+        aiRaw,
+        aiPhysical,
+      });
+
+      // Batch update: flush every 5 points or after 100ms
+      if (pendingDataPoints.current.length >= 5) {
+        // Clear any pending timer
+        if (batchUpdateTimer.current !== undefined) {
+          window.clearTimeout(batchUpdateTimer.current);
+          batchUpdateTimer.current = undefined;
+        }
+        flushPendingDataPoints();
+      } else if (batchUpdateTimer.current === undefined) {
+        // Schedule flush after 100ms if not already scheduled
+        batchUpdateTimer.current = window.setTimeout(() => {
+          batchUpdateTimer.current = undefined;
+          flushPendingDataPoints();
+        }, 100);
+      }
+
+      // If saving to file, periodically update with decimation (every 50 points)
+      if (tsvWriter) {
+        decimationCounter.current++;
+        if (decimationCounter.current >= 50) {
+          await updateChartDataFull();
+        }
+      }
+
+      // If not saving to file, keep only latest points in IndexedDB (async)
+      if (!tsvWriter) {
+        dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
+          console.error('Error keeping latest points:', err);
+        });
+      }
+
+      // Wait for save to complete for error handling
+      await savePromise;
+    } catch (err) {
+      console.error('Error updating data history:', err);
+      setStatus(`IndexedDB error: ${(err as Error).message}`);
+      // Don't throw - allow polling to continue
+    }
+  }, [tsvWriter, flushPendingDataPoints, updateChartDataFull]);
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
@@ -347,7 +404,13 @@ function App() {
       window.clearTimeout(pollTimer.current);
       pollTimer.current = undefined;
     }
-  }, []);
+    // Flush any pending data points when stopping
+    if (batchUpdateTimer.current !== undefined) {
+      window.clearTimeout(batchUpdateTimer.current);
+      batchUpdateTimer.current = undefined;
+    }
+    flushPendingDataPoints();
+  }, [flushPendingDataPoints]);
 
   const requestWakeLock = useCallback(async () => {
     if (!('wakeLock' in navigator)) return;
@@ -390,6 +453,10 @@ function App() {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+
+      // Clear pending data points buffer and counters
+      pendingDataPoints.current = [];
+      decimationCounter.current = 0;
 
       // Clear IndexedDB for new session
       await dataStorage.clearAllData();
@@ -436,6 +503,9 @@ function App() {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+      // Clear pending data points buffer
+      pendingDataPoints.current = [];
+      decimationCounter.current = 0;
       // Clear IndexedDB on disconnect
       await dataStorage.clearAllData();
       setDataPoints([]);
@@ -548,6 +618,8 @@ function App() {
       // Clear IndexedDB when starting new recording session
       await dataStorage.clearAllData();
       setDataPoints([]);
+      pendingDataPoints.current = [];
+      decimationCounter.current = 0;
 
       setTsvWriter(writer);
       setStatus('Saving data to file');
@@ -567,7 +639,7 @@ function App() {
 
       // When stopping save, keep only latest 512 points in IndexedDB
       await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
-      await updateChartData();
+      await updateChartDataFull();
 
       setStatus('Stopped saving');
     }
