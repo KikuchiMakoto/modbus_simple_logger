@@ -1,5 +1,5 @@
 // Service Worker for Modbus WebUSB Logger PWA
-const CACHE_NAME = 'modbus-logger-v2';
+const CACHE_NAME = 'modbus-logger-v3';
 const BASE_PATH = '/modbus_simple_logger/';
 
 // リソースを動的にキャッシュ（初回アクセス時）
@@ -71,6 +71,7 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     (async () => {
+      // ナビゲーションリクエスト（HTMLページ）: ネットワークファースト
       if (isNavigation) {
         try {
           const response = await fetch(request, { cache: 'no-store' });
@@ -80,28 +81,43 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         } catch (error) {
-          console.error('[SW] Navigation fetch failed:', error);
-          return caches.match(BASE_PATH + 'index.html');
+          console.error('[SW] Navigation fetch failed, using cache:', error);
+          const cachedResponse = await caches.match(BASE_PATH + 'index.html');
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          return new Response('Offline - No cached content available', {
+            status: 503,
+            statusText: 'Service Unavailable'
+          });
         }
       }
 
+      // 非ナビゲーションリクエスト（JS/CSS/画像など）: キャッシュファースト
       const cachedResponse = await caches.match(request);
-      const networkPromise = fetch(request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
-            const responseClone = response.clone(); // Clone immediately before body is consumed
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
-          }
-          return response;
-        })
-        .catch((error) => {
-          console.error('[SW] Fetch failed:', error);
-          return cachedResponse;
-        });
+      if (cachedResponse) {
+        console.log('[SW] Serving from cache:', request.url);
+        return cachedResponse;
+      }
 
-      return cachedResponse || networkPromise;
+      // キャッシュになければネットワークから取得
+      try {
+        const response = await fetch(request);
+        if (response && response.status === 200) {
+          const responseClone = response.clone();
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(request, responseClone);
+          console.log('[SW] Cached new resource:', request.url);
+        }
+        return response;
+      } catch (error) {
+        console.error('[SW] Fetch failed, no cache available:', error);
+        return new Response('Offline - Resource not available', {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      }
     })()
   );
 });
