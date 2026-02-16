@@ -1,128 +1,145 @@
 // Service Worker for Modbus WebUSB Logger PWA
-const CACHE_NAME = 'modbus-logger-v3';
+const CACHE_NAME = 'modbus-logger-v4';
 const BASE_PATH = '/modbus_simple_logger/';
 
-// リソースを動的にキャッシュ（初回アクセス時）
-const CACHE_URLS = [
+// Pre-cache: minimal set cached during install
+const PRECACHE_URLS = [
   BASE_PATH,
   BASE_PATH + 'index.html',
+  BASE_PATH + 'manifest.json',
+  BASE_PATH + 'icon.svg',
 ];
 
-// インストール時の処理
+// Install: pre-cache essential resources
 self.addEventListener('install', (event) => {
   console.log('[SW] Install event');
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      console.log('[SW] Caching initial resources');
-      try {
-        await Promise.all(
-          CACHE_URLS.map(async (url) => {
-            const response = await fetch(url, { cache: 'no-store' });
-            if (response.ok) {
-              await cache.put(url, response);
-            }
-          })
-        );
-      } catch (error) {
-        console.warn('[SW] Failed to cache some resources during install:', error);
-        // インストール失敗を防ぐため、エラーは無視
-      }
-    })
-  );
-  // 即座にアクティベート
-  self.skipWaiting();
-});
-
-// アクティベート時の処理（古いキャッシュを削除）
-self.addEventListener('activate', (event) => {
-  console.log('[SW] Activate event');
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[SW] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
+      console.log('[SW] Pre-caching essential resources');
+      // Use individual fetches so a single failure doesn't block install
+      const results = await Promise.allSettled(
+        PRECACHE_URLS.map(async (url) => {
+          const response = await fetch(url, { cache: 'no-store' });
+          if (response.ok) {
+            await cache.put(url, response);
           }
         })
       );
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        console.warn('[SW] Some pre-cache requests failed:', failed.length);
+      }
     })
   );
-  // すべてのクライアントを即座に制御下に置く
-  return self.clients.claim();
+  self.skipWaiting();
 });
 
-// フェッチ時の処理（キャッシュファースト戦略）
+// Activate: clean up old caches and claim clients
+self.addEventListener('activate', (event) => {
+  console.log('[SW] Activate event');
+  event.waitUntil(
+    caches
+      .keys()
+      .then((cacheNames) =>
+        Promise.all(
+          cacheNames.map((name) => {
+            if (name !== CACHE_NAME) {
+              console.log('[SW] Deleting old cache:', name);
+              return caches.delete(name);
+            }
+          })
+        )
+      )
+      .then(() => self.clients.claim())
+  );
+});
+
+// Fetch handler
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // 同一オリジンのリクエストのみ処理
-  if (url.origin !== location.origin) {
-    return;
-  }
-
-  // base path配下のリソースのみ処理
-  if (!url.pathname.startsWith(BASE_PATH)) {
-    return;
-  }
+  // Only handle same-origin requests under BASE_PATH
+  if (url.origin !== location.origin) return;
+  if (!url.pathname.startsWith(BASE_PATH)) return;
 
   const isNavigation = request.mode === 'navigate';
 
-  event.respondWith(
-    (async () => {
-      // ナビゲーションリクエスト（HTMLページ）: ネットワークファースト
-      if (isNavigation) {
-        try {
-          const response = await fetch(request, { cache: 'no-store' });
+  if (isNavigation) {
+    // Navigation (HTML): Network-first
+    // Always try to get the latest HTML from the network.
+    // Fall back to cache when offline.
+    event.respondWith(
+      fetch(request, { cache: 'no-store' })
+        .then((response) => {
           if (response && response.status === 200) {
-            const cache = await caches.open(CACHE_NAME);
-            cache.put(request, response.clone());
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
-        } catch (error) {
-          console.error('[SW] Navigation fetch failed, using cache:', error);
-          const cachedResponse = await caches.match(BASE_PATH + 'index.html');
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          return new Response('Offline - No cached content available', {
-            status: 503,
-            statusText: 'Service Unavailable'
-          });
-        }
-      }
+        })
+        .catch(async () => {
+          console.warn('[SW] Navigation fetch failed, serving from cache');
+          const cached = await caches.match(BASE_PATH + 'index.html');
+          if (cached) return cached;
+          return new Response(
+            '<!DOCTYPE html><html><body><h1>Offline</h1><p>No cached content available. Please connect to the internet and reload.</p></body></html>',
+            {
+              status: 503,
+              statusText: 'Service Unavailable',
+              headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            }
+          );
+        })
+    );
+    return;
+  }
 
-      // 非ナビゲーションリクエスト（JS/CSS/画像など）: キャッシュファースト
-      const cachedResponse = await caches.match(request);
+  // Static assets (JS/CSS/images/fonts): Stale-While-Revalidate
+  // Serve cached version immediately for fast response,
+  // then fetch fresh version in the background to update cache.
+  // This ensures:
+  //   - Offline: cached resources are served reliably
+  //   - Online: resources are always updated for the NEXT load
+  event.respondWith(
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cachedResponse = await cache.match(request);
+
+      // Always start a background fetch to update cache (when online)
+      const fetchPromise = fetch(request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            cache.put(request, networkResponse.clone());
+          }
+          return networkResponse;
+        })
+        .catch((err) => {
+          console.warn('[SW] Background fetch failed:', request.url, err);
+          return null;
+        });
+
+      // If we have a cached response, return it immediately
       if (cachedResponse) {
-        console.log('[SW] Serving from cache:', request.url);
         return cachedResponse;
       }
 
-      // キャッシュになければネットワークから取得
-      try {
-        const response = await fetch(request);
-        if (response && response.status === 200) {
-          const responseClone = response.clone();
-          const cache = await caches.open(CACHE_NAME);
-          await cache.put(request, responseClone);
-          console.log('[SW] Cached new resource:', request.url);
-        }
-        return response;
-      } catch (error) {
-        console.error('[SW] Fetch failed, no cache available:', error);
-        return new Response('Offline - Resource not available', {
-          status: 503,
-          statusText: 'Service Unavailable',
-          headers: { 'Content-Type': 'text/plain' }
-        });
+      // No cache available: wait for network response
+      const networkResponse = await fetchPromise;
+      if (networkResponse) {
+        return networkResponse;
       }
-    })()
+
+      // Both cache and network failed
+      return new Response('Offline - Resource not available', {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    })
   );
 });
 
-// メッセージ受信時の処理（将来の拡張用）
+// Message handler
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();

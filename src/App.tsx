@@ -180,10 +180,10 @@ function App() {
   const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
-  const pollTimer = useRef<number>();
+  const pollTimer = useRef<number | undefined>(undefined);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
-  const batchUpdateTimer = useRef<number>();
+  const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
 
   // Initialize IndexedDB
@@ -236,30 +236,22 @@ function App() {
     pendingDataPoints.current = [];
 
     setDataPoints((prev) => {
-      // If not saving to file, maintain exactly MAX_POINTS_IN_MEMORY by removing old points
-      // as new points are added (FIFO replacement)
-      // If saving to file, show all data points
-      if (!tsvWriterRef.current) {
-        const currentCount = prev.length;
-        const pointsToAddCount = pointsToAdd.length;
+      // Always enforce MAX_POINTS_IN_MEMORY for in-memory display
+      // regardless of save mode (TSV file receives all data independently)
+      const currentCount = prev.length;
+      const pointsToAddCount = pointsToAdd.length;
+      const totalAfterAdd = currentCount + pointsToAddCount;
 
-        // Calculate how many old points need to be removed
-        const totalAfterAdd = currentCount + pointsToAddCount;
-        if (totalAfterAdd > MAX_POINTS_IN_MEMORY) {
-          const pointsToRemove = totalAfterAdd - MAX_POINTS_IN_MEMORY;
-          // Remove old points from the beginning, then add new points
-          return [...prev.slice(pointsToRemove), ...pointsToAdd];
-        }
+      if (totalAfterAdd > MAX_POINTS_IN_MEMORY) {
+        const pointsToRemove = totalAfterAdd - MAX_POINTS_IN_MEMORY;
+        return [...prev.slice(pointsToRemove), ...pointsToAdd];
       }
 
-      // Add all new points if under the limit or saving to file
       return [...prev, ...pointsToAdd];
     });
   }, []);
 
-  // Load data from IndexedDB based on save mode
-  // Non-saving mode: Load latest 256 points only
-  // Saving mode: Load all data points
+  // Load data from IndexedDB (used only on initial connection)
   const loadChartDataFromDB = useCallback(async () => {
     try {
       const allPoints = await dataStorage.getAllDataPoints();
@@ -270,9 +262,8 @@ function App() {
         aiPhysical: p.aiPhysical,
       }));
 
-      // If not saving to file, keep only latest 256 points for display
-      // If saving to file, show all data points
-      if (!tsvWriterRef.current && displayPoints.length > MAX_POINTS_IN_MEMORY) {
+      // Always enforce display limit
+      if (displayPoints.length > MAX_POINTS_IN_MEMORY) {
         displayPoints = displayPoints.slice(-MAX_POINTS_IN_MEMORY);
       }
 
@@ -282,15 +273,6 @@ function App() {
       setStatus(`Chart update error: ${(err as Error).message}`);
     }
   }, []);
-
-  // Reload chart data from IndexedDB when XY axis selection changes
-  // This is the only time we access IndexedDB for chart display
-  useEffect(() => {
-    // Only reload if we have data in IndexedDB (i.e., after connection)
-    if (connected) {
-      loadChartDataFromDB();
-    }
-  }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y, connected, loadChartDataFromDB]);
 
   const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
@@ -304,10 +286,9 @@ function App() {
       // Save to IndexedDB
       await dataStorage.addDataPoint(dataPoint);
 
-      // If not saving to file, maintain FIFO: keep only latest 256 points in IndexedDB
-      if (!tsvWriterRef.current) {
-        await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
-      }
+      // Always maintain FIFO in IndexedDB to prevent unbounded growth
+      // (TSV file receives all data independently via writeRow)
+      await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
 
       // Add new point to pending buffer for incremental chart update
       // This updates the chart without accessing IndexedDB
@@ -389,7 +370,7 @@ function App() {
         pollTimer.current = window.setTimeout(pollOnce, pollingRate.valueMs);
       }
     }
-  }, [aiCalibration, modbusPrecision, tsvWriter, pollingRate.valueMs]);
+  }, [aiCalibration, modbusPrecision, pollingRate.valueMs, updateDataHistory]);
 
   const startPolling = useCallback(() => {
     // Clear any existing timer

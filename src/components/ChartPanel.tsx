@@ -77,6 +77,9 @@ export function ChartPanel({
     ];
   }, [xAxis, yAxis, dataPoints, color]);
 
+  // Extract datarevision value so plotLayout memo doesn't depend on the entire array
+  const dataRevision = dataPoints.length > 0 ? dataPoints[dataPoints.length - 1].timestamp : 0;
+
   const plotLayout = useMemo(
     () => ({
       autosize: true,
@@ -93,14 +96,10 @@ export function ChartPanel({
         gridcolor: palette.grid,
       },
       margin: { t: 30, r: 30, b: 50, l: 50 },
-      // Preserve UI state (zoom, pan) across updates
       uirevision: `${xAxis}-${yAxis}`,
-      // Help Plotly detect data changes efficiently
-      // Use timestamp of latest data point to ensure Plotly detects changes
-      // even when the number of points stays constant (e.g., at max limit of 256)
-      datarevision: dataPoints.length > 0 ? dataPoints[dataPoints.length - 1].timestamp : 0,
+      datarevision: dataRevision,
     }),
-    [xAxis, yAxis, palette, dataPoints],
+    [xAxis, yAxis, palette, dataRevision],
   );
 
   const plotConfig = useMemo(
