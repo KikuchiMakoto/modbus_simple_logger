@@ -16,6 +16,7 @@ import {
 import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
+import { CalibrationPanel } from './components/CalibrationPanel';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
 // Polyfill Web Serial API for environments without native support (e.g., Android)
@@ -185,6 +186,7 @@ function App() {
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
+  const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -674,6 +676,19 @@ function App() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
+                onClick={() => setCalibrationPanelOpen(true)}
+                className="button-secondary flex items-center gap-1"
+                aria-label="Open calibration settings"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+                <span className="hidden sm:inline">Calibration</span>
+              </button>
+              <button
+                type="button"
                 role="switch"
                 aria-checked={isDarkMode}
                 aria-label="Toggle dark mode"
@@ -880,10 +895,9 @@ function App() {
         <section className="card">
         <div className="mb-2.5 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
-          <span className="text-2xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-3">
-          {aiChannels.map((ch, idx) => (
+          {aiChannels.map((ch) => (
             <div
               key={ch.id}
               className="rounded-lg bg-slate-100 border border-slate-200 p-2 space-y-0.5 dark:bg-slate-900/60 dark:border-slate-700/50"
@@ -897,33 +911,6 @@ function App() {
                   <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
                     {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                   </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(a)</span>
-                  <input
-                    type="number"
-                    value={aiCalibration[idx].a}
-                    onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
-                    className="input-compact w-24"
-                  />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(b)</span>
-                  <input
-                    type="number"
-                    value={aiCalibration[idx].b}
-                    onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
-                    className="input-compact w-24"
-                  />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(c)</span>
-                  <input
-                    type="number"
-                    value={aiCalibration[idx].c}
-                    onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
-                    className="input-compact w-24"
-                  />
                 </div>
                 <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
@@ -984,6 +971,13 @@ function App() {
         />
       </div>
       </div>
+
+      <CalibrationPanel
+        open={calibrationPanelOpen}
+        onClose={() => setCalibrationPanelOpen(false)}
+        aiCalibration={aiCalibration}
+        onUpdateCalibration={updateAiCalibration}
+      />
     </div>
   );
 }
