@@ -908,10 +908,9 @@ function App() {
               className="rounded-lg bg-slate-100 border border-slate-200 p-2 space-y-0.5 dark:bg-slate-900/60 dark:border-slate-700/50"
             >
               <div className="text-center font-semibold text-slate-700 pb-0 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
-                {ch.label}
-                <span className="ml-1 text-xs font-normal text-slate-400 dark:text-slate-500">
-                  {ch.id < 8 ? '(HX711)' : '(ADS1115)'}
-                </span>
+                {`CH ${ch.id.toString().padStart(2, '0')}(${ch.id < 8 ? 'HX711' : 'ADS1115'}-${ch.id
+                  .toString(16)
+                  .toUpperCase()})`}
               </div>
               <div className="space-y-0.5 text-base">
                 <div className="flex justify-between items-center">
