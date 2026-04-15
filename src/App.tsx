@@ -420,14 +420,15 @@ function App() {
       if (pollTimer.current === undefined) return;
 
       const now = performance.now();
+      const rateMs = pollingRate.valueMs;
       if (nextPollAtRef.current === 0) {
         nextPollAtRef.current = now;
       }
-      do {
-        nextPollAtRef.current += pollingRate.valueMs;
-      } while (nextPollAtRef.current <= now);
 
-      const delayMs = Math.max(0, nextPollAtRef.current - now);
+      const elapsedMs = Math.max(0, now - nextPollAtRef.current);
+      const remainderMs = elapsedMs % rateMs;
+      const delayMs = remainderMs === 0 ? rateMs : rateMs - remainderMs;
+      nextPollAtRef.current = now + delayMs;
       pollTimer.current = window.setTimeout(() => {
         void runPollingLoop();
       }, delayMs);
