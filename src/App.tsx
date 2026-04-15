@@ -108,6 +108,11 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
     };
   });
 
+const formatAiChannelDisplayLabel = (idx: number): string =>
+  `CH ${idx.toString().padStart(2, '0')}(${idx < 8 ? 'HX711' : 'ADS1115'}-${idx
+    .toString(16)
+    .toUpperCase()})`;
+
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -908,10 +913,7 @@ function App() {
               className="rounded-lg bg-slate-100 border border-slate-200 p-2 space-y-0.5 dark:bg-slate-900/60 dark:border-slate-700/50"
             >
               <div className="text-center font-semibold text-slate-700 pb-0 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
-                {ch.label}
-                <span className="ml-1 text-xs font-normal text-slate-400 dark:text-slate-500">
-                  {ch.id < 8 ? '(HX711)' : '(ADS1115)'}
-                </span>
+                {formatAiChannelDisplayLabel(ch.id)}
               </div>
               <div className="space-y-0.5 text-base">
                 <div className="flex justify-between items-center">
