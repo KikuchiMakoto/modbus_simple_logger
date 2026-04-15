@@ -335,12 +335,10 @@ function App() {
           autoResolvedPrecisionRef.current = 'extended';
           setAutoResolvedPrecision('extended');
           clientRef.current.setPrecisionMode(true);
-          setStatus('Auto precision: Extended(f32t)');
         } catch {
           autoResolvedPrecisionRef.current = 'normal';
           setAutoResolvedPrecision('normal');
           clientRef.current.setPrecisionMode(false);
-          setStatus('Auto precision fallback: Normal(i16t)');
         }
       }
 
