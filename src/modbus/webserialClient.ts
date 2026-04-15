@@ -169,7 +169,7 @@ export class WebSerialModbusClient {
     return new Uint8Array(frame);
   }
 
-  private async transfer(frame: Uint8Array, expectedLength: number): Promise<DataView> {
+  private async transfer(frame: Uint8Array, expectedLength: number, timeout = 1000): Promise<DataView> {
     this.ensureReady();
 
     // Acquire mutex to ensure only one transfer at a time
@@ -191,7 +191,6 @@ export class WebSerialModbusClient {
       await writer.write(frame);
 
       // Read response with timeout
-      const timeout = 1000; // 1 second timeout
       const buffer: number[] = [];
       const startTime = Date.now();
 
@@ -294,11 +293,11 @@ export class WebSerialModbusClient {
    * @param count - Number of registers to read
    * @returns Array of signed 16-bit register values
    */
-  async readInputRegisters(start: number, count: number): Promise<number[]> {
+  async readInputRegisters(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(4, payload);
     const expected = 5 + count * 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected);
+    const view = await this.transfer(frame, expected, timeoutMs);
     const values: number[] = [];
     const byteCount = view.getUint8(2);
     for (let i = 0; i < byteCount / 2; i += 1) {
@@ -315,13 +314,13 @@ export class WebSerialModbusClient {
    * @param count - Number of float32 values to read (will read count*2 registers)
    * @returns Array of float32 values
    */
-  async readInputRegistersAsFloat32Abcd(start: number, count: number): Promise<number[]> {
+  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
     // Read twice as many registers since each float32 needs 2 registers
     const registerCount = count * 2;
     const payload = [start >> 8, start & 0xff, registerCount >> 8, registerCount & 0xff];
     const frame = this.buildFrame(4, payload);
     const expected = 5 + registerCount * 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected);
+    const view = await this.transfer(frame, expected, timeoutMs);
 
     const values: number[] = [];
     const byteCount = view.getUint8(2);
