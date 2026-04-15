@@ -23,7 +23,7 @@ export function formatTimestamp(timestamp: number): string {
 
 /**
  * Create TSV header row for AI channel data
- * Format: timestamp\tai_raw_00\tai_raw_01\t...\tai_phy_00\tai_phy_01\t...
+ * Format: timestamp\tai_raw_00\tai_raw_01\t...\tai_phy_00\tai_phy_01\t...\tai_vlt_00\tai_vlt_01\t...
  * @param channels - Number of AI channels
  * @returns TSV header string with newline
  */
@@ -34,7 +34,10 @@ export function createTsvHeader(channels: number): string {
   const phyHeaders = Array.from({ length: channels }, (_, i) =>
     `ai_phy_${i.toString().padStart(2, '0')}`
   );
-  return ['timestamp', ...rawHeaders, ...phyHeaders].join('\t') + '\n';
+  const vltHeaders = Array.from({ length: channels }, (_, i) =>
+    `ai_vlt_${i.toString().padStart(2, '0')}`
+  );
+  return ['timestamp', ...rawHeaders, ...phyHeaders, ...vltHeaders].join('\t') + '\n';
 }
 
 /**
@@ -42,6 +45,7 @@ export function createTsvHeader(channels: number): string {
  * @param timestamp - Unix timestamp in milliseconds
  * @param aiRaw - Array of raw AI channel values
  * @param aiPhysical - Array of physical AI channel values
+ * @param aiVoltage - Array of voltage AI channel values (mV/V for HX711, V for ADS1115)
  * @param physicalPrecision - Number of decimal places for physical values (default: 3)
  * @returns TSV data row string with newline
  */
@@ -49,12 +53,14 @@ export function formatTsvRow(
   timestamp: number,
   aiRaw: number[],
   aiPhysical: number[],
+  aiVoltage: number[],
   physicalPrecision: number = 3
 ): string {
   const timestampStr = formatTimestamp(timestamp);
   const rawValues = aiRaw.map(v => v.toString());
   const phyValues = aiPhysical.map(v => v.toFixed(physicalPrecision));
-  return [timestampStr, ...rawValues, ...phyValues].join('\t') + '\n';
+  const vltValues = aiVoltage.map(v => v.toFixed(physicalPrecision));
+  return [timestampStr, ...rawValues, ...phyValues, ...vltValues].join('\t') + '\n';
 }
 
 /**
@@ -95,9 +101,10 @@ export class TsvWriter {
    * @param timestamp - Unix timestamp in milliseconds
    * @param aiRaw - Array of raw AI channel values
    * @param aiPhysical - Array of physical AI channel values
+   * @param aiVoltage - Array of voltage AI channel values (mV/V for HX711, V for ADS1115)
    */
-  async writeRow(timestamp: number, aiRaw: number[], aiPhysical: number[]): Promise<void> {
-    const row = formatTsvRow(timestamp, aiRaw, aiPhysical, this.physicalPrecision);
+  async writeRow(timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]): Promise<void> {
+    const row = formatTsvRow(timestamp, aiRaw, aiPhysical, aiVoltage, this.physicalPrecision);
     await this.stream.write(row);
   }
 
@@ -106,10 +113,10 @@ export class TsvWriter {
    * @param dataPoints - Array of data points to write
    */
   async writeRows(
-    dataPoints: Array<{ timestamp: number; aiRaw: number[]; aiPhysical: number[] }>
+    dataPoints: Array<{ timestamp: number; aiRaw: number[]; aiPhysical: number[]; aiVoltage: number[] }>
   ): Promise<void> {
     for (const point of dataPoints) {
-      await this.writeRow(point.timestamp, point.aiRaw, point.aiPhysical);
+      await this.writeRow(point.timestamp, point.aiRaw, point.aiPhysical, point.aiVoltage);
     }
   }
 

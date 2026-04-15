@@ -380,7 +380,8 @@ function App() {
       const writer = tsvWriterRef.current;
       if (writer) {
         try {
-          await writer.writeRow(Date.now(), aiRaw, aiPhysical);
+          const aiVoltage = aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage);
+          await writer.writeRow(Date.now(), aiRaw, aiPhysical, aiVoltage);
         } catch (err) {
           // Ignore errors if stream is closing
           if (err instanceof TypeError && (err as Error).message.includes('closing')) {
