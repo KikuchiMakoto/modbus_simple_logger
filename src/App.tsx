@@ -178,7 +178,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => savedTheme ?? getSystemTheme());
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
-  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
+  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('auto');
   const [autoResolvedPrecision, setAutoResolvedPrecision] = useState<'normal' | 'extended' | null>(null);
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
