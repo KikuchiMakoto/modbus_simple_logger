@@ -203,6 +203,8 @@ function App() {
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const pollTimer = useRef<number | undefined>(undefined);
+  const nextPollAtRef = useRef<number>(0);
+  const pollingInProgressRef = useRef(false);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
@@ -403,28 +405,59 @@ function App() {
     } catch (err) {
       console.error(err);
       setStatus((err as Error).message);
-    } finally {
-      // Schedule next poll after current one completes
-      if (pollTimer.current !== undefined) {
-        pollTimer.current = window.setTimeout(pollOnce, pollingRate.valueMs);
-      }
     }
-  }, [aiCalibration, modbusPrecision, pollingRate.valueMs, updateDataHistory]);
+  }, [aiCalibration, modbusPrecision, updateDataHistory]);
 
-  const startPolling = useCallback(() => {
-    // Clear any existing timer
+  const runPollingLoop = useCallback(async () => {
+    if (pollTimer.current === undefined || pollingInProgressRef.current) return;
+
+    pollingInProgressRef.current = true;
+    try {
+      await pollOnce();
+    } finally {
+      pollingInProgressRef.current = false;
+
+      if (pollTimer.current === undefined) return;
+
+      const now = performance.now();
+      const rateMs = pollingRate.valueMs;
+      if (nextPollAtRef.current === 0) {
+        nextPollAtRef.current = now + rateMs;
+      }
+
+      // Keep the polling cadence aligned to its target timeline instead of completion time.
+      const elapsedMs = Math.max(0, now - nextPollAtRef.current);
+      const remainderMs = elapsedMs % rateMs;
+      const delayMs = remainderMs === 0 ? rateMs : rateMs - remainderMs;
+      nextPollAtRef.current = now + delayMs;
+      pollTimer.current = window.setTimeout(() => {
+        void runPollingLoop();
+      }, delayMs);
+    }
+  }, [pollOnce, pollingRate.valueMs]);
+
+  const scheduleImmediatePoll = useCallback(() => {
     if (pollTimer.current !== undefined) {
       window.clearTimeout(pollTimer.current);
     }
+    nextPollAtRef.current = performance.now();
+    pollTimer.current = window.setTimeout(() => {
+      void runPollingLoop();
+    }, 0);
+  }, [runPollingLoop]);
+
+  const startPolling = useCallback(() => {
     // Start first poll immediately, which will schedule the next one
-    pollTimer.current = window.setTimeout(pollOnce, 0);
-  }, [pollOnce]);
+    scheduleImmediatePoll();
+  }, [scheduleImmediatePoll]);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current !== undefined) {
       window.clearTimeout(pollTimer.current);
       pollTimer.current = undefined;
     }
+    nextPollAtRef.current = 0;
+    pollingInProgressRef.current = false;
     // Flush any pending data points when stopping
     if (batchUpdateTimer.current !== undefined) {
       window.clearTimeout(batchUpdateTimer.current);
@@ -466,6 +499,21 @@ function App() {
     }
     return () => stopPolling();
   }, [acquiring, startPolling, stopPolling]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (pollTimer.current === undefined || pollingInProgressRef.current) return;
+      scheduleImmediatePoll();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handleVisibilityChange);
+    };
+  }, [scheduleImmediatePoll]);
 
   const handleConnect = async () => {
     try {
