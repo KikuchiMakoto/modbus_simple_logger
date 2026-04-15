@@ -5,12 +5,12 @@ type HamburgerMenuProps = {
 };
 
 const MENU_ITEMS = [
-  { key: 'calibration', label: 'Calibration', icon: '⚙' },
-  { key: 'menu1', label: 'Menu 1', icon: '📊' },
-  { key: 'menu2', label: 'Menu 2', icon: '📈' },
-  { key: 'menu3', label: 'Menu 3', icon: '🔧' },
-  { key: 'menu4', label: 'Menu 4', icon: '📋' },
-  { key: 'menu5', label: 'Menu 5', icon: '💾' },
+  { key: 'calibration', label: 'Calibration', icon: '⚙', wip: false },
+  { key: 'menu1', label: 'Menu 1 (WIP)', icon: '📊', wip: true },
+  { key: 'menu2', label: 'Menu 2 (WIP)', icon: '📈', wip: true },
+  { key: 'menu3', label: 'Menu 3 (WIP)', icon: '🔧', wip: true },
+  { key: 'menu4', label: 'Menu 4 (WIP)', icon: '📋', wip: true },
+  { key: 'menu5', label: 'Menu 5 (WIP)', icon: '💾', wip: true },
 ];
 
 export function HamburgerMenu({
@@ -60,11 +60,18 @@ export function HamburgerMenu({
                 <li key={item.key}>
                   <button
                     type="button"
+                    disabled={item.wip}
                     onClick={() => {
-                      onSelectItem(item.key);
-                      onClose();
+                      if (!item.wip) {
+                        onSelectItem(item.key);
+                        onClose();
+                      }
                     }}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold ${
+                      item.wip
+                        ? 'cursor-not-allowed text-slate-400 dark:text-slate-600'
+                        : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
+                    }`}
                   >
                     <span className="text-lg">{item.icon}</span>
                     <span>{item.label}</span>

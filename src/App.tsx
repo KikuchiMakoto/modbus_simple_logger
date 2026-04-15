@@ -12,6 +12,9 @@ import {
   loadAiCalibration,
   saveAiCalibration,
   getAiStatus,
+  hx711RawToMvPerV,
+  hx711RawToMicroStrain,
+  ads1115RawToVolt,
 } from './utils/calibration';
 import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
@@ -80,16 +83,28 @@ const AI_START_REGISTER = 0;
 const AI_FLOAT_START_REGISTER = 5000;
 const AO_START_REGISTER = 0;
 
+const computeSensorValues = (raw: number, idx: number) => {
+  if (idx < 8) {
+    // HX711 (AI 0-7)
+    return { voltage: hx711RawToMvPerV(raw), microStrain: hx711RawToMicroStrain(raw) };
+  }
+  // ADS1115 (AI 8-15)
+  return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
+};
+
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
     const physical = aiToPhysical(raw, calibration[idx]);
+    const { voltage, microStrain } = computeSensorValues(raw, idx);
     return {
       id: idx,
       raw,
       physical,
       label: `CH ${idx.toString().padStart(2, '0')}`,
       status: getAiStatus(raw),
+      voltage,
+      microStrain,
     };
   });
 
@@ -343,12 +358,18 @@ function App() {
       );
 
       setAiChannels((prev) =>
-        prev.map((ch, idx) => ({
-          ...ch,
-          raw: aiRaw[idx] ?? ch.raw,
-          physical: aiPhysical[idx] ?? ch.physical,
-          status: getAiStatus(aiRaw[idx] ?? ch.raw),
-        })),
+        prev.map((ch, idx) => {
+          const rawValue = aiRaw[idx] ?? ch.raw;
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return {
+            ...ch,
+            raw: rawValue,
+            physical: aiPhysical[idx] ?? ch.physical,
+            status: getAiStatus(rawValue),
+            voltage,
+            microStrain,
+          };
+        }),
       );
 
       // Wait for data history update to complete
@@ -525,7 +546,8 @@ function App() {
           if (cIdx !== idx) return ch;
           const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
           const physical = aiToPhysical(rawValue, next[idx]);
-          return { ...ch, physical, status: getAiStatus(ch.raw) };
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return { ...ch, physical, status: getAiStatus(ch.raw), voltage, microStrain };
         }),
       );
       return next;
@@ -576,7 +598,8 @@ function App() {
         prev.map((ch, idx) => {
           const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
           const physical = aiToPhysical(rawValue, loadedCalibration[idx]);
-          return { ...ch, physical, status: getAiStatus(ch.raw) };
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return { ...ch, physical, status: getAiStatus(ch.raw), voltage, microStrain };
         }),
       );
       setStatus('Calibration loaded successfully');
@@ -883,6 +906,9 @@ function App() {
             >
               <div className="text-center font-semibold text-slate-700 pb-0 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
                 {ch.label}
+                <span className="ml-1 text-xs font-normal text-slate-400 dark:text-slate-500">
+                  {ch.id < 8 ? '(HX711)' : '(ADS1115)'}
+                </span>
               </div>
               <div className="space-y-0.5 text-base">
                 <div className="flex justify-between items-center">
@@ -895,6 +921,14 @@ function App() {
                   <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
                   <span className="font-bold tabular-nums text-xl text-emerald-600 dark:text-emerald-400">
                     {ch.physical.toFixed(3)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-600 font-medium dark:text-slate-300">
+                    {ch.id < 8 ? 'mV/V' : 'V'}
+                  </span>
+                  <span className="font-bold tabular-nums text-xl text-sky-600 dark:text-sky-400">
+                    {ch.voltage.toFixed(3)}
                   </span>
                 </div>
               </div>
