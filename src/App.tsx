@@ -70,7 +70,6 @@ const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
 const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
 const PRECISION_OPTIONS: { label: string; value: ModbusPrecision }[] = [
-  { label: 'Auto', value: 'auto' },
   { label: 'Normal(i16t)', value: 'normal' },
   { label: 'Extended(f32t)', value: 'extended' },
 ];
@@ -145,7 +144,7 @@ type ChartAxisSelections = {
   chart4: { x: string; y: string };
 };
 
-type ModbusPrecision = 'auto' | 'normal' | 'extended';
+type ModbusPrecision = 'normal' | 'extended';
 
 const THEME_COOKIE_KEY = 'theme_preference_v1';
 const CHART_AXES_COOKIE_KEY = 'chart_axes_v1';
@@ -178,8 +177,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => savedTheme ?? getSystemTheme());
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
-  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('auto');
-  const [autoResolvedPrecision, setAutoResolvedPrecision] = useState<'normal' | 'extended' | null>(null);
+  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
@@ -204,7 +202,6 @@ function App() {
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
-  const autoResolvedPrecisionRef = useRef<'normal' | 'extended' | null>(null);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
 
@@ -351,25 +348,7 @@ function App() {
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     try {
-      let effectivePrecision: 'normal' | 'extended' = modbusPrecision === 'extended' ? 'extended' : 'normal';
-
-      if (modbusPrecision === 'auto' && !autoResolvedPrecisionRef.current) {
-        try {
-          // Probe float register address availability once (short timeout, 1 register)
-          await clientRef.current.readInputRegisters(AI_FLOAT_START_REGISTER, 1, 100);
-          autoResolvedPrecisionRef.current = 'extended';
-          setAutoResolvedPrecision('extended');
-          clientRef.current.setPrecisionMode(true);
-        } catch {
-          autoResolvedPrecisionRef.current = 'normal';
-          setAutoResolvedPrecision('normal');
-          clientRef.current.setPrecisionMode(false);
-        }
-      }
-
-      if (modbusPrecision === 'auto') {
-        effectivePrecision = autoResolvedPrecisionRef.current ?? 'normal';
-      }
+      const effectivePrecision: 'normal' | 'extended' = modbusPrecision;
 
       const aiSourceValues = effectivePrecision === 'extended'
         ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
@@ -506,8 +485,6 @@ function App() {
         serial,
         modbusPrecision === 'extended'
       );
-      autoResolvedPrecisionRef.current = null;
-      setAutoResolvedPrecision(null);
       await client.connect();
       clientRef.current = client;
 
@@ -536,8 +513,6 @@ function App() {
   const handleDisconnect = async () => {
     setAcquiring(false);
     stopPolling();
-    autoResolvedPrecisionRef.current = null;
-    setAutoResolvedPrecision(null);
     try {
       if (clientRef.current) {
         await clientRef.current.disconnect();
@@ -943,8 +918,7 @@ function App() {
                   <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
                   <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
                     {(
-                      modbusPrecision === 'extended' ||
-                      (modbusPrecision === 'auto' && autoResolvedPrecision === 'extended')
+                      modbusPrecision === 'extended'
                     ) ? Math.trunc(ch.raw) : ch.raw}
                   </span>
                 </div>
