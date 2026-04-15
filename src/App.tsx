@@ -12,10 +12,15 @@ import {
   loadAiCalibration,
   saveAiCalibration,
   getAiStatus,
+  hx711RawToMvPerV,
+  hx711RawToMicroStrain,
+  ads1115RawToVolt,
 } from './utils/calibration';
 import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
+import { CalibrationPanel } from './components/CalibrationPanel';
+import { HamburgerMenu } from './components/HamburgerMenu';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
 // Polyfill Web Serial API for environments without native support (e.g., Android)
@@ -78,16 +83,28 @@ const AI_START_REGISTER = 0;
 const AI_FLOAT_START_REGISTER = 5000;
 const AO_START_REGISTER = 0;
 
+const computeSensorValues = (raw: number, idx: number) => {
+  if (idx < 8) {
+    // HX711 (AI 0-7)
+    return { voltage: hx711RawToMvPerV(raw), microStrain: hx711RawToMicroStrain(raw) };
+  }
+  // ADS1115 (AI 8-15)
+  return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
+};
+
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
     const physical = aiToPhysical(raw, calibration[idx]);
+    const { voltage, microStrain } = computeSensorValues(raw, idx);
     return {
       id: idx,
       raw,
       physical,
       label: `CH ${idx.toString().padStart(2, '0')}`,
       status: getAiStatus(raw),
+      voltage,
+      microStrain,
     };
   });
 
@@ -185,6 +202,14 @@ function App() {
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
+  const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
+  const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
+
+  const handleMenuSelect = (item: string) => {
+    if (item === 'calibration') {
+      setCalibrationPanelOpen(true);
+    }
+  };
 
   // Initialize IndexedDB
   useEffect(() => {
@@ -333,12 +358,18 @@ function App() {
       );
 
       setAiChannels((prev) =>
-        prev.map((ch, idx) => ({
-          ...ch,
-          raw: aiRaw[idx] ?? ch.raw,
-          physical: aiPhysical[idx] ?? ch.physical,
-          status: getAiStatus(aiRaw[idx] ?? ch.raw),
-        })),
+        prev.map((ch, idx) => {
+          const rawValue = aiRaw[idx] ?? ch.raw;
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return {
+            ...ch,
+            raw: rawValue,
+            physical: aiPhysical[idx] ?? ch.physical,
+            status: getAiStatus(rawValue),
+            voltage,
+            microStrain,
+          };
+        }),
       );
 
       // Wait for data history update to complete
@@ -349,7 +380,8 @@ function App() {
       const writer = tsvWriterRef.current;
       if (writer) {
         try {
-          await writer.writeRow(Date.now(), aiRaw, aiPhysical);
+          const aiVoltage = aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage);
+          await writer.writeRow(Date.now(), aiRaw, aiPhysical, aiVoltage);
         } catch (err) {
           // Ignore errors if stream is closing
           if (err instanceof TypeError && (err as Error).message.includes('closing')) {
@@ -515,7 +547,8 @@ function App() {
           if (cIdx !== idx) return ch;
           const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
           const physical = aiToPhysical(rawValue, next[idx]);
-          return { ...ch, physical, status: getAiStatus(ch.raw) };
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return { ...ch, physical, status: getAiStatus(ch.raw), voltage, microStrain };
         }),
       );
       return next;
@@ -537,17 +570,7 @@ function App() {
     downloadJson('calibration.json', calibrationData);
   };
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleLoadCalibration = () => {
-    // Trigger file input click
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  const handleLoadCalibrationFile = async (file: File) => {
     try {
       const text = await file.text();
       const data = JSON.parse(text);
@@ -576,17 +599,13 @@ function App() {
         prev.map((ch, idx) => {
           const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
           const physical = aiToPhysical(rawValue, loadedCalibration[idx]);
-          return { ...ch, physical, status: getAiStatus(ch.raw) };
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return { ...ch, physical, status: getAiStatus(ch.raw), voltage, microStrain };
         }),
       );
       setStatus('Calibration loaded successfully');
     } catch (err) {
       setStatus((err as Error).message);
-    } finally {
-      // Reset the input value to allow loading the same file again
-      if (event.target) {
-        event.target.value = '';
-      }
     }
   };
 
@@ -671,7 +690,7 @@ function App() {
                 {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 role="switch"
@@ -716,19 +735,6 @@ function App() {
                   )}
                 </span>
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json,application/json"
-                onChange={handleFileChange}
-                style={{ display: 'none' }}
-              />
-              <button type="button" className="button-secondary" onClick={handleLoadCalibration}>
-                Load Calib
-              </button>
-              <button type="button" className="button-secondary" onClick={handleDownloadCalibration}>
-                Save Calib
-              </button>
               {!tsvWriter ? (
                 <button type="button" className="button-primary" onClick={handleStartSave}>
                   Start Save
@@ -738,6 +744,18 @@ function App() {
                   Stop Save
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setHamburgerMenuOpen(true)}
+                className="button-secondary flex items-center justify-center p-2"
+                aria-label="Open menu"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
             </div>
           </header>
         </div>
@@ -880,16 +898,18 @@ function App() {
         <section className="card">
         <div className="mb-2.5 flex items-center justify-between">
           <h2 className="text-xl font-semibold">AI Channels (16)</h2>
-          <span className="text-2xl font-semibold text-emerald-400">a·x² + b·x + c = y</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-3">
-          {aiChannels.map((ch, idx) => (
+          {aiChannels.map((ch) => (
             <div
               key={ch.id}
               className="rounded-lg bg-slate-100 border border-slate-200 p-2 space-y-0.5 dark:bg-slate-900/60 dark:border-slate-700/50"
             >
               <div className="text-center font-semibold text-slate-700 pb-0 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
                 {ch.label}
+                <span className="ml-1 text-xs font-normal text-slate-400 dark:text-slate-500">
+                  {ch.id < 8 ? '(HX711)' : '(ADS1115)'}
+                </span>
               </div>
               <div className="space-y-0.5 text-base">
                 <div className="flex justify-between items-center">
@@ -898,37 +918,18 @@ function App() {
                     {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                   </span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(a)</span>
-                  <input
-                    type="number"
-                    value={aiCalibration[idx].a}
-                    onChange={(e) => updateAiCalibration(idx, 'a', Number(e.target.value))}
-                    className="input-compact w-24"
-                  />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(b)</span>
-                  <input
-                    type="number"
-                    value={aiCalibration[idx].b}
-                    onChange={(e) => updateAiCalibration(idx, 'b', Number(e.target.value))}
-                    className="input-compact w-24"
-                  />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Calib(c)</span>
-                  <input
-                    type="number"
-                    value={aiCalibration[idx].c}
-                    onChange={(e) => updateAiCalibration(idx, 'c', Number(e.target.value))}
-                    className="input-compact w-24"
-                  />
-                </div>
                 <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
                   <span className="font-bold tabular-nums text-xl text-emerald-600 dark:text-emerald-400">
                     {ch.physical.toFixed(3)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-600 font-medium dark:text-slate-300">
+                    {ch.id < 8 ? 'mV/V' : 'V'}
+                  </span>
+                  <span className="font-bold tabular-nums text-xl text-sky-600 dark:text-sky-400">
+                    {ch.voltage.toFixed(ch.id < 8 ? 4 : 3)}
                   </span>
                 </div>
               </div>
@@ -984,6 +985,21 @@ function App() {
         />
       </div>
       </div>
+
+      <HamburgerMenu
+        open={hamburgerMenuOpen}
+        onClose={() => setHamburgerMenuOpen(false)}
+        onSelectItem={handleMenuSelect}
+      />
+
+      <CalibrationPanel
+        open={calibrationPanelOpen}
+        onClose={() => setCalibrationPanelOpen(false)}
+        aiCalibration={aiCalibration}
+        onUpdateCalibration={updateAiCalibration}
+        onSaveCalibration={handleDownloadCalibration}
+        onLoadCalibration={handleLoadCalibrationFile}
+      />
     </div>
   );
 }

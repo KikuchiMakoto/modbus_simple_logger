@@ -37,3 +37,16 @@ export const clampVoltage = (voltage: number): number =>
 
 export const voltageToModbus = (voltage: number): number =>
   Math.round(clampVoltage(voltage) * 1000);
+
+// HX711 (AI CH 0-7): raw → mV/V
+export const hx711RawToMvPerV = (raw: number): number =>
+  raw / 32768.0 / 128.0 / 2 * 1e3;
+
+// HX711 (AI CH 0-7): raw → μɛ (micro strain) — computed internally, not displayed
+// Multiply mV/V by gauge factor (2e3) to convert to micro strain
+export const hx711RawToMicroStrain = (raw: number): number =>
+  hx711RawToMvPerV(raw) * 2e3;
+
+// ADS1115 (AI CH 8-15): raw → V (±6.144V range)
+export const ads1115RawToVolt = (raw: number): number =>
+  raw / 32768.0 * 6.144;

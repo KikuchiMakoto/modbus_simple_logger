@@ -10,6 +10,8 @@ export type AiChannel = {
   physical: number;
   label: string;
   status: 'normal' | 'warning' | 'danger';
+  voltage: number;       // mV/V for HX711 (0-7), V for ADS1115 (8-15)
+  microStrain: number;   // μɛ for HX711 (0-7), 0 for ADS1115 (8-15)
 };
 
 export type AoChannel = {
