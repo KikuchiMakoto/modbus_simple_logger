@@ -280,10 +280,10 @@ export class WebSerialModbusClient {
 
       while (buffer.length < expectedLength) {
         const elapsedMs = Date.now() - startTime;
-        if (elapsedMs > timeout) {
+        if (elapsedMs >= timeout) {
           throw new Error('Timeout waiting for response');
         }
-        const remainingMs = Math.max(1, timeout - elapsedMs);
+        const remainingMs = timeout - elapsedMs;
         const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
           let settled = false;
           const timeoutId = window.setTimeout(() => {
