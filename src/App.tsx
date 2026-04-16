@@ -68,7 +68,6 @@ const POLLING_OPTIONS: PollingRateOption[] = [
 
 const AI_CHANNELS = 16;
 const AO_CHANNELS = 8;  // Used only for initialization
-const SCRIPT_RUNNER_INTERVAL_MS = 500;
 const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
@@ -183,7 +182,12 @@ const DEFAULT_CHART_AXES: ChartAxisSelections = {
 
 const DEFAULT_SCRIPT = `# get_ai_raw(ch): Read raw AI value for a channel.
 # get_ai_phy(ch): Read calibrated AI value for a channel.
-# set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).`;
+# set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
+#
+# To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
+# Use asyncio instead:
+# import asyncio
+# await asyncio.sleep(1)`;
 
 type PyodideInstance = {
   globals: {
@@ -244,7 +248,6 @@ function App() {
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aiPhysicalSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
-  const scriptTimerRef = useRef<number | undefined>(undefined);
   const scriptExecutingRef = useRef(false);
   const pyodideRef = useRef<PyodideInstance | null>(null);
   const pyodideLoadingRef = useRef<Promise<PyodideInstance> | null>(null);
@@ -475,45 +478,31 @@ function App() {
   }, [getAiRaw, getAiPhysical, setAo, setAoAll]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
-    if (scriptTimerRef.current !== undefined) {
-      window.clearInterval(scriptTimerRef.current);
-      scriptTimerRef.current = undefined;
-    }
-    scriptExecutingRef.current = false;
     setScriptRunning(false);
     setScriptRunnerStatus(nextStatus);
   }, []);
 
-  const runScriptOnce = useCallback(async () => {
-    if (scriptExecutingRef.current || !pyodideRef.current) return;
-    scriptExecutingRef.current = true;
+  const startScriptRunner = useCallback(async () => {
+    if (scriptExecutingRef.current) return;
     try {
-      await pyodideRef.current.runPythonAsync(scriptCode);
+      setScriptRunnerStatus('Initializing Pyodide...');
+      await ensurePyodideLoaded();
+
+      if (!pyodideRef.current) {
+        throw new Error('Pyodide is not available');
+      }
+
+      setScriptRunning(true);
       setScriptRunnerStatus('Running');
+      scriptExecutingRef.current = true;
+      await pyodideRef.current.runPythonAsync(scriptCode);
+      stopScriptRunner('Completed');
     } catch (err) {
       stopScriptRunner(`Error: ${(err as Error).message}`);
     } finally {
       scriptExecutingRef.current = false;
     }
-  }, [scriptCode, stopScriptRunner]);
-
-  const startScriptRunner = useCallback(async () => {
-    try {
-      setScriptRunnerStatus('Initializing Pyodide...');
-      await ensurePyodideLoaded();
-      if (scriptTimerRef.current !== undefined) {
-        window.clearInterval(scriptTimerRef.current);
-      }
-      setScriptRunning(true);
-      setScriptRunnerStatus('Running');
-      scriptTimerRef.current = window.setInterval(() => {
-        void runScriptOnce();
-      }, SCRIPT_RUNNER_INTERVAL_MS);
-      void runScriptOnce();
-    } catch (err) {
-      stopScriptRunner(`Error: ${(err as Error).message}`);
-    }
-  }, [ensurePyodideLoaded, runScriptOnce, stopScriptRunner]);
+  }, [ensurePyodideLoaded, scriptCode, stopScriptRunner]);
 
   const handleToggleScriptRunner = useCallback(() => {
     if (scriptRunning) {
@@ -774,14 +763,6 @@ function App() {
     }
     return () => stopPolling();
   }, [acquiring, startPolling, stopPolling]);
-
-  useEffect(() => {
-    return () => {
-      if (scriptTimerRef.current !== undefined) {
-        window.clearInterval(scriptTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
