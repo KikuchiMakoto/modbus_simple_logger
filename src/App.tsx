@@ -140,6 +140,12 @@ function formatSerialSettings(settings: SerialSettings) {
   return `${settings.baudRate}bps ${settings.dataBits}${parityLetter}${settings.stopBits}`;
 }
 
+const hasAoValuesChanged = (lastSent: number[] | null, current: number[]): boolean => {
+  if (!lastSent) return true;
+  if (lastSent.length !== current.length) return true;
+  return lastSent.some((value, index) => value !== current[index]);
+};
+
 const axisOptions = [
   { key: 'time', label: 'Time' },
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
@@ -335,6 +341,7 @@ function App() {
         timestamp: p.timestamp,
         aiRaw: p.aiRaw,
         aiPhysical: p.aiPhysical,
+        // Backward compatibility for IndexedDB records created before aiVoltage was stored.
         aiVoltage: p.aiVoltage ?? p.aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage),
       }));
 
@@ -570,10 +577,7 @@ function App() {
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
 
       const currentAoRaw = aoRawSourceRef.current;
-      const shouldWriteAo =
-        !lastSentAoRawRef.current ||
-        lastSentAoRawRef.current.length !== currentAoRaw.length ||
-        lastSentAoRawRef.current.some((value, index) => value !== currentAoRaw[index]);
+      const shouldWriteAo = hasAoValuesChanged(lastSentAoRawRef.current, currentAoRaw);
       if (shouldWriteAo) {
         await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, currentAoRaw);
         lastSentAoRawRef.current = [...currentAoRaw];
