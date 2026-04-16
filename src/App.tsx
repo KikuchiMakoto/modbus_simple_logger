@@ -116,7 +116,7 @@ const createAoChannels = (): AoChannel[] =>
     id: channelIndex,
     raw: 0,
     physical: 0,
-    label: `CH ${channelIndex} (GP8403-${Math.floor(channelIndex / 4)})`,
+    label: `CH ${channelIndex} (GP8403-${channelIndex})`,
   }));
 
 const formatAiChannelDisplayLabel = (idx: number): string =>
