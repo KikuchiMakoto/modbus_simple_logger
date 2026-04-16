@@ -86,6 +86,8 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
 const AI_START_REGISTER = 0;
 const AI_FLOAT_START_REGISTER = 5000;
 const AO_START_REGISTER = 0;
+const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
+const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 
 const computeSensorValues = (raw: number, idx: number) => {
   if (idx < 8) {
@@ -249,6 +251,7 @@ function App() {
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
   const lastSentAoRawRef = useRef<number[] | null>(null);
+  const outputHoldingFailureTimestampsRef = useRef<number[]>([]);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
@@ -570,19 +573,20 @@ function App() {
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
+    let firstError: Error | null = null;
+    const pruneAndCountOutputHoldingFailures = () => {
+      const now = Date.now();
+      outputHoldingFailureTimestampsRef.current = outputHoldingFailureTimestampsRef.current.filter(
+        (timestamp) => now - timestamp < OUTPUT_HOLDING_RETRY_WINDOW_MS,
+      );
+      return outputHoldingFailureTimestampsRef.current.length;
+    };
     try {
       const effectivePrecision: 'normal' | 'extended' = modbusPrecision;
 
       const aiSourceValues = effectivePrecision === 'extended'
         ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
-
-      const currentAoRaw = aoRawSourceRef.current;
-      const shouldWriteAo = hasAoValuesChanged(lastSentAoRawRef.current, currentAoRaw);
-      if (shouldWriteAo) {
-        await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, currentAoRaw);
-        lastSentAoRawRef.current = [...currentAoRaw];
-      }
 
       aiRawSourceRef.current = aiSourceValues;
       const aiRaw = aiSourceValues;
@@ -626,7 +630,6 @@ function App() {
         }
       }
 
-      setStatus('Polling');
       console.debug('[App] pollOnce success', {
         effectivePrecision,
         aiCount: aiSourceValues.length,
@@ -636,7 +639,60 @@ function App() {
       });
     } catch (err) {
       console.error('[App] pollOnce failed', err);
-      setStatus((err as Error).message);
+      firstError = err instanceof Error ? err : new Error(String(err));
+    }
+
+    const currentAoRaw = aoRawSourceRef.current;
+    const shouldWriteAo = hasAoValuesChanged(lastSentAoRawRef.current, currentAoRaw);
+    if (shouldWriteAo && clientRef.current) {
+      if (pruneAndCountOutputHoldingFailures() >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
+        const retryLimitError = new Error(
+          `AO write retry rate exceeded (${OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW}/min). Skipping AO write until failure rate decreases.`,
+        );
+        console.warn('[App] AO write skipped due to retry limit', {
+          failureCount: outputHoldingFailureTimestampsRef.current.length,
+        });
+        if (!firstError) firstError = retryLimitError;
+      } else {
+        try {
+          await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, currentAoRaw);
+          lastSentAoRawRef.current = [...currentAoRaw];
+        } catch (writeError) {
+          outputHoldingFailureTimestampsRef.current.push(Date.now());
+          const normalizedWriteError =
+            writeError instanceof Error ? writeError : new Error(String(writeError));
+          console.warn('[App] AO write failed; retrying once', normalizedWriteError);
+
+          const failureCount = pruneAndCountOutputHoldingFailures();
+          if (failureCount >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
+            if (!firstError) {
+              firstError = new Error(
+                `Failed to write AO Holding Registers: ${normalizedWriteError.message} (retry rate limit reached)`,
+              );
+            }
+          } else {
+            try {
+              await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, currentAoRaw);
+              lastSentAoRawRef.current = [...currentAoRaw];
+            } catch (retryError) {
+              outputHoldingFailureTimestampsRef.current.push(Date.now());
+              const normalizedRetryError =
+                retryError instanceof Error ? retryError : new Error(String(retryError));
+              if (!firstError) {
+                firstError = new Error(
+                  `Failed to write AO Holding Registers after retry: ${normalizedRetryError.message}`,
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (firstError) {
+      setStatus(firstError.message);
+    } else {
+      setStatus('Polling');
     }
   }, [aiCalibration, modbusPrecision, updateDataHistory]);
 
@@ -786,6 +842,7 @@ function App() {
         throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
       }
       clientRef.current = client;
+      outputHoldingFailureTimestampsRef.current = [];
 
       setConnected(true);
       setAcquiring(true);
@@ -822,6 +879,7 @@ function App() {
         clientRef.current = null;
       }
       lastSentAoRawRef.current = null;
+      outputHoldingFailureTimestampsRef.current = [];
       // Clear pending data points buffer
       pendingDataPoints.current = [];
       // Clear IndexedDB on disconnect
