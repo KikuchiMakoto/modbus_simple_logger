@@ -68,6 +68,7 @@ const POLLING_OPTIONS: PollingRateOption[] = [
 
 const AI_CHANNELS = 16;
 const AO_CHANNELS = 8;  // Used only for initialization
+const SCRIPT_RUNNER_INTERVAL_MS = 500;
 const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
@@ -156,8 +157,6 @@ type ThemeMode = 'light' | 'dark';
 type ChartAxisSelections = {
   chart1: { x: string; y: string };
   chart2: { x: string; y: string };
-  chart3: { x: string; y: string };
-  chart4: { x: string; y: string };
 };
 
 const THEME_COOKIE_KEY = 'theme_preference_v1';
@@ -166,8 +165,17 @@ const CHART_AXES_COOKIE_KEY = 'chart_axes_v1';
 const DEFAULT_CHART_AXES: ChartAxisSelections = {
   chart1: { x: 'time', y: 'raw_00' },
   chart2: { x: 'time', y: 'raw_01' },
-  chart3: { x: 'time', y: 'raw_02' },
-  chart4: { x: 'time', y: 'raw_03' },
+};
+
+const DEFAULT_SCRIPT = `# get_ai_raw(ch): Read raw AI value for a channel.
+# get_ai_phy(ch): Read calibrated AI value for a channel.
+# set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).`;
+
+type PyodideInstance = {
+  globals: {
+    set: (name: string, value: unknown) => void;
+  };
+  runPythonAsync: (code: string) => Promise<unknown>;
 };
 
 const getSystemTheme = (): ThemeMode => {
@@ -180,8 +188,6 @@ const loadChartAxes = (): ChartAxisSelections => {
   return {
     chart1: { ...DEFAULT_CHART_AXES.chart1, ...saved.chart1 },
     chart2: { ...DEFAULT_CHART_AXES.chart2, ...saved.chart2 },
-    chart3: { ...DEFAULT_CHART_AXES.chart3, ...saved.chart3 },
-    chart4: { ...DEFAULT_CHART_AXES.chart4, ...saved.chart4 },
   };
 };
 
@@ -206,13 +212,17 @@ function App() {
   const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
   const [chart2X, setChart2X] = useState(initialAxes.chart2.x);
   const [chart2Y, setChart2Y] = useState(initialAxes.chart2.y);
-  const [chart3X, setChart3X] = useState(initialAxes.chart3.x);
-  const [chart3Y, setChart3Y] = useState(initialAxes.chart3.y);
-  const [chart4X, setChart4X] = useState(initialAxes.chart4.x);
-  const [chart4Y, setChart4Y] = useState(initialAxes.chart4.y);
+  const [scriptCode, setScriptCode] = useState(DEFAULT_SCRIPT);
+  const [scriptRunning, setScriptRunning] = useState(false);
+  const [scriptRunnerStatus, setScriptRunnerStatus] = useState('Idle');
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
+  const aiPhysicalSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
+  const scriptTimerRef = useRef<number | undefined>(undefined);
+  const scriptExecutingRef = useRef(false);
+  const pyodideRef = useRef<PyodideInstance | null>(null);
+  const pyodideLoadingRef = useRef<Promise<PyodideInstance> | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
   const nextPollAtRef = useRef<number>(0);
   const pollingInProgressRef = useRef(false);
@@ -266,13 +276,15 @@ function App() {
   }, [aiCalibration]);
 
   useEffect(() => {
+    aiPhysicalSourceRef.current = aiChannels.map((ch) => ch.physical);
+  }, [aiChannels]);
+
+  useEffect(() => {
     writeJsonCookie(CHART_AXES_COOKIE_KEY, {
       chart1: { x: chart1X, y: chart1Y },
       chart2: { x: chart2X, y: chart2Y },
-      chart3: { x: chart3X, y: chart3Y },
-      chart4: { x: chart4X, y: chart4Y },
     });
-  }, [chart1X, chart1Y, chart2X, chart2Y, chart3X, chart3Y, chart4X, chart4Y]);
+  }, [chart1X, chart1Y, chart2X, chart2Y]);
 
   // Flush pending data points to chart (batched update)
   const flushPendingDataPoints = useCallback(() => {
@@ -337,6 +349,150 @@ function App() {
     );
   }, []);
 
+  const clampAoVoltageToMilliVolt = useCallback((voltage: number): number => {
+    if (!Number.isFinite(voltage)) return 0;
+    const milliVolt = Math.round(voltage * 1000);
+    return Math.min(10000, Math.max(0, milliVolt));
+  }, []);
+
+  const getAiRaw = useCallback((ch: number): number | number[] => {
+    if (ch === -1) return [...aiRawSourceRef.current];
+    if (!Number.isInteger(ch) || ch < 0 || ch >= AI_CHANNELS) return 0;
+    return aiRawSourceRef.current[ch] ?? 0;
+  }, []);
+
+  const getAiPhysical = useCallback((ch: number): number | number[] => {
+    if (ch === -1) return [...aiPhysicalSourceRef.current];
+    if (!Number.isInteger(ch) || ch < 0 || ch >= AI_CHANNELS) return 0;
+    return aiPhysicalSourceRef.current[ch] ?? 0;
+  }, []);
+
+  const setAo = useCallback((ch: number, data: number) => {
+    if (!Number.isInteger(ch) || ch < 0 || ch >= AO_CHANNELS) return;
+    const nextRaw = [...aoRawSourceRef.current];
+    nextRaw[ch] = clampAoVoltageToMilliVolt(data);
+    aoRawSourceRef.current = nextRaw;
+    setAoChannels((prev) =>
+      prev.map((channel, idx) => {
+        const value = nextRaw[idx] ?? channel.raw;
+        return { ...channel, raw: value, physical: value };
+      }),
+    );
+  }, [clampAoVoltageToMilliVolt]);
+
+  const setAoAll = useCallback((data: unknown) => {
+    if (!Array.isArray(data)) return;
+    const nextRaw = [...aoRawSourceRef.current];
+    const count = Math.min(data.length, AO_CHANNELS);
+    for (let idx = 0; idx < count; idx += 1) {
+      const voltage = Number(data[idx]);
+      if (!Number.isFinite(voltage)) continue;
+      nextRaw[idx] = clampAoVoltageToMilliVolt(voltage);
+    }
+    aoRawSourceRef.current = nextRaw;
+    setAoChannels((prev) =>
+      prev.map((channel, idx) => {
+        const value = nextRaw[idx] ?? channel.raw;
+        return { ...channel, raw: value, physical: value };
+      }),
+    );
+  }, [clampAoVoltageToMilliVolt]);
+
+  const ensurePyodideLoaded = useCallback(async (): Promise<PyodideInstance> => {
+    if (pyodideRef.current) return pyodideRef.current;
+    if (pyodideLoadingRef.current) return pyodideLoadingRef.current;
+
+    pyodideLoadingRef.current = (async () => {
+      const pyodideScriptId = 'pyodide-script';
+      if (!document.getElementById(pyodideScriptId)) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script');
+          script.id = pyodideScriptId;
+          script.src = 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.js';
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error('Failed to load Pyodide script'));
+          document.head.appendChild(script);
+        });
+      }
+
+      const win = window as Window & {
+        loadPyodide?: (opts: { indexURL: string }) => Promise<PyodideInstance>;
+      };
+      if (!win.loadPyodide) {
+        throw new Error('loadPyodide is not available');
+      }
+
+      const pyodide = await win.loadPyodide({
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/',
+      });
+
+      pyodide.globals.set('get_ai_raw', getAiRaw);
+      pyodide.globals.set('get_ai_raw_all', () => getAiRaw(-1));
+      pyodide.globals.set('get_ai_phy', getAiPhysical);
+      pyodide.globals.set('get_ai_phy_all', () => getAiPhysical(-1));
+      pyodide.globals.set('set_ao', setAo);
+      pyodide.globals.set('set_ao_all', setAoAll);
+
+      pyodideRef.current = pyodide;
+      return pyodide;
+    })();
+
+    try {
+      return await pyodideLoadingRef.current;
+    } finally {
+      pyodideLoadingRef.current = null;
+    }
+  }, [getAiRaw, getAiPhysical, setAo, setAoAll]);
+
+  const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
+    if (scriptTimerRef.current !== undefined) {
+      window.clearInterval(scriptTimerRef.current);
+      scriptTimerRef.current = undefined;
+    }
+    scriptExecutingRef.current = false;
+    setScriptRunning(false);
+    setScriptRunnerStatus(nextStatus);
+  }, []);
+
+  const runScriptOnce = useCallback(async () => {
+    if (scriptExecutingRef.current || !pyodideRef.current) return;
+    scriptExecutingRef.current = true;
+    try {
+      await pyodideRef.current.runPythonAsync(scriptCode);
+      setScriptRunnerStatus('Running');
+    } catch (err) {
+      stopScriptRunner(`Error: ${(err as Error).message}`);
+    } finally {
+      scriptExecutingRef.current = false;
+    }
+  }, [scriptCode, stopScriptRunner]);
+
+  const startScriptRunner = useCallback(async () => {
+    try {
+      setScriptRunnerStatus('Initializing Pyodide...');
+      await ensurePyodideLoaded();
+      if (scriptTimerRef.current !== undefined) {
+        window.clearInterval(scriptTimerRef.current);
+      }
+      setScriptRunning(true);
+      setScriptRunnerStatus('Running');
+      scriptTimerRef.current = window.setInterval(() => {
+        void runScriptOnce();
+      }, SCRIPT_RUNNER_INTERVAL_MS);
+      void runScriptOnce();
+    } catch (err) {
+      stopScriptRunner(`Error: ${(err as Error).message}`);
+    }
+  }, [ensurePyodideLoaded, runScriptOnce, stopScriptRunner]);
+
+  const handleToggleScriptRunner = useCallback(() => {
+    if (scriptRunning) {
+      stopScriptRunner('Stopped');
+      return;
+    }
+    void startScriptRunner();
+  }, [scriptRunning, startScriptRunner, stopScriptRunner]);
+
   const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
     const timestamp = Date.now();
     const dataPoint: StoredDataPoint = {
@@ -397,6 +553,7 @@ function App() {
       const aiPhysical = aiSourceValues.map((value, idx) =>
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
+      aiPhysicalSourceRef.current = aiPhysical;
 
       setAiChannels((prev) =>
         prev.map((ch, idx) => {
@@ -533,6 +690,14 @@ function App() {
   }, [acquiring, startPolling, stopPolling]);
 
   useEffect(() => {
+    return () => {
+      if (scriptTimerRef.current !== undefined) {
+        window.clearInterval(scriptTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
       if (pollTimer.current === undefined || pollingInProgressRef.current) return;
@@ -602,6 +767,7 @@ function App() {
   };
 
   const handleDisconnect = async () => {
+    stopScriptRunner('Stopped');
     setAcquiring(false);
     stopPolling();
     try {
@@ -953,28 +1119,21 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <ChartPanel
-          title="Chart 3"
-          color="#f59e0b"
-          dataPoints={dataPoints}
-          axisOptions={axisOptions}
-          xAxis={chart3X}
-          yAxis={chart3Y}
-          isDarkMode={theme === 'dark'}
-          onXAxisChange={setChart3X}
-          onYAxisChange={setChart3Y}
-        />
-        <ChartPanel
-          title="Chart 4"
-          color="#ec4899"
-          dataPoints={dataPoints}
-          axisOptions={axisOptions}
-          xAxis={chart4X}
-          yAxis={chart4Y}
-          isDarkMode={theme === 'dark'}
-          onXAxisChange={setChart4X}
-          onYAxisChange={setChart4Y}
-        />
+        <section className="card space-y-2 md:col-span-2 xl:col-span-2">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-amber-400">ScriptRunner (Pyodide)</h2>
+            <button type="button" className="button-primary" onClick={handleToggleScriptRunner}>
+              {scriptRunning ? 'Stop' : 'Run'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Status: {scriptRunnerStatus}</p>
+          <textarea
+            value={scriptCode}
+            onChange={(e) => setScriptCode(e.target.value)}
+            className="min-h-[280px] w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            spellCheck={false}
+          />
+        </section>
       </div>
       </div>
 
