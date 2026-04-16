@@ -831,7 +831,7 @@ function App() {
         <div className="mb-1.5 flex items-center justify-between">
           <h2 className="text-lg font-semibold">AI Channels (16)</h2>
         </div>
-        <div className="grid grid-cols-1 gap-2 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aiChannels.map((ch) => (
             <div
               key={ch.id}
