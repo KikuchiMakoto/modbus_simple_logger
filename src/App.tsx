@@ -111,7 +111,7 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   });
 
 const formatAiChannelDisplayLabel = (idx: number): string =>
-  `CH ${idx.toString().padStart(2, '0')}(${idx < 8 ? 'HX711' : 'ADS1115'}-${idx
+  `CH ${idx.toString().padStart(2, '0')} (${idx < 8 ? 'HX711' : 'ADS1115'}-${idx
     .toString(16)
     .toUpperCase()})`;
 
@@ -740,69 +740,45 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
-        <div className="p-4">
-          <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="px-3 py-1">
+          <header className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
+              <h1 className="text-xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div>
-                <label className="mb-1 block text-xs text-slate-600 dark:text-slate-400">Sampling Rate</label>
-                <select
-                  value={pollingRate.valueMs}
-                  onChange={(e) => {
-                    const next = POLLING_OPTIONS.find((p) => p.valueMs === Number(e.target.value));
-                    if (next) setPollingRate(next);
-                  }}
-                  className="w-32 rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  {POLLING_OPTIONS.map((opt) => (
-                    <option key={opt.valueMs} value={opt.valueMs}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                type="button"
-                className={connected ? 'button-secondary' : 'button-primary'}
-                onClick={handleToggleConnection}
-              >
-                {connected ? 'Disconnect' : 'Connect'}
-              </button>
+            <div className="flex flex-wrap items-center gap-1">
               <button
                 type="button"
                 role="switch"
                 aria-checked={isDarkMode}
                 aria-label="Toggle dark mode"
                 onClick={handleToggleTheme}
-                className="relative inline-flex h-10 w-20 items-center rounded-full border border-slate-300 bg-white px-2 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
+                className="relative inline-flex h-8 w-16 items-center rounded-full border border-slate-300 bg-white px-1.5 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
               >
                 <span className="sr-only">Toggle theme</span>
-                <span className="absolute left-3 text-slate-500 dark:text-slate-300" aria-hidden>
+                <span className="absolute left-2 text-slate-500 dark:text-slate-300" aria-hidden>
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     viewBox="0 0 50 50"
                     fill="currentColor"
-                    className="h-5 w-5"
+                    className="h-4 w-4"
                   >
                     <path d="M24.906 3.969c-.043.008-.086.02-.125.031-.465.106-.793.523-.782 1V11a1.002 1.002 0 0 0 1.996 0V5c.012-.289-.105-.566-.312-.761a1 1 0 0 0-.777-.27ZM10.656 9.844c-.375.066-.676.34-.781.703-.105.367.004.758.281 1.015l4.25 4.25a1.002 1.002 0 0 0 1.703-.77 1 1 0 0 0-.349-.746l-4.25-4.25c-.207-.222-.508-.336-.813-.312-.031 0-.062 0-.094.01ZM39.031 9.844a.995.995 0 0 0-.594.312l-4.25 4.25a1.002 1.002 0 1 0 1.406 1.406l4.25-4.25c.312-.297.402-.762.218-1.152-.187-.394-.6-.62-1.03-.566ZM24.906 15c-.031.008-.062.02-.094.031-.062.004-.125.016-.188.031l-.03.031C19.29 15.32 15 19.64 15 25c0 5.504 4.496 10 10 10s10-4.497 10-10c0-5.34-4.254-9.645-9.531-9.907-.035 0-.058-.031-.094-.031a2.96 2.96 0 0 0-.312-.062H25c-.031 0-.062 0-.094.01Zm.031 2c.02 0 .043 0 .063 0 .031 0 .062 0 .094 0C29.469 17.05 33 20.613 33 25c0 4.422-3.578 8-8 8-4.418 0-8-3.578-8-8 0-4.398 3.547-7.965 7.938-8ZM4.719 24c-.551.078-.938.59-.86 1.14.078.552.59.938 1.141.86H11a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 11 24H5c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.093 0Zm34 .001c-.551.078-.938.59-.86 1.14.078.552.59.939 1.141.86H45a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 45 24.001h-6c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.094 0ZM15 33.875a1 1 0 0 0-.594.312l-4.25 4.25a.996.996 0 0 0 .348 1.594c.375.086.762-.051 1.004-.348l4.25-4.25a1.003 1.003 0 0 0-.77-1.633c-.031 0-.062 0-.094-.005Zm19.688 0a.995.995 0 0 0-.907.703c-.105.367.004.758.282 1.015l4.25 4.25c.242.297.629.434 1.004.348.371-.086.664-.379.75-.75.086-.375-.051-.762-.348-1.004l-4.25-4.25a.989.989 0 0 0-.718-.312c-.031 0-.062 0-.094.01ZM24.906 37.969c-.043.007-.086.019-.125.03-.465.106-.793.523-.782 1V45a1.002 1.002 0 0 0 1.996 0v-6c.012-.289-.105-.566-.312-.762a1 1 0 0 0-.777-.27Z" />
                   </svg>
                 </span>
-                <span className="absolute right-3 text-slate-500 dark:text-slate-300" aria-hidden>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                <span className="absolute right-2 text-slate-500 dark:text-slate-300" aria-hidden>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                     <path d="M18.92 15.42A7 7 0 0 1 11.2 4.59a1 1 0 0 0-1.18-1.18A9 9 0 1 0 19.1 16.6a1 1 0 0 0-.18-1.18Z" />
                   </svg>
                 </span>
                 <span
-                  className={`flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-8' : 'translate-x-0'}`}
+                  className={`flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-6' : 'translate-x-0'}`}
                   aria-hidden
                 >
                   {isDarkMode ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
                       <path d="M21.64 13a1 1 0 0 0-1.05-.14A8 8 0 0 1 11.1 4.41 1 1 0 0 0 9.76 3a10 10 0 1 0 12.3 10Z" />
                     </svg>
                   ) : (
@@ -810,12 +786,19 @@ function App() {
                       xmlns="http://www.w3.org/2000/svg"
                       viewBox="0 0 50 50"
                       fill="currentColor"
-                      className="h-5 w-5"
+                      className="h-4 w-4"
                     >
                       <path d="M24.906 3.969c-.043.008-.086.02-.125.031-.465.106-.793.523-.782 1V11a1.002 1.002 0 0 0 1.996 0V5c.012-.289-.105-.566-.312-.761a1 1 0 0 0-.777-.27ZM10.656 9.844c-.375.066-.676.34-.781.703-.105.367.004.758.281 1.015l4.25 4.25a1.002 1.002 0 0 0 1.703-.77 1 1 0 0 0-.349-.746l-4.25-4.25c-.207-.222-.508-.336-.813-.312-.031 0-.062 0-.094.01ZM39.031 9.844a.995.995 0 0 0-.594.312l-4.25 4.25a1.002 1.002 0 1 0 1.406 1.406l4.25-4.25c.312-.297.402-.762.218-1.152-.187-.394-.6-.62-1.03-.566ZM24.906 15c-.031.008-.062.02-.094.031-.062.004-.125.016-.188.031l-.03.031C19.29 15.32 15 19.64 15 25c0 5.504 4.496 10 10 10s10-4.497 10-10c0-5.34-4.254-9.645-9.531-9.907-.035 0-.058-.031-.094-.031a2.96 2.96 0 0 0-.312-.062H25c-.031 0-.062 0-.094.01Zm.031 2c.02 0 .043 0 .063 0 .031 0 .062 0 .094 0C29.469 17.05 33 20.613 33 25c0 4.422-3.578 8-8 8-4.418 0-8-3.578-8-8 0-4.398 3.547-7.965 7.938-8ZM4.719 24c-.551.078-.938.59-.86 1.14.078.552.59.938 1.141.86H11a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 11 24H5c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.093 0Zm34 .001c-.551.078-.938.59-.86 1.14.078.552.59.939 1.141.86H45a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 45 24.001h-6c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.094 0ZM15 33.875a1 1 0 0 0-.594.312l-4.25 4.25a.996.996 0 0 0 .348 1.594c.375.086.762-.051 1.004-.348l4.25-4.25a1.003 1.003 0 0 0-.77-1.633c-.031 0-.062 0-.094-.005Zm19.688 0a.995.995 0 0 0-.907.703c-.105.367.004.758.282 1.015l4.25 4.25c.242.297.629.434 1.004.348.371-.086.664-.379.75-.75.086-.375-.051-.762-.348-1.004l-4.25-4.25a.989.989 0 0 0-.718-.312c-.031 0-.062 0-.094.01ZM24.906 37.969c-.043.007-.086.019-.125.03-.465.106-.793.523-.782 1V45a1.002 1.002 0 0 0 1.996 0v-6c.012-.289-.105-.566-.312-.762a1 1 0 0 0-.777-.27Z" />
                     </svg>
                   )}
                 </span>
+              </button>
+              <button
+                type="button"
+                className={connected ? 'button-secondary' : 'button-primary'}
+                onClick={handleToggleConnection}
+              >
+                {connected ? 'Disconnect' : 'Connect'}
               </button>
               {!tsvWriter ? (
                 <button type="button" className="button-primary" onClick={handleStartSave}>
@@ -829,10 +812,10 @@ function App() {
               <button
                 type="button"
                 onClick={() => setHamburgerMenuOpen(true)}
-                className="button-secondary flex items-center justify-center p-2"
+                className="button-secondary flex items-center justify-center p-1.5"
                 aria-label="Open menu"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                   <line x1="3" y1="6" x2="21" y2="6" />
                   <line x1="3" y1="12" x2="21" y2="12" />
                   <line x1="3" y1="18" x2="21" y2="18" />
@@ -843,24 +826,24 @@ function App() {
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="space-y-3 p-3">
         <section className="card">
-        <div className="mb-2.5 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">AI Channels (16)</h2>
+        <div className="mb-1.5 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">AI Channels (16)</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aiChannels.map((ch) => (
             <div
               key={ch.id}
-              className="rounded-lg bg-slate-100 border border-slate-200 p-2 space-y-0.5 dark:bg-slate-900/60 dark:border-slate-700/50"
+              className="rounded-lg border border-slate-200 bg-slate-100 p-1.5 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="text-center font-semibold text-slate-700 pb-0 border-b border-slate-200 text-base dark:text-slate-200 dark:border-slate-700">
+              <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
                 {formatAiChannelDisplayLabel(ch.id)}
               </div>
-              <div className="space-y-0.5 text-base">
+              <div className="space-y-0.5 pt-0.5 text-sm">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
-                  <span className={`font-bold tabular-nums text-xl ${getStatusColor(ch.status)}`}>
+                  <span className={`text-lg font-bold tabular-nums ${getStatusColor(ch.status)}`}>
                     {(
                       modbusPrecision === 'extended'
                     ) ? Math.trunc(ch.raw) : ch.raw}
@@ -868,7 +851,7 @@ function App() {
                 </div>
                 <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
-                  <span className="font-bold tabular-nums text-xl text-emerald-600 dark:text-emerald-400">
+                  <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                     {ch.physical.toFixed(3)}
                   </span>
                 </div>
@@ -876,7 +859,7 @@ function App() {
                   <span className="text-slate-600 font-medium dark:text-slate-300">
                     {ch.id < 8 ? 'mV/V' : 'V'}
                   </span>
-                  <span className="font-bold tabular-nums text-xl text-sky-600 dark:text-sky-400">
+                  <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
                     {ch.voltage.toFixed(ch.id < 8 ? 4 : 3)}
                   </span>
                 </div>
@@ -954,6 +937,9 @@ function App() {
         stopBitsOptions={STOP_BITS_OPTIONS}
         parityOptions={PARITY_OPTIONS}
         precisionOptions={PRECISION_OPTIONS}
+        pollingRate={pollingRate}
+        onPollingRateChange={setPollingRate}
+        pollingOptions={POLLING_OPTIONS}
         connected={connected}
       />
 
