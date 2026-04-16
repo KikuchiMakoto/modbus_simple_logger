@@ -322,7 +322,9 @@ function App() {
 
   const syncAoChannels = useCallback((values: number[]) => {
     if (values.length !== AO_CHANNELS) {
-      throw new Error(`Unexpected AO register count: expected ${AO_CHANNELS}, got ${values.length}`);
+      throw new Error(
+        `Unexpected AO register count: expected ${AO_CHANNELS}, got ${values.length}. Check device AO configuration and Modbus communication.`,
+      );
     }
     const normalizedValues = values.map((value) => Math.trunc(value));
     aoRawSourceRef.current = normalizedValues;
@@ -569,8 +571,12 @@ function App() {
         modbusPrecision === 'extended'
       );
       await client.connect();
-      const holdingValues = await client.readHoldingRegisters(AO_START_REGISTER, AO_CHANNELS);
-      syncAoChannels(holdingValues);
+      try {
+        const holdingValues = await client.readHoldingRegisters(AO_START_REGISTER, AO_CHANNELS);
+        syncAoChannels(holdingValues);
+      } catch (err) {
+        throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
+      }
       clientRef.current = client;
 
       setConnected(true);
