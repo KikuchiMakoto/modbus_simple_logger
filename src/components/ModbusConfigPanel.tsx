@@ -1,4 +1,4 @@
-import { ModbusPrecision, SerialSettings } from '../types';
+import { ModbusPrecision, PollingRateOption, SerialSettings } from '../types';
 
 type ModbusConfigPanelProps = {
   open: boolean;
@@ -9,6 +9,9 @@ type ModbusConfigPanelProps = {
   onSerialSettingsChange: (settings: SerialSettings) => void;
   modbusPrecision: ModbusPrecision;
   onModbusPrecisionChange: (value: ModbusPrecision) => void;
+  pollingRate: PollingRateOption;
+  onPollingRateChange: (value: PollingRateOption) => void;
+  pollingOptions: PollingRateOption[];
   baudOptions: number[];
   dataBitsOptions: SerialSettings['dataBits'][];
   stopBitsOptions: SerialSettings['stopBits'][];
@@ -26,6 +29,9 @@ export function ModbusConfigPanel({
   onSerialSettingsChange,
   modbusPrecision,
   onModbusPrecisionChange,
+  pollingRate,
+  onPollingRateChange,
+  pollingOptions,
   baudOptions,
   dataBitsOptions,
   stopBitsOptions,
@@ -176,6 +182,24 @@ export function ModbusConfigPanel({
               >
                 {precisionOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-600 dark:text-slate-400">Sampling Rate</label>
+              <select
+                value={pollingRate.valueMs}
+                onChange={(e) => {
+                  const next = pollingOptions.find((p) => p.valueMs === Number(e.target.value));
+                  if (next) onPollingRateChange(next);
+                }}
+                className="w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                {pollingOptions.map((opt) => (
+                  <option key={opt.valueMs} value={opt.valueMs}>
                     {opt.label}
                   </option>
                 ))}
