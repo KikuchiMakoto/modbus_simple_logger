@@ -71,6 +71,9 @@ export class WebSerialModbusClient {
    * Modbus RTU requires 3.5 character times of silent interval.
    * For stability, we use 5 character times.
    *
+   * Normal mode: minimum 10ms after each message.
+   * Extended mode: minimum 1ms after each message.
+   *
    * @returns Minimum interval in milliseconds
    */
   private calculateMinInterval(): number {
