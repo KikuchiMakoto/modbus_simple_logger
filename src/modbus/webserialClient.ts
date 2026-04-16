@@ -46,7 +46,7 @@ export class WebSerialModbusClient {
   private minMessageIntervalMs: number;
   private isExtendedPrecision = false;
   private readonly debugPrefix = '[WebSerialModbusClient]';
-  private readonly verboseFrameLogging = false;
+  private readonly verboseFrameLogging: boolean;
 
   constructor(
     slaveId = 1,
@@ -58,11 +58,13 @@ export class WebSerialModbusClient {
     },
     serialApi?: Serial,
     isExtendedPrecision = false,
+    verboseFrameLogging = false,
   ) {
     this.slaveId = slaveId;
     this.serialSettings = serialSettings;
     this.serialApi = serialApi || navigator.serial;
     this.isExtendedPrecision = isExtendedPrecision;
+    this.verboseFrameLogging = verboseFrameLogging;
     this.minMessageIntervalMs = this.calculateMinInterval();
     console.info(
       `${this.debugPrefix} initialized`,
@@ -70,6 +72,7 @@ export class WebSerialModbusClient {
         slaveId: this.slaveId,
         serialSettings: this.serialSettings,
         isExtendedPrecision: this.isExtendedPrecision,
+        verboseFrameLogging: this.verboseFrameLogging,
         minMessageIntervalMs: this.minMessageIntervalMs,
       },
     );
@@ -144,7 +147,7 @@ export class WebSerialModbusClient {
     // Request port from user
     this.port = await this.serialApi.requestPort();
     const portInfo = this.port.getInfo?.();
-    console.info(`${this.debugPrefix} port selected`, portInfo);
+    console.info(`${this.debugPrefix} port selected`, portInfo ?? 'Port info unavailable');
 
     // Open with serial settings
     console.info(`${this.debugPrefix} opening port`, this.serialSettings);
@@ -236,6 +239,7 @@ export class WebSerialModbusClient {
     try {
       const writer = this.writer!;
       const reader = this.reader!;
+      const startTime = Date.now();
 
       // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)
       const now = Date.now();
@@ -256,7 +260,6 @@ export class WebSerialModbusClient {
 
       // Read response with timeout
       const buffer: number[] = [];
-      const startTime = Date.now();
 
       while (buffer.length < expectedLength) {
         if (Date.now() - startTime > timeout) {
@@ -315,7 +318,13 @@ export class WebSerialModbusClient {
 
       return new DataView(responseArray.buffer);
     } catch (err) {
-      console.error(`${this.debugPrefix} transfer() failed`, err);
+      console.error(`${this.debugPrefix} transfer() failed`, {
+        expectedLength,
+        timeout,
+        txLength: frame.length,
+        elapsedMs: Date.now() - this.lastTransferTime,
+        error: err,
+      });
       throw err;
     } finally {
       // Always release the mutex
