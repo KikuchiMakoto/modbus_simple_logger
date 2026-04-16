@@ -864,7 +864,7 @@ function App() {
       <div className="space-y-3 p-3">
         <section className="card">
         <div className="mb-1.5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">AI Channels (16)</h2>
+          <h2 className="text-lg font-semibold">Analog Input (16)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aiChannels.map((ch) => (
@@ -906,7 +906,7 @@ function App() {
 
       <section className="card">
         <div className="mb-1.5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">AO Channels (8)</h2>
+          <h2 className="text-lg font-semibold">Analog Output (8)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aoChannels.map((ch) => (
