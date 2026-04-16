@@ -543,20 +543,11 @@ function App() {
     if (!clientRef.current) return;
     try {
       const effectivePrecision: 'normal' | 'extended' = modbusPrecision;
-      console.debug('[App] pollOnce start', { effectivePrecision });
 
       const aiSourceValues = effectivePrecision === 'extended'
         ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
-      console.debug('[App] pollOnce read AI success', {
-        count: aiSourceValues.length,
-        preview: aiSourceValues.slice(0, 10),
-      });
       await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, aoRawSourceRef.current);
-      console.debug('[App] pollOnce write AO success', {
-        count: aoRawSourceRef.current.length,
-        preview: aoRawSourceRef.current.slice(0, 10),
-      });
       aiRawSourceRef.current = aiSourceValues;
       const aiRaw = aiSourceValues;
       const aiPhysical = aiSourceValues.map((value, idx) =>
@@ -600,7 +591,13 @@ function App() {
       }
 
       setStatus('Polling');
-      console.debug('[App] pollOnce complete');
+      console.debug('[App] pollOnce success', {
+        effectivePrecision,
+        aiCount: aiSourceValues.length,
+        aiPreview: aiSourceValues.slice(0, 10),
+        aoCount: aoRawSourceRef.current.length,
+        aoPreview: aoRawSourceRef.current.slice(0, 10),
+      });
     } catch (err) {
       console.error('[App] pollOnce failed', err);
       setStatus((err as Error).message);

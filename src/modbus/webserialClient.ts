@@ -46,6 +46,7 @@ export class WebSerialModbusClient {
   private minMessageIntervalMs: number;
   private isExtendedPrecision = false;
   private readonly debugPrefix = '[WebSerialModbusClient]';
+  private readonly verboseFrameLogging = false;
 
   constructor(
     slaveId = 1,
@@ -76,6 +77,8 @@ export class WebSerialModbusClient {
 
   /**
    * Convert byte array to space-separated lowercase hex string for debug logs.
+   * @param bytes - Target byte array.
+   * @returns Hex string like "01 03 00 00".
    */
   private toHexString(bytes: Uint8Array): string {
     return Array.from(bytes)
@@ -206,11 +209,14 @@ export class WebSerialModbusClient {
     const crc = crc16(Buffer.from(frame));
     frame.push(crc & 0xff, (crc >> 8) & 0xff);
     const rawFrame = new Uint8Array(frame);
-    console.debug(`${this.debugPrefix} buildFrame`, {
+    const logData: Record<string, unknown> = {
       functionCode,
       payload,
-      frameHex: this.toHexString(rawFrame),
-    });
+    };
+    if (this.verboseFrameLogging) {
+      logData.frameHex = this.toHexString(rawFrame);
+    }
+    console.debug(`${this.debugPrefix} buildFrame`, logData);
     return rawFrame;
   }
 
@@ -219,7 +225,8 @@ export class WebSerialModbusClient {
     console.debug(`${this.debugPrefix} transfer() queued`, {
       expectedLength,
       timeout,
-      txHex: this.toHexString(frame),
+      txLength: frame.length,
+      ...(this.verboseFrameLogging ? { txHex: this.toHexString(frame) } : {}),
     });
 
     // Acquire mutex to ensure only one transfer at a time
@@ -265,7 +272,7 @@ export class WebSerialModbusClient {
           console.debug(`${this.debugPrefix} transfer() read chunk`, {
             chunkLength: value.length,
             totalBuffered: buffer.length,
-            chunkHex: this.toHexString(value),
+            ...(this.verboseFrameLogging ? { chunkHex: this.toHexString(value) } : {}),
           });
         }
 
@@ -279,7 +286,7 @@ export class WebSerialModbusClient {
       const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
       console.debug(`${this.debugPrefix} transfer() response assembled`, {
         responseLength: responseArray.length,
-        rxHex: this.toHexString(responseArray),
+        ...(this.verboseFrameLogging ? { rxHex: this.toHexString(responseArray) } : {}),
       });
 
       // Validate CRC16 of received data
