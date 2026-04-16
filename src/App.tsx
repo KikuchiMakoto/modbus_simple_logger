@@ -919,9 +919,9 @@ function App() {
               </div>
               <div className="space-y-0.5 pt-0.5 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-slate-600 dark:text-slate-300">mV</span>
-                  <span className="text-lg font-bold tabular-nums text-violet-600 dark:text-violet-400">
-                    {Math.trunc(ch.physical)}
+                  <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
+                  <span className="text-lg font-bold tabular-nums text-violet-600 dark:text-violet-300">
+                    {(ch.physical / 1000).toFixed(3)}
                   </span>
                 </div>
               </div>
