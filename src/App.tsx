@@ -140,6 +140,12 @@ function formatSerialSettings(settings: SerialSettings) {
   return `${settings.baudRate}bps ${settings.dataBits}${parityLetter}${settings.stopBits}`;
 }
 
+const hasAoValuesChanged = (lastSent: number[] | null, current: number[]): boolean => {
+  if (!lastSent) return true;
+  if (lastSent.length !== current.length) return true;
+  return lastSent.some((value, index) => value !== current[index]);
+};
+
 const axisOptions = [
   { key: 'time', label: 'Time' },
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
@@ -150,7 +156,13 @@ const axisOptions = [
     key: `phy_${idx.toString().padStart(2, '0')}`,
     label: `phy_${idx.toString().padStart(2, '0')}`
   })),
+  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
+    key: `ai_vlt_${idx.toString().padStart(2, '0')}`,
+    label: `ai_vlt_${idx.toString().padStart(2, '0')}`
+  })),
 ];
+
+const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 
 type ThemeMode = 'light' | 'dark';
 
@@ -185,9 +197,20 @@ const getSystemTheme = (): ThemeMode => {
 
 const loadChartAxes = (): ChartAxisSelections => {
   const saved = readJsonCookie<Partial<ChartAxisSelections>>(CHART_AXES_COOKIE_KEY) ?? {};
+  const sanitize = (value: string | undefined, fallback: string, allowTime: boolean) => {
+    if (!value || !axisOptionKeys.has(value)) return fallback;
+    if (!allowTime && value === 'time') return fallback;
+    return value;
+  };
   return {
-    chart1: { ...DEFAULT_CHART_AXES.chart1, ...saved.chart1 },
-    chart2: { ...DEFAULT_CHART_AXES.chart2, ...saved.chart2 },
+    chart1: {
+      x: sanitize(saved.chart1?.x, DEFAULT_CHART_AXES.chart1.x, true),
+      y: sanitize(saved.chart1?.y, DEFAULT_CHART_AXES.chart1.y, false),
+    },
+    chart2: {
+      x: sanitize(saved.chart2?.x, DEFAULT_CHART_AXES.chart2.x, true),
+      y: sanitize(saved.chart2?.y, DEFAULT_CHART_AXES.chart2.y, false),
+    },
   };
 };
 
@@ -225,6 +248,7 @@ function App() {
   const pyodideLoadingRef = useRef<Promise<PyodideInstance> | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
+  const lastSentAoRawRef = useRef<number[] | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
@@ -317,6 +341,9 @@ function App() {
         timestamp: p.timestamp,
         aiRaw: p.aiRaw,
         aiPhysical: p.aiPhysical,
+        // Backward compatibility for IndexedDB records created before aiVoltage was stored:
+        // when missing, recalculate from aiRaw with current conversion logic.
+        aiVoltage: p.aiVoltage ?? p.aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage),
       }));
 
       // Always enforce display limit
@@ -339,6 +366,7 @@ function App() {
     }
     const normalizedValues = values.map((value) => Math.trunc(value));
     aoRawSourceRef.current = normalizedValues;
+    lastSentAoRawRef.current = [...normalizedValues];
     setAoChannels((prev) =>
       prev.map((ch, channelIndex) => ({
         ...ch,
@@ -492,12 +520,13 @@ function App() {
     void startScriptRunner();
   }, [scriptRunning, startScriptRunner, stopScriptRunner]);
 
-  const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[]) => {
+  const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
     const timestamp = Date.now();
     const dataPoint: StoredDataPoint = {
       timestamp,
       aiRaw,
       aiPhysical,
+      aiVoltage,
     };
 
     try {
@@ -514,6 +543,7 @@ function App() {
         timestamp,
         aiRaw,
         aiPhysical,
+        aiVoltage,
       });
 
       // Batch update: flush every 5 points or after 100ms
@@ -546,12 +576,20 @@ function App() {
       const aiSourceValues = effectivePrecision === 'extended'
         ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
-      await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, aoRawSourceRef.current);
+
+      const currentAoRaw = aoRawSourceRef.current;
+      const shouldWriteAo = hasAoValuesChanged(lastSentAoRawRef.current, currentAoRaw);
+      if (shouldWriteAo) {
+        await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, currentAoRaw);
+        lastSentAoRawRef.current = [...currentAoRaw];
+      }
+
       aiRawSourceRef.current = aiSourceValues;
       const aiRaw = aiSourceValues;
       const aiPhysical = aiSourceValues.map((value, idx) =>
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
+      const aiVoltage = aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage);
       aiPhysicalSourceRef.current = aiPhysical;
 
       setAiChannels((prev) =>
@@ -570,14 +608,13 @@ function App() {
       );
 
       // Wait for data history update to complete
-      await updateDataHistory(aiRaw, aiPhysical);
+      await updateDataHistory(aiRaw, aiPhysical, aiVoltage);
 
       // Write to TSV file if recording is active
       // Use ref to avoid race condition when closing the writer
       const writer = tsvWriterRef.current;
       if (writer) {
         try {
-          const aiVoltage = aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage);
           await writer.writeRow(Date.now(), aiRaw, aiPhysical, aiVoltage);
         } catch (err) {
           // Ignore errors if stream is closing
@@ -784,6 +821,7 @@ function App() {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
+      lastSentAoRawRef.current = null;
       // Clear pending data points buffer
       pendingDataPoints.current = [];
       // Clear IndexedDB on disconnect

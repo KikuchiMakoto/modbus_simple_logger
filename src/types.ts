@@ -30,6 +30,7 @@ export type DataPoint = {
   timestamp: number;
   aiRaw: number[];
   aiPhysical: number[];
+  aiVoltage: number[];
 };
 
 export type SerialParity = 'none' | 'odd' | 'even';

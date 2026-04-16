@@ -13,6 +13,7 @@ export type StoredDataPoint = {
   timestamp: number;
   aiRaw: number[];
   aiPhysical: number[];
+  aiVoltage: number[];
 };
 
 export type TimeRangeQuery = {
