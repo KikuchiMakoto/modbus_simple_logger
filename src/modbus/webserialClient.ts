@@ -46,8 +46,16 @@ export class WebSerialModbusClient {
   private minMessageIntervalMs: number;
   private isExtendedPrecision = false;
   private readonly debugPrefix = '[WebSerialModbusClient]';
+  /** Enable detailed TX/RX hex dump logs for deep troubleshooting. */
   private readonly verboseFrameLogging: boolean;
 
+  /**
+   * @param slaveId - Modbus slave ID.
+   * @param serialSettings - Serial communication settings.
+   * @param serialApi - Web Serial API implementation (native or polyfill).
+   * @param isExtendedPrecision - True when float32 extended precision mode is used.
+   * @param verboseFrameLogging - True to include per-frame hex dumps in debug logs.
+   */
   constructor(
     slaveId = 1,
     serialSettings: SerialSettings = {
@@ -147,9 +155,12 @@ export class WebSerialModbusClient {
     // Request port from user
     this.port = await this.serialApi.requestPort();
     const portInfo = this.port.getInfo?.();
+    const portInfoReason = portInfo === undefined
+      ? (this.port.getInfo ? 'no info from getInfo()' : 'method not available')
+      : undefined;
     console.info(`${this.debugPrefix} port selected`, {
       portInfo: portInfo ?? null,
-      reason: this.port.getInfo ? undefined : 'method not available',
+      reason: portInfoReason,
     });
 
     // Open with serial settings
