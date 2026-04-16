@@ -240,7 +240,7 @@ export class WebSerialModbusClient {
     return rawFrame;
   }
 
-  private async transfer(frame: Uint8Array, expectedLength: number, timeout = 1000): Promise<DataView> {
+  private async transfer(frame: Uint8Array, expectedLength: number, timeout = 500): Promise<DataView> {
     this.ensureReady();
     console.debug(`${this.debugPrefix} transfer() queued`, {
       expectedLength,
@@ -279,11 +279,35 @@ export class WebSerialModbusClient {
       const buffer: number[] = [];
 
       while (buffer.length < expectedLength) {
-        if (Date.now() - startTime > timeout) {
+        const elapsedMs = Date.now() - startTime;
+        if (elapsedMs >= timeout) {
           throw new Error('Timeout waiting for response');
         }
+        const remainingMs = timeout - elapsedMs;
+        const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+          let settled = false;
+          const timeoutId = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            reject(new Error('Timeout waiting for response'));
+          }, remainingMs);
+          reader.read().then(
+            (result) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeoutId);
+              resolve(result);
+            },
+            (readError) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeoutId);
+              reject(readError);
+            },
+          );
+        });
 
-        const { value, done } = await reader.read();
+        const { value, done } = readResult;
         if (done) {
           throw new Error('Stream closed unexpectedly');
         }
@@ -412,7 +436,7 @@ export class WebSerialModbusClient {
    * @param count - Number of registers to read
    * @returns Array of signed 16-bit register values
    */
-  async readInputRegisters(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
+  async readInputRegisters(start: number, count: number, timeoutMs = 500): Promise<number[]> {
     console.debug(`${this.debugPrefix} readInputRegisters()`, { start, count, timeoutMs });
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(4, payload);
@@ -439,7 +463,7 @@ export class WebSerialModbusClient {
    * @param count - Number of float32 values to read (will read count*2 registers)
    * @returns Array of float32 values
    */
-  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
+  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 500): Promise<number[]> {
     console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd()`, { start, count, timeoutMs });
     // Read twice as many registers since each float32 needs 2 registers
     const registerCount = count * 2;

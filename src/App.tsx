@@ -865,6 +865,7 @@ function App() {
       modbusPrecision,
       connected,
     });
+    let pendingClient: WebSerialModbusClient | null = null;
     try {
       // Clean up any existing connection first
       if (clientRef.current) {
@@ -887,6 +888,7 @@ function App() {
         serial,
         modbusPrecision === 'extended'
       );
+      pendingClient = client;
       await client.connect();
       console.info('[App] Modbus connect success');
       try {
@@ -902,6 +904,7 @@ function App() {
         throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
       }
       clientRef.current = client;
+      pendingClient = null;
       outputHoldingFailureTimestampsRef.current = [];
 
       setConnected(true);
@@ -915,6 +918,9 @@ function App() {
       if (clientRef.current) {
         await clientRef.current.disconnect();
         clientRef.current = null;
+      }
+      if (pendingClient) {
+        await pendingClient.disconnect();
       }
       await releaseWakeLock();
       setConnected(false);
