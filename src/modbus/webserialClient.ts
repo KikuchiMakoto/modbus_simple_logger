@@ -74,6 +74,9 @@ export class WebSerialModbusClient {
     );
   }
 
+  /**
+   * Convert byte array to space-separated lowercase hex string for debug logs.
+   */
   private toHexString(bytes: Uint8Array): string {
     return Array.from(bytes)
       .map((b) => b.toString(16).padStart(2, '0'))
@@ -362,7 +365,11 @@ export class WebSerialModbusClient {
     for (let i = 0; i < byteCount / 2; i += 1) {
       values.push(view.getInt16(3 + i * 2, false));
     }
-    console.debug(`${this.debugPrefix} readHoldingRegisters() done`, { byteCount, valuesLength: values.length, values });
+    console.debug(`${this.debugPrefix} readHoldingRegisters() done`, {
+      byteCount,
+      valuesLength: values.length,
+      preview: values.slice(0, 10),
+    });
     return values;
   }
 
@@ -383,7 +390,11 @@ export class WebSerialModbusClient {
     for (let i = 0; i < byteCount / 2; i += 1) {
       values.push(view.getInt16(3 + i * 2, false));
     }
-    console.debug(`${this.debugPrefix} readInputRegisters() done`, { byteCount, valuesLength: values.length, values });
+    console.debug(`${this.debugPrefix} readInputRegisters() done`, {
+      byteCount,
+      valuesLength: values.length,
+      preview: values.slice(0, 10),
+    });
     return values;
   }
 
@@ -413,7 +424,11 @@ export class WebSerialModbusClient {
       values.push(float32Value);
     }
 
-    console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd() done`, { byteCount, valuesLength: values.length, values });
+    console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd() done`, {
+      byteCount,
+      valuesLength: values.length,
+      preview: values.slice(0, 10),
+    });
     return values;
   }
 
@@ -495,7 +510,11 @@ export class WebSerialModbusClient {
    * @param values - Array of uint16 values to write (max 123 registers per Modbus spec)
    */
   async writeMultipleHoldingRegisters(start: number, values: number[]): Promise<void> {
-    console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters()`, { start, valuesLength: values.length, values });
+    console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters()`, {
+      start,
+      valuesLength: values.length,
+      preview: values.slice(0, 10),
+    });
     if (values.length === 0) {
       throw new Error('No values provided to write');
     }

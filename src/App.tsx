@@ -550,12 +550,12 @@ function App() {
         : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
       console.debug('[App] pollOnce read AI success', {
         count: aiSourceValues.length,
-        values: aiSourceValues,
+        preview: aiSourceValues.slice(0, 10),
       });
       await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, aoRawSourceRef.current);
       console.debug('[App] pollOnce write AO success', {
         count: aoRawSourceRef.current.length,
-        values: aoRawSourceRef.current,
+        preview: aoRawSourceRef.current.slice(0, 10),
       });
       aiRawSourceRef.current = aiSourceValues;
       const aiRaw = aiSourceValues;
