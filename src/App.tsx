@@ -112,11 +112,11 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   });
 
 const createAoChannels = (): AoChannel[] =>
-  Array.from({ length: AO_CHANNELS }, (_, idx) => ({
-    id: idx,
+  Array.from({ length: AO_CHANNELS }, (_, channelIndex) => ({
+    id: channelIndex,
     raw: 0,
     physical: 0,
-    label: `CH ${idx} (GP8403-${Math.floor(idx / 4)})`,
+    label: `CH ${channelIndex} (GP8403-${Math.floor(channelIndex / 4)})`,
   }));
 
 const formatAiChannelDisplayLabel = (idx: number): string =>
@@ -321,13 +321,16 @@ function App() {
   }, []);
 
   const syncAoChannels = useCallback((values: number[]) => {
-    const normalizedValues = Array.from({ length: AO_CHANNELS }, (_, idx) => Math.trunc(values[idx] ?? 0));
+    if (values.length !== AO_CHANNELS) {
+      throw new Error(`Unexpected AO register count: expected ${AO_CHANNELS}, got ${values.length}`);
+    }
+    const normalizedValues = values.map((value) => Math.trunc(value));
     aoRawSourceRef.current = normalizedValues;
     setAoChannels((prev) =>
-      prev.map((ch, idx) => ({
+      prev.map((ch, channelIndex) => ({
         ...ch,
-        raw: normalizedValues[idx],
-        physical: normalizedValues[idx],
+        raw: normalizedValues[channelIndex],
+        physical: normalizedValues[channelIndex],
       })),
     );
   }, []);
