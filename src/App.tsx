@@ -224,7 +224,6 @@ function App() {
   const pyodideRef = useRef<PyodideInstance | null>(null);
   const pyodideLoadingRef = useRef<Promise<PyodideInstance> | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
-  const nextPollAtRef = useRef<number>(0);
   const pollingInProgressRef = useRef(false);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
@@ -608,20 +607,9 @@ function App() {
 
       if (pollTimer.current === undefined) return;
 
-      const now = performance.now();
-      const rateMs = pollingRate.valueMs;
-      if (nextPollAtRef.current === 0) {
-        nextPollAtRef.current = now + rateMs;
-      }
-
-      // Keep the polling cadence aligned to its target timeline instead of completion time.
-      const elapsedMs = Math.max(0, now - nextPollAtRef.current);
-      const remainderMs = elapsedMs % rateMs;
-      const delayMs = remainderMs === 0 ? rateMs : rateMs - remainderMs;
-      nextPollAtRef.current = now + delayMs;
       pollTimer.current = window.setTimeout(() => {
         void runPollingLoop();
-      }, delayMs);
+      }, pollingRate.valueMs);
     }
   }, [pollOnce, pollingRate.valueMs]);
 
@@ -629,7 +617,6 @@ function App() {
     if (pollTimer.current !== undefined) {
       window.clearTimeout(pollTimer.current);
     }
-    nextPollAtRef.current = performance.now();
     pollTimer.current = window.setTimeout(() => {
       void runPollingLoop();
     }, 0);
@@ -645,7 +632,6 @@ function App() {
       window.clearTimeout(pollTimer.current);
       pollTimer.current = undefined;
     }
-    nextPollAtRef.current = 0;
     pollingInProgressRef.current = false;
     // Flush any pending data points when stopping
     if (batchUpdateTimer.current !== undefined) {
