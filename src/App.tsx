@@ -157,7 +157,7 @@ const axisOptions = [
     label: `phy_${idx.toString().padStart(2, '0')}`
   })),
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
-    key: `vlt_${idx.toString().padStart(2, '0')}`,
+    key: `ai_vlt_${idx.toString().padStart(2, '0')}`,
     label: `ai_vlt_${idx.toString().padStart(2, '0')}`
   })),
 ];
@@ -341,7 +341,8 @@ function App() {
         timestamp: p.timestamp,
         aiRaw: p.aiRaw,
         aiPhysical: p.aiPhysical,
-        // Backward compatibility for IndexedDB records created before aiVoltage was stored.
+        // Backward compatibility for IndexedDB records created before aiVoltage was stored:
+        // when missing, recalculate from aiRaw with current conversion logic.
         aiVoltage: p.aiVoltage ?? p.aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage),
       }));
 
