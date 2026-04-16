@@ -40,6 +40,8 @@ export type SerialSettings = {
   parity: SerialParity;
 };
 
+export type ModbusPrecision = 'normal' | 'extended';
+
 // File System Access API types
 export interface FilePickerAcceptType {
   description?: string;
