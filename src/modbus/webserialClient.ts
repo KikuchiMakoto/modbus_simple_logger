@@ -284,9 +284,12 @@ export class WebSerialModbusClient {
           throw new Error('Timeout waiting for response');
         }
         const remainingMs = timeout - elapsedMs;
+        if (remainingMs <= 0) {
+          throw new Error('Timeout waiting for response');
+        }
         const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
           let settled = false;
-          const timeoutId = window.setTimeout(() => {
+          const timeoutId = setTimeout(() => {
             if (settled) return;
             settled = true;
             reject(new Error('Timeout waiting for response'));
