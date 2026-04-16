@@ -279,11 +279,28 @@ export class WebSerialModbusClient {
       const buffer: number[] = [];
 
       while (buffer.length < expectedLength) {
-        if (Date.now() - startTime > timeout) {
+        const elapsedMs = Date.now() - startTime;
+        if (elapsedMs > timeout) {
           throw new Error('Timeout waiting for response');
         }
+        const remainingMs = Math.max(1, timeout - elapsedMs);
+        const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+          const timeoutId = window.setTimeout(() => {
+            reject(new Error('Timeout waiting for response'));
+          }, remainingMs);
+          reader.read().then(
+            (result) => {
+              clearTimeout(timeoutId);
+              resolve(result);
+            },
+            (readError) => {
+              clearTimeout(timeoutId);
+              reject(readError);
+            },
+          );
+        });
 
-        const { value, done } = await reader.read();
+        const { value, done } = readResult;
         if (done) {
           throw new Error('Stream closed unexpectedly');
         }
