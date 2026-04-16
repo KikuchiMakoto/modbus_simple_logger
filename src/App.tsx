@@ -1286,7 +1286,7 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <section className="card space-y-2">
+        <section className="card space-y-2 md:col-span-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-amber-400">ScriptRunner (Pyodide)</h2>
             <button type="button" className="button-primary" onClick={handleToggleScriptRunner}>
