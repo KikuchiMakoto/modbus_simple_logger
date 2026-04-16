@@ -1263,7 +1263,7 @@ function App() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <ChartPanel
           title="Chart 1"
           color="#34d399"
@@ -1286,7 +1286,7 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <section className="card space-y-2 md:col-span-2 xl:col-span-2">
+        <section className="card space-y-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-amber-400">ScriptRunner (Pyodide)</h2>
             <button type="button" className="button-primary" onClick={handleToggleScriptRunner}>
@@ -1298,7 +1298,7 @@ function App() {
             value={scriptCode}
             onChange={(e) => setScriptCode(e.target.value)}
             onKeyDown={handleScriptEditorKeyDown}
-            className="min-h-[280px] w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="min-h-[240px] w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             spellCheck={false}
           />
         </section>
