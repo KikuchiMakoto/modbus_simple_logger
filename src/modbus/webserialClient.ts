@@ -258,7 +258,7 @@ export class WebSerialModbusClient {
       if (elapsedMs >= maxFlushMs) {
         break;
       }
-      const remainingMs = Math.max(1, maxFlushMs - elapsedMs);
+      const remainingMs = maxFlushMs - elapsedMs;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const readResult = await Promise.race<ReadableStreamReadResult<Uint8Array> | null>([
         reader.read(),
@@ -283,7 +283,12 @@ export class WebSerialModbusClient {
           console.debug(`${this.debugPrefix} flushReceiveBuffer() releaseLock failed`, releaseError);
         }
         if (this.port.readable) {
-          this.reader = this.port.readable.getReader();
+          try {
+            this.reader = this.port.readable.getReader();
+          } catch (getReaderError) {
+            console.warn(`${this.debugPrefix} flushReceiveBuffer() getReader failed`, getReaderError);
+            this.reader = null;
+          }
         } else {
           this.reader = null;
         }
