@@ -1,4 +1,4 @@
-import { type CSSProperties, type ComponentType, useMemo } from 'react';
+import { type CSSProperties, type ComponentType, useEffect, useMemo } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
 import Plot from 'react-plotly.js';
 import { DataPoint } from '../types';
@@ -71,6 +71,10 @@ export function ChartPanel({
     const canvas = document.createElement('canvas');
     return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
   }, []);
+
+  useEffect(() => {
+    console.log(`GPU(WebGL): ${isWebGLAvailable ? 'ON' : 'OFF'}`);
+  }, [isWebGLAvailable]);
 
   const palette = useMemo(
     () =>
@@ -156,9 +160,6 @@ export function ChartPanel({
             {title}
           </h2>
         ) : null}
-        <span className={`text-xs ${isWebGLAvailable ? 'text-emerald-500' : 'text-amber-500'}`}>
-          GPU(WebGL): {isWebGLAvailable ? 'ON' : 'OFF'}
-        </span>
         <span className="text-xs text-slate-400">X:</span>
         <select
           value={xAxis}
