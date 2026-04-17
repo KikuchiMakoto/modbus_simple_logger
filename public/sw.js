@@ -97,7 +97,7 @@ self.addEventListener('fetch', (event) => {
         .catch(async () => {
           console.warn('[SW] Navigation fetch failed, serving from cache');
           const cached = await caches.match(BASE_PATH + 'index.html');
-          if (cached) return withIsolationHeaders(cached);
+          if (cached) return withIsolationHeaders(cached.clone());
           return withIsolationHeaders(new Response(
             '<!DOCTYPE html><html><body><h1>Offline</h1><p>No cached content available. Please connect to the internet and reload.</p></body></html>',
             {
@@ -136,7 +136,7 @@ self.addEventListener('fetch', (event) => {
 
       // If we have a cached response, return it immediately
       if (cachedResponse) {
-        return withIsolationHeaders(cachedResponse);
+        return withIsolationHeaders(cachedResponse.clone());
       }
 
       // No cache available: wait for network response
