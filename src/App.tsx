@@ -272,8 +272,6 @@ function App() {
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
-  const getDisplayPointLimit = () =>
-    (tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -344,7 +342,7 @@ function App() {
 
     const pointsToAdd = [...pendingDataPoints.current];
     pendingDataPoints.current = [];
-    const displayLimit = getDisplayPointLimit();
+    const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
 
     setDataPoints((prev) => {
       const currentCount = prev.length;
@@ -358,7 +356,7 @@ function App() {
 
       return [...prev, ...pointsToAdd];
     });
-  }, [getDisplayPointLimit]);
+  }, []);
 
   const syncAoChannels = useCallback((values: number[]) => {
     if (values.length !== AO_CHANNELS) {
@@ -610,7 +608,8 @@ function App() {
       // Save to IndexedDB
       await dataStorage.addDataPoint(dataPoint);
 
-      await dataStorage.keepLatestPoints(getDisplayPointLimit());
+      const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
+      await dataStorage.keepLatestPoints(displayLimit);
 
       // Add new point to pending buffer for incremental chart update
       // This updates the chart without accessing IndexedDB
@@ -641,7 +640,7 @@ function App() {
       setStatus(`IndexedDB error: ${(err as Error).message}`);
       // Don't throw - allow polling to continue
     }
-  }, [flushPendingDataPoints, getDisplayPointLimit]);
+  }, [flushPendingDataPoints]);
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
