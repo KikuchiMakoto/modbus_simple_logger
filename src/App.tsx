@@ -251,7 +251,9 @@ function App() {
   );
   const [scriptRunning, setScriptRunning] = useState(false);
   const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
-    scriptRunnerSupported ? 'Idle' : 'Unavailable: requires cross-origin isolation (COOP/COEP headers).',
+    scriptRunnerSupported
+      ? 'Idle'
+      : 'Unavailable: requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
   );
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
@@ -456,7 +458,9 @@ function App() {
   const ensureWorkerReady = useCallback((): Worker => {
     if (pyWorkerRef.current) return pyWorkerRef.current;
     if (!scriptRunnerSupported) {
-      throw new Error('ScriptRunner requires cross-origin isolation (COOP/COEP headers).');
+      throw new Error(
+        'ScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
+      );
     }
 
     const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);

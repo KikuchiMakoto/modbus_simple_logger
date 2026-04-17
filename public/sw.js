@@ -1,6 +1,22 @@
 // Service Worker for Modbus WebUSB Logger PWA
-const CACHE_NAME = 'modbus-logger-v4';
+const CACHE_NAME = 'modbus-logger-v5';
 const BASE_PATH = '/modbus_simple_logger/';
+const ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+};
+
+const withIsolationHeaders = (response) => {
+  const headers = new Headers(response.headers);
+  Object.entries(ISOLATION_HEADERS).forEach(([key, value]) => {
+    headers.set(key, value);
+  });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
 
 // Pre-cache: minimal set cached during install
 const PRECACHE_URLS = [
@@ -20,9 +36,9 @@ self.addEventListener('install', (event) => {
       const results = await Promise.allSettled(
         PRECACHE_URLS.map(async (url) => {
           const response = await fetch(url, { cache: 'no-store' });
-          if (response.ok) {
-            await cache.put(url, response);
-          }
+            if (response.ok) {
+              await cache.put(url, withIsolationHeaders(response));
+            }
         })
       );
       const failed = results.filter((r) => r.status === 'rejected');
@@ -76,20 +92,20 @@ self.addEventListener('fetch', (event) => {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
-          return response;
+          return withIsolationHeaders(response);
         })
         .catch(async () => {
           console.warn('[SW] Navigation fetch failed, serving from cache');
           const cached = await caches.match(BASE_PATH + 'index.html');
-          if (cached) return cached;
-          return new Response(
+          if (cached) return withIsolationHeaders(cached.clone());
+          return withIsolationHeaders(new Response(
             '<!DOCTYPE html><html><body><h1>Offline</h1><p>No cached content available. Please connect to the internet and reload.</p></body></html>',
             {
               status: 503,
               statusText: 'Service Unavailable',
               headers: { 'Content-Type': 'text/html; charset=utf-8' },
             }
-          );
+          ));
         })
     );
     return;
@@ -111,7 +127,7 @@ self.addEventListener('fetch', (event) => {
           if (networkResponse && networkResponse.status === 200) {
             cache.put(request, networkResponse.clone());
           }
-          return networkResponse;
+          return withIsolationHeaders(networkResponse);
         })
         .catch((err) => {
           console.warn('[SW] Background fetch failed:', request.url, err);
@@ -120,21 +136,21 @@ self.addEventListener('fetch', (event) => {
 
       // If we have a cached response, return it immediately
       if (cachedResponse) {
-        return cachedResponse;
+        return withIsolationHeaders(cachedResponse.clone());
       }
 
       // No cache available: wait for network response
       const networkResponse = await fetchPromise;
       if (networkResponse) {
-        return networkResponse;
+        return withIsolationHeaders(networkResponse);
       }
 
       // Both cache and network failed
-      return new Response('Offline - Resource not available', {
+      return withIsolationHeaders(new Response('Offline - Resource not available', {
         status: 503,
         statusText: 'Service Unavailable',
         headers: { 'Content-Type': 'text/plain' },
-      });
+      }));
     })
   );
 });
