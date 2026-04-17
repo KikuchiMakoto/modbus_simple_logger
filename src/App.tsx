@@ -1350,7 +1350,6 @@ function App() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <ChartPanel
-          title="Chart 1"
           color="#34d399"
           dataPoints={dataPoints}
           axisOptions={axisOptions}
@@ -1361,7 +1360,6 @@ function App() {
           onYAxisChange={setChart1Y}
         />
         <ChartPanel
-          title="Chart 2"
           color="#60a5fa"
           dataPoints={dataPoints}
           axisOptions={axisOptions}
