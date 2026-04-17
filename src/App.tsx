@@ -141,6 +141,14 @@ function formatSerialSettings(settings: SerialSettings) {
   return `${settings.baudRate}bps ${settings.dataBits}${parityLetter}${settings.stopBits}`;
 }
 
+function formatElapsedTime(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
 const hasAoValuesChanged = (lastSent: number[] | null, current: number[]): boolean => {
   if (!lastSent) return true;
   if (lastSent.length !== current.length) return true;
@@ -227,6 +235,9 @@ function App() {
   const [status, setStatus] = useState('Disconnected');
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [tsvWriter, setTsvWriter] = useState<TsvWriter | null>(null);
+  const [activeSaveFilename, setActiveSaveFilename] = useState('');
+  const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
+  const [saveElapsedMs, setSaveElapsedMs] = useState(0);
   const initialAxes = useMemo(() => loadChartAxes(), []);
   const [chart1X, setChart1X] = useState(initialAxes.chart1.x);
   const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
@@ -307,6 +318,18 @@ function App() {
       chart2: { x: chart2X, y: chart2Y },
     });
   }, [chart1X, chart1Y, chart2X, chart2Y]);
+
+  useEffect(() => {
+    if (!tsvWriter || saveStartedAt === null) {
+      setSaveElapsedMs(0);
+      return;
+    }
+    setSaveElapsedMs(Math.max(0, Date.now() - saveStartedAt));
+    const elapsedTimer = window.setInterval(() => {
+      setSaveElapsedMs(Math.max(0, Date.now() - saveStartedAt));
+    }, 200);
+    return () => window.clearInterval(elapsedTimer);
+  }, [tsvWriter, saveStartedAt]);
 
   // Flush pending data points to chart (batched update)
   const flushPendingDataPoints = useCallback(() => {
@@ -961,7 +984,20 @@ function App() {
     stopScriptRunner('Stopped');
     setAcquiring(false);
     stopPolling();
+    const writerToClose = tsvWriterRef.current;
+    tsvWriterRef.current = null;
+    setTsvWriter(null);
+    setActiveSaveFilename('');
+    setSaveStartedAt(null);
+    setSaveElapsedMs(0);
     try {
+      if (writerToClose) {
+        try {
+          await writerToClose.close();
+        } catch (err) {
+          console.warn('Error closing TSV writer during disconnect:', err);
+        }
+      }
       if (clientRef.current) {
         await clientRef.current.disconnect();
         clientRef.current = null;
@@ -1067,6 +1103,7 @@ function App() {
     try {
       // Create TSV writer (this will prompt user for file location)
       const writer = await createTsvWriter(AI_CHANNELS);
+      const startedAt = Date.now();
 
       // Clear pending data points buffer
       pendingDataPoints.current = [];
@@ -1078,6 +1115,9 @@ function App() {
       // Update both state and ref
       setTsvWriter(writer);
       tsvWriterRef.current = writer;
+      setActiveSaveFilename(writer.getFileName());
+      setSaveStartedAt(startedAt);
+      setSaveElapsedMs(0);
       setStatus('Saving data to file');
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -1094,6 +1134,9 @@ function App() {
       const writerToClose = tsvWriterRef.current;
       tsvWriterRef.current = null;
       setTsvWriter(null);
+      setActiveSaveFilename('');
+      setSaveStartedAt(null);
+      setSaveElapsedMs(0);
 
       // Close the writer if it exists
       if (writerToClose) {
@@ -1138,11 +1181,21 @@ function App() {
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
         <div className="px-3 py-1">
           <header className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
-                {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
-              </p>
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-0.5">
+              <div>
+                <h1 className="text-xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
+                </p>
+              </div>
+              <div className="text-left text-xs text-slate-600 dark:text-slate-400">
+                <p className="font-semibold text-slate-700 dark:text-slate-300">
+                  File: {activeSaveFilename || '-'}
+                </p>
+                <p className="tabular-nums">
+                  Total: {formatElapsedTime(saveElapsedMs)}
+                </p>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
               <button
@@ -1201,7 +1254,7 @@ function App() {
                   Start Save
                 </button>
               ) : (
-                <button type="button" className="button-primary" onClick={handleStopSave}>
+                <button type="button" className="button-stop-save-pulse" onClick={handleStopSave}>
                   Stop Save
                 </button>
               )}
