@@ -46,3 +46,4 @@ bun run build
 
 - 推奨ブラウザ: Chrome / Edge など Chromium 系最新版
 - Web Serial API / File System Access API / Service Worker が有効な環境
+- ScriptRunner（Pyodide）は COOP/COEP が有効なオリジン（`crossOriginIsolated`）でのみ利用可能（GitHub Pages では Service Worker 適用後の再読込で有効化）

@@ -9,7 +9,7 @@ interface AxisOption {
 }
 
 interface ChartPanelProps {
-  title: string;
+  title?: string;
   color: string;
   dataPoints: DataPoint[];
   axisOptions: AxisOption[];
@@ -146,14 +146,16 @@ export function ChartPanel({
   return (
     <section className="card space-y-1.5">
       <div className="flex items-center gap-2">
-        <h2 className={`text-lg font-semibold ${
-          color === '#34d399' ? 'text-emerald-400' :
-          color === '#60a5fa' ? 'text-blue-400' :
-          color === '#f59e0b' ? 'text-amber-400' :
-          'text-pink-400'
-        }`}>
-          {title}
-        </h2>
+        {title ? (
+          <h2 className={`text-lg font-semibold ${
+            color === '#34d399' ? 'text-emerald-400' :
+            color === '#60a5fa' ? 'text-blue-400' :
+            color === '#f59e0b' ? 'text-amber-400' :
+            'text-pink-400'
+          }`}>
+            {title}
+          </h2>
+        ) : null}
         <span className={`text-xs ${isWebGLAvailable ? 'text-emerald-500' : 'text-amber-500'}`}>
           GPU(WebGL): {isWebGLAvailable ? 'ON' : 'OFF'}
         </span>

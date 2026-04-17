@@ -250,8 +250,16 @@ function App() {
   const [chart2X, setChart2X] = useState(initialAxes.chart2.x);
   const [chart2Y, setChart2Y] = useState(initialAxes.chart2.y);
   const [scriptCode, setScriptCode] = useState(DEFAULT_SCRIPT);
+  const scriptRunnerSupported = useMemo(
+    () => typeof SharedArrayBuffer !== 'undefined' && window.crossOriginIsolated,
+    [],
+  );
   const [scriptRunning, setScriptRunning] = useState(false);
-  const [scriptRunnerStatus, setScriptRunnerStatus] = useState('Idle');
+  const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
+    scriptRunnerSupported
+      ? 'Idle'
+      : 'Unavailable: requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
+  );
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aiPhysicalSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
@@ -427,8 +435,10 @@ function App() {
 
   const ensureWorkerReady = useCallback((): Worker => {
     if (pyWorkerRef.current) return pyWorkerRef.current;
-    if (typeof SharedArrayBuffer === 'undefined') {
-      throw new Error('SharedArrayBuffer is not available. Please enable COOP/COEP headers.');
+    if (!scriptRunnerSupported) {
+      throw new Error(
+        'ScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
+      );
     }
 
     const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
@@ -480,7 +490,7 @@ function App() {
 
     pyWorkerRef.current = worker;
     return worker;
-  }, [setAo]);
+  }, [scriptRunnerSupported, setAo]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
     if (interruptBufferRef.current) {
@@ -1327,7 +1337,6 @@ function App() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <ChartPanel
-          title="Chart 1"
           color="#34d399"
           dataPoints={dataPoints}
           axisOptions={axisOptions}
@@ -1338,7 +1347,6 @@ function App() {
           onYAxisChange={setChart1Y}
         />
         <ChartPanel
-          title="Chart 2"
           color="#60a5fa"
           dataPoints={dataPoints}
           axisOptions={axisOptions}
@@ -1351,7 +1359,12 @@ function App() {
         <section className="card space-y-2 md:col-span-2">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-amber-400">ScriptRunner (Pyodide)</h2>
-            <button type="button" className="button-primary" onClick={handleToggleScriptRunner}>
+            <button
+              type="button"
+              className="button-primary"
+              onClick={handleToggleScriptRunner}
+              disabled={!scriptRunnerSupported}
+            >
               {scriptRunning ? 'Stop' : 'Run'}
             </button>
           </div>
