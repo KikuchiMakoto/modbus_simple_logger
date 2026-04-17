@@ -253,8 +253,11 @@ export class WebSerialModbusClient {
     const start = Date.now();
     let discardedBytes = 0;
 
-    while (Date.now() - start < maxFlushMs) {
+    while (true) {
       const elapsedMs = Date.now() - start;
+      if (elapsedMs >= maxFlushMs) {
+        break;
+      }
       const remainingMs = Math.max(1, maxFlushMs - elapsedMs);
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const readResult = await Promise.race<ReadableStreamReadResult<Uint8Array> | null>([
@@ -271,13 +274,13 @@ export class WebSerialModbusClient {
         // Timed out waiting for additional bytes: cancel pending read and recreate reader lock.
         try {
           await reader.cancel();
-        } catch {
-          // Ignore cancellation errors during flush.
+        } catch (cancelError) {
+          console.debug(`${this.debugPrefix} flushReceiveBuffer() cancel failed`, cancelError);
         }
         try {
           reader.releaseLock();
-        } catch {
-          // Ignore lock release errors during flush.
+        } catch (releaseError) {
+          console.debug(`${this.debugPrefix} flushReceiveBuffer() releaseLock failed`, releaseError);
         }
         if (this.port.readable) {
           this.reader = this.port.readable.getReader();
