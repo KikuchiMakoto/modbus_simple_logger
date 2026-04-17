@@ -197,8 +197,10 @@ const DEFAULT_SCRIPT = `# get_ai_raw(ch): Read raw AI value for a channel.
 # get_ai_phy(ch): Read calibrated AI value for a channel.
 # set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
 #
-# time.sleep(sec) works without blocking the browser.
-# while True: loops can be interrupted from the Stop button.`;
+# To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
+# Use asyncio instead:
+# import asyncio
+# await asyncio.sleep(1)`;
 
 const getSystemTheme = (): ThemeMode => {
   if (typeof window === 'undefined') return 'light';
