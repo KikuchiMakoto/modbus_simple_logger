@@ -18,7 +18,12 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
 } from './utils/calibration';
-import { dataStorage, MAX_POINTS_IN_MEMORY, StoredDataPoint } from './utils/dataStorage';
+import {
+  dataStorage,
+  MAX_POINTS_IN_MEMORY,
+  MAX_POINTS_WHILE_SAVING,
+  StoredDataPoint,
+} from './utils/dataStorage';
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
@@ -345,47 +350,20 @@ function App() {
 
     const pointsToAdd = [...pendingDataPoints.current];
     pendingDataPoints.current = [];
+    const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
 
     setDataPoints((prev) => {
-      // Always enforce MAX_POINTS_IN_MEMORY for in-memory display
-      // regardless of save mode (TSV file receives all data independently)
       const currentCount = prev.length;
       const pointsToAddCount = pointsToAdd.length;
       const totalAfterAdd = currentCount + pointsToAddCount;
 
-      if (totalAfterAdd > MAX_POINTS_IN_MEMORY) {
-        const pointsToRemove = totalAfterAdd - MAX_POINTS_IN_MEMORY;
+      if (totalAfterAdd > displayLimit) {
+        const pointsToRemove = totalAfterAdd - displayLimit;
         return [...prev.slice(pointsToRemove), ...pointsToAdd];
       }
 
       return [...prev, ...pointsToAdd];
     });
-  }, []);
-
-  // Load data from IndexedDB (used only on initial connection)
-  const loadChartDataFromDB = useCallback(async () => {
-    try {
-      const allPoints = await dataStorage.getAllDataPoints();
-
-      let displayPoints: DataPoint[] = allPoints.map(p => ({
-        timestamp: p.timestamp,
-        aiRaw: p.aiRaw,
-        aiPhysical: p.aiPhysical,
-        // Backward compatibility for IndexedDB records created before aiVoltage was stored:
-        // when missing, recalculate from aiRaw with current conversion logic.
-        aiVoltage: p.aiVoltage ?? p.aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage),
-      }));
-
-      // Always enforce display limit
-      if (displayPoints.length > MAX_POINTS_IN_MEMORY) {
-        displayPoints = displayPoints.slice(-MAX_POINTS_IN_MEMORY);
-      }
-
-      setDataPoints(displayPoints);
-    } catch (err) {
-      console.error('Error loading chart data from IndexedDB:', err);
-      setStatus(`Chart update error: ${(err as Error).message}`);
-    }
   }, []);
 
   const syncAoChannels = useCallback((values: number[]) => {
@@ -640,9 +618,8 @@ function App() {
       // Save to IndexedDB
       await dataStorage.addDataPoint(dataPoint);
 
-      // Always maintain FIFO in IndexedDB to prevent unbounded growth
-      // (TSV file receives all data independently via writeRow)
-      await dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY);
+      const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
+      await dataStorage.keepLatestPoints(displayLimit);
 
       // Add new point to pending buffer for incremental chart update
       // This updates the chart without accessing IndexedDB
