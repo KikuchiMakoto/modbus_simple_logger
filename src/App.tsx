@@ -325,10 +325,9 @@ function App() {
       setSaveElapsedMs(0);
       return;
     }
-    setSaveElapsedMs(Math.max(0, Date.now() - saveStartedAt));
     const elapsedTimer = window.setInterval(() => {
       setSaveElapsedMs(Math.max(0, Date.now() - saveStartedAt));
-    }, 200);
+    }, 1000);
     return () => window.clearInterval(elapsedTimer);
   }, [tsvWriter, saveStartedAt]);
 
@@ -1193,7 +1192,7 @@ function App() {
                   {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
                 </p>
               </div>
-              <div className="text-left text-xs text-slate-600 dark:text-slate-400">
+              <div role="status" aria-live="polite" className="text-left text-xs text-slate-600 dark:text-slate-400">
                 <p className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
                 </p>

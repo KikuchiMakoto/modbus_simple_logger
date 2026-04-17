@@ -88,7 +88,7 @@ export class TsvWriter {
     channels: number,
     physicalPrecision: number = 3,
     voltagePrecision: number = 5,
-    fileName: string = ''
+    fileName: string = 'unnamed.tsv'
   ) {
     this.stream = stream;
     this.channels = channels;
