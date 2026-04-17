@@ -184,17 +184,8 @@ const DEFAULT_SCRIPT = `# get_ai_raw(ch): Read raw AI value for a channel.
 # get_ai_phy(ch): Read calibrated AI value for a channel.
 # set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
 #
-# To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
-# Use asyncio instead:
-# import asyncio
-# await asyncio.sleep(1)`;
-
-type PyodideInstance = {
-  globals: {
-    set: (name: string, value: unknown) => void;
-  };
-  runPythonAsync: (code: string) => Promise<unknown>;
-};
+# time.sleep(sec) works without blocking the browser.
+# while True: loops can be interrupted from the Stop button.`;
 
 const getSystemTheme = (): ThemeMode => {
   if (typeof window === 'undefined') return 'light';
@@ -249,8 +240,10 @@ function App() {
   const aiPhysicalSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
   const scriptExecutingRef = useRef(false);
-  const pyodideRef = useRef<PyodideInstance | null>(null);
-  const pyodideLoadingRef = useRef<Promise<PyodideInstance> | null>(null);
+  const pyWorkerRef = useRef<Worker | null>(null);
+  const interruptBufferRef = useRef<Uint8Array | null>(null);
+  const aiRawShareRef = useRef<Float64Array | null>(null);
+  const aiPhysicalShareRef = useRef<Float64Array | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
   const lastSentAoRawRef = useRef<number[] | null>(null);
@@ -431,53 +424,69 @@ function App() {
     );
   }, [clampAoVoltageToMilliVolt]);
 
-  const ensurePyodideLoaded = useCallback(async (): Promise<PyodideInstance> => {
-    if (pyodideRef.current) return pyodideRef.current;
-    if (pyodideLoadingRef.current) return pyodideLoadingRef.current;
-
-    pyodideLoadingRef.current = (async () => {
-      const pyodideScriptId = 'pyodide-script';
-      if (!document.getElementById(pyodideScriptId)) {
-        await new Promise<void>((resolve, reject) => {
-          const script = document.createElement('script');
-          script.id = pyodideScriptId;
-          script.src = 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.js';
-          script.onload = () => resolve();
-          script.onerror = () => reject(new Error('Failed to load Pyodide script'));
-          document.head.appendChild(script);
-        });
-      }
-
-      const win = window as Window & {
-        loadPyodide?: (opts: { indexURL: string }) => Promise<PyodideInstance>;
-      };
-      if (!win.loadPyodide) {
-        throw new Error('loadPyodide is not available');
-      }
-
-      const pyodide = await win.loadPyodide({
-        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/',
-      });
-
-      pyodide.globals.set('get_ai_raw', getAiRaw);
-      pyodide.globals.set('get_ai_raw_all', () => getAiRaw(-1));
-      pyodide.globals.set('get_ai_phy', getAiPhysical);
-      pyodide.globals.set('get_ai_phy_all', () => getAiPhysical(-1));
-      pyodide.globals.set('set_ao', setAo);
-      pyodide.globals.set('set_ao_all', setAoAll);
-
-      pyodideRef.current = pyodide;
-      return pyodide;
-    })();
-
-    try {
-      return await pyodideLoadingRef.current;
-    } finally {
-      pyodideLoadingRef.current = null;
+  const ensureWorkerReady = useCallback((): Worker => {
+    if (pyWorkerRef.current) return pyWorkerRef.current;
+    if (typeof SharedArrayBuffer === 'undefined') {
+      throw new Error('SharedArrayBuffer is not available. Please enable COOP/COEP headers.');
     }
-  }, [getAiRaw, getAiPhysical, setAo, setAoAll]);
+
+    const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
+    const phySab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
+    const intSab = new SharedArrayBuffer(1);
+
+    aiRawShareRef.current = new Float64Array(rawSab);
+    aiPhysicalShareRef.current = new Float64Array(phySab);
+    interruptBufferRef.current = new Uint8Array(intSab);
+
+    const worker = new Worker(new URL('./pyodideWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event: MessageEvent) => {
+      const message = event.data as
+        | { type: 'set_ao'; ch: number; data: number }
+        | { type: 'status'; message: string }
+        | { type: 'done'; message?: string }
+        | { type: 'interrupted'; message?: string }
+        | { type: 'error'; message: string };
+      if (message.type === 'set_ao') {
+        setAo(message.ch, message.data);
+      } else if (message.type === 'status') {
+        setScriptRunnerStatus(message.message);
+      } else if (message.type === 'done') {
+        scriptExecutingRef.current = false;
+        setScriptRunning(false);
+        setScriptRunnerStatus(message.message ?? 'Completed');
+      } else if (message.type === 'interrupted') {
+        scriptExecutingRef.current = false;
+        setScriptRunning(false);
+        setScriptRunnerStatus(message.message ?? 'Stopped');
+      } else if (message.type === 'error') {
+        scriptExecutingRef.current = false;
+        setScriptRunning(false);
+        setScriptRunnerStatus(`Error: ${message.message}`);
+      }
+    };
+    worker.onerror = (event) => {
+      scriptExecutingRef.current = false;
+      setScriptRunning(false);
+      setScriptRunnerStatus(`Error: ${event.message}`);
+    };
+
+    worker.postMessage({
+      type: 'init',
+      rawSab,
+      phySab,
+      intSab,
+    });
+
+    pyWorkerRef.current = worker;
+    return worker;
+  }, [setAo]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
+    if (interruptBufferRef.current) {
+      interruptBufferRef.current[0] = 2;
+      pyWorkerRef.current?.postMessage({ type: 'interrupt' });
+    }
+    scriptExecutingRef.current = false;
     setScriptRunning(false);
     setScriptRunnerStatus(nextStatus);
   }, []);
@@ -485,24 +494,18 @@ function App() {
   const startScriptRunner = useCallback(async () => {
     if (scriptExecutingRef.current) return;
     try {
-      setScriptRunnerStatus('Initializing Pyodide...');
-      await ensurePyodideLoaded();
-
-      if (!pyodideRef.current) {
-        throw new Error('Pyodide is not available');
-      }
-
+      const worker = ensureWorkerReady();
+      if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;
+      scriptExecutingRef.current = true;
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
-      scriptExecutingRef.current = true;
-      await pyodideRef.current.runPythonAsync(scriptCode);
-      stopScriptRunner('Completed');
+      worker.postMessage({ type: 'run', code: scriptCode });
     } catch (err) {
-      stopScriptRunner(`Error: ${(err as Error).message}`);
-    } finally {
       scriptExecutingRef.current = false;
+      setScriptRunning(false);
+      stopScriptRunner(`Error: ${(err as Error).message}`);
     }
-  }, [ensurePyodideLoaded, scriptCode, stopScriptRunner]);
+  }, [ensureWorkerReady, scriptCode, stopScriptRunner]);
 
   const handleToggleScriptRunner = useCallback(() => {
     if (scriptRunning) {
@@ -663,6 +666,16 @@ function App() {
       );
       const aiVoltage = aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage);
       aiPhysicalSourceRef.current = aiPhysical;
+      const aiRawShare = aiRawShareRef.current;
+      const aiPhysicalShare = aiPhysicalShareRef.current;
+      if (aiRawShare && aiPhysicalShare) {
+        aiRaw.forEach((value, index) => {
+          aiRawShare[index] = value;
+        });
+        aiPhysical.forEach((value, index) => {
+          aiPhysicalShare[index] = value;
+        });
+      }
 
       setAiChannels((prev) =>
         prev.map((ch, idx) => {
@@ -842,6 +855,15 @@ function App() {
     }
     return () => stopPolling();
   }, [acquiring, startPolling, stopPolling]);
+
+  useEffect(() => {
+    return () => {
+      if (pyWorkerRef.current) {
+        pyWorkerRef.current.terminate();
+        pyWorkerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
