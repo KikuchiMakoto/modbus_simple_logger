@@ -240,7 +240,63 @@ export class WebSerialModbusClient {
     return rawFrame;
   }
 
-  private async transfer(frame: Uint8Array, expectedLength: number, timeout = 500): Promise<DataView> {
+  /**
+   * Drain and discard stale bytes from receive buffer.
+   * Uses a short read window to avoid blocking regular polling.
+   */
+  private async flushReceiveBuffer(maxFlushMs = 30): Promise<void> {
+    if (!this.reader || !this.port?.readable) {
+      return;
+    }
+
+    const reader = this.reader;
+    const start = Date.now();
+    let discardedBytes = 0;
+
+    while (Date.now() - start < maxFlushMs) {
+      const elapsedMs = Date.now() - start;
+      const remainingMs = Math.max(1, maxFlushMs - elapsedMs);
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const readResult = await Promise.race<ReadableStreamReadResult<Uint8Array> | null>([
+        reader.read(),
+        new Promise<null>((resolve) => {
+          timeoutId = setTimeout(() => resolve(null), remainingMs);
+        }),
+      ]);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      if (readResult === null) {
+        // Timed out waiting for additional bytes: cancel pending read and recreate reader lock.
+        try {
+          await reader.cancel();
+        } catch {
+          // Ignore cancellation errors during flush.
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+          // Ignore lock release errors during flush.
+        }
+        this.reader = this.port.readable.getReader();
+        break;
+      }
+
+      const { value, done } = readResult;
+      if (done || !value || value.length === 0) {
+        break;
+      }
+
+      discardedBytes += value.length;
+    }
+
+    if (discardedBytes > 0) {
+      console.warn(`${this.debugPrefix} flushed stale RX bytes`, { discardedBytes });
+    }
+  }
+
+  private async transfer(frame: Uint8Array, expectedLength: number, timeout = 1000): Promise<DataView> {
     this.ensureReady();
     console.debug(`${this.debugPrefix} transfer() queued`, {
       expectedLength,
@@ -366,6 +422,11 @@ export class WebSerialModbusClient {
         elapsedMs: Date.now() - startTime,
         error: err,
       });
+      try {
+        await this.flushReceiveBuffer();
+      } catch (flushErr) {
+        console.warn(`${this.debugPrefix} transfer() flush after error failed`, flushErr);
+      }
       throw err;
     } finally {
       // Always release the mutex
@@ -436,7 +497,7 @@ export class WebSerialModbusClient {
    * @param count - Number of registers to read
    * @returns Array of signed 16-bit register values
    */
-  async readInputRegisters(start: number, count: number, timeoutMs = 500): Promise<number[]> {
+  async readInputRegisters(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
     console.debug(`${this.debugPrefix} readInputRegisters()`, { start, count, timeoutMs });
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(4, payload);
@@ -463,7 +524,7 @@ export class WebSerialModbusClient {
    * @param count - Number of float32 values to read (will read count*2 registers)
    * @returns Array of float32 values
    */
-  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 500): Promise<number[]> {
+  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
     console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd()`, { start, count, timeoutMs });
     // Read twice as many registers since each float32 needs 2 registers
     const registerCount = count * 2;
