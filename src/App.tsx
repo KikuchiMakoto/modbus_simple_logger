@@ -238,6 +238,7 @@ function App() {
   const [activeSaveFilename, setActiveSaveFilename] = useState('');
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedMs, setSaveElapsedMs] = useState(0);
+  const [savePointCount, setSavePointCount] = useState(0);
   const initialAxes = useMemo(() => loadChartAxes(), []);
   const [chart1X, setChart1X] = useState(initialAxes.chart1.x);
   const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
@@ -724,6 +725,7 @@ function App() {
       if (writer) {
         try {
           await writer.writeRow(Date.now(), aiRaw, aiPhysical, aiVoltage);
+          setSavePointCount((prev) => prev + 1);
         } catch (err) {
           // Ignore errors if stream is closing
           if (err instanceof TypeError && (err as Error).message.includes('closing')) {
@@ -990,6 +992,7 @@ function App() {
     setActiveSaveFilename('');
     setSaveStartedAt(null);
     setSaveElapsedMs(0);
+    setSavePointCount(0);
     try {
       if (writerToClose) {
         try {
@@ -1118,6 +1121,7 @@ function App() {
       setActiveSaveFilename(writer.getFileName());
       setSaveStartedAt(startedAt);
       setSaveElapsedMs(0);
+      setSavePointCount(0);
       setStatus('Saving data to file');
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -1137,6 +1141,7 @@ function App() {
       setActiveSaveFilename('');
       setSaveStartedAt(null);
       setSaveElapsedMs(0);
+      setSavePointCount(0);
 
       // Close the writer if it exists
       if (writerToClose) {
@@ -1193,7 +1198,7 @@ function App() {
                   File: {activeSaveFilename || '-'}
                 </p>
                 <p className="tabular-nums">
-                  Total: {formatElapsedTime(saveElapsedMs)}
+                  Total: {formatElapsedTime(saveElapsedMs)} / Points: {savePointCount}
                 </p>
               </div>
             </div>
