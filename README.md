@@ -41,9 +41,9 @@ bun run build
 - キャリブレーション `ax²+bx+c` の編集・Cookie保存・JSONダウンロード
 - 計測データの TSV 出力（ヘッダー付き追記）
 - 2 つのチャートで X/Y 軸を任意チャンネルに切り替え可能
+- Pyodide による asyncio 簡易コントロール
 
 ## 動作要件
 
 - 推奨ブラウザ: Chrome / Edge など Chromium 系最新版
 - Web Serial API / File System Access API / Service Worker が有効な環境
-- ScriptRunner（Pyodide）は COOP/COEP が有効なオリジン（`crossOriginIsolated`）でのみ利用可能（GitHub Pages では Service Worker 適用後の再読込で有効化）
