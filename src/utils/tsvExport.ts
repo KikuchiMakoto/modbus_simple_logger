@@ -74,6 +74,7 @@ export class TsvWriter {
   private channels: number;
   private physicalPrecision: number;
   private voltagePrecision: number;
+  private fileName: string;
 
   /**
    * Create a new TSV writer
@@ -86,12 +87,14 @@ export class TsvWriter {
     stream: FileSystemWritableFileStream,
     channels: number,
     physicalPrecision: number = 3,
-    voltagePrecision: number = 5
+    voltagePrecision: number = 5,
+    fileName: string = 'unnamed.tsv'
   ) {
     this.stream = stream;
     this.channels = channels;
     this.physicalPrecision = physicalPrecision;
     this.voltagePrecision = voltagePrecision;
+    this.fileName = fileName;
   }
 
   /**
@@ -146,6 +149,10 @@ export class TsvWriter {
   getStream(): FileSystemWritableFileStream {
     return this.stream;
   }
+
+  getFileName(): string {
+    return this.fileName;
+  }
 }
 
 /**
@@ -180,7 +187,7 @@ export async function createTsvWriter(
   });
 
   const stream = await fileHandle.createWritable();
-  const writer = new TsvWriter(stream, channels, physicalPrecision, voltagePrecision);
+  const writer = new TsvWriter(stream, channels, physicalPrecision, voltagePrecision, fileHandle.name);
 
   // Write header automatically
   await writer.writeHeader();
