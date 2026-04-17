@@ -272,6 +272,10 @@ function App() {
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
+  const getDisplayPointLimit = useCallback(
+    () => (tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY),
+    [],
+  );
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -1405,7 +1409,3 @@ function App() {
 }
 
 export default App;
-  const getDisplayPointLimit = useCallback(
-    () => (tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY),
-    [],
-  );
