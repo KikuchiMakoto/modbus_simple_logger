@@ -10,7 +10,6 @@ type PyodideLike = {
 
 type WorkerIncomingMessage =
   | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; intSab: SharedArrayBuffer; verSab: SharedArrayBuffer }
-  | { type: 'setAiData'; aiRaw?: number[]; aiPhysical?: number[] }
   | { type: 'run'; code: string }
   | { type: 'interrupt' };
 
@@ -86,20 +85,6 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
       await initPromise;
     } catch (err) {
       postWorkerMessage({ type: 'error', message: (err as Error).message });
-    }
-    return;
-  }
-
-  if (message.type === 'setAiData') {
-    if (aiRawShare && message.aiRaw) {
-      message.aiRaw.forEach((value, index) => {
-        if (index < aiRawShare!.length) aiRawShare![index] = value;
-      });
-    }
-    if (aiPhysicalShare && message.aiPhysical) {
-      message.aiPhysical.forEach((value, index) => {
-        if (index < aiPhysicalShare!.length) aiPhysicalShare![index] = value;
-      });
     }
     return;
   }

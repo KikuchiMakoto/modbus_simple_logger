@@ -787,10 +787,10 @@ function App() {
       const dataReadyVersion = dataReadyVersionRef.current;
       if (aiRawShare && aiPhysicalShare && dataReadyVersion) {
         Atomics.store(dataReadyVersion, 0, 1);
-        aiRawShare.forEach((value, index) => {
+        aiRaw.forEach((value, index) => {
           aiRawShare[index] = value;
         });
-        aiPhysicalShare.forEach((value, index) => {
+        aiPhysical.forEach((value, index) => {
           aiPhysicalShare[index] = value;
         });
         Atomics.store(dataReadyVersion, 0, 0);

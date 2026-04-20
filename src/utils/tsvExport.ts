@@ -113,6 +113,9 @@ export class TsvWriter {
    * @param aiVoltage - Array of voltage AI channel values (mV/V for HX711, V for ADS1115)
    */
   async writeRow(timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]): Promise<void> {
+    this.assertChannelCount('raw', aiRaw);
+    this.assertChannelCount('phy', aiPhysical);
+    this.assertChannelCount('vlt', aiVoltage);
     const row = formatTsvRow(
       timestamp,
       aiRaw,
@@ -137,6 +140,14 @@ export class TsvWriter {
    */
   getFileName(): string {
     return this.fileName;
+  }
+
+  private assertChannelCount(name: 'raw' | 'phy' | 'vlt', values: number[]): void {
+    if (values.length !== this.channels) {
+      throw new Error(
+        `Invalid ${name} column count: expected ${this.channels}, got ${values.length}.`,
+      );
+    }
   }
 }
 
