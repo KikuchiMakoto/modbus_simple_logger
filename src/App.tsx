@@ -745,7 +745,7 @@ function App() {
       let aiSourceValues: number[] | null = null;
       if (pruneAndCountInputReadFailures() >= INPUT_READ_MAX_FAILURES_PER_WINDOW) {
         const retryLimitError = new Error(
-          `AI read retry rate exceeded (${INPUT_READ_MAX_FAILURES_PER_WINDOW}/min). Skipping AI read until failure rate decreases.`,
+          `AI read retry rate exceeded (${INPUT_READ_MAX_FAILURES_PER_WINDOW}/${Math.round(INPUT_READ_RETRY_WINDOW_MS / 1000)}s). Skipping AI read until failure rate decreases.`,
         );
         if (!firstError) firstError = retryLimitError;
       } else {
@@ -831,7 +831,7 @@ function App() {
     if (shouldWriteAo && clientRef.current) {
       if (pruneAndCountOutputHoldingFailures() >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
         const retryLimitError = new Error(
-          `AO write retry rate exceeded (${OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW}/min). Skipping AO write until failure rate decreases.`,
+          `AO write retry rate exceeded (${OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW}/${Math.round(OUTPUT_HOLDING_RETRY_WINDOW_MS / 1000)}s). Skipping AO write until failure rate decreases.`,
         );
         console.warn('[App] AO write skipped due to retry limit', {
           failureCount: outputHoldingFailureTimestampsRef.current.length,
@@ -1034,7 +1034,8 @@ function App() {
         slaveId,
         serialSettings,
         serial,
-        modbusPrecision === 'extended'
+        modbusPrecision === 'extended',
+        shouldUsePolyfill,
       );
       pendingClient = client;
       await client.connect();
@@ -1054,6 +1055,7 @@ function App() {
       clientRef.current = client;
       pendingClient = null;
       outputHoldingFailureTimestampsRef.current = [];
+      inputReadFailureTimestampsRef.current = [];
 
       setConnected(true);
       setAcquiring(true);
@@ -1112,6 +1114,8 @@ function App() {
       inputReadFailureTimestampsRef.current = [];
       outputHoldingFailureTimestampsRef.current = [];
       lastAiReadCompletedAtRef.current = 0;
+      displayUpdateChainRef.current = Promise.resolve();
+      saveUpdateChainRef.current = Promise.resolve();
       // Clear pending data points buffer
       pendingDataPoints.current = [];
       // Clear IndexedDB on disconnect
@@ -1132,7 +1136,7 @@ function App() {
   useEffect(() => {
     if (typeof serial.addEventListener !== 'function') return;
     const onSerialDisconnect = (event: Event) => {
-      const disconnectedPort = (event as SerialConnectionEvent).port;
+      const disconnectedPort = (event as { port?: SerialPort }).port;
       const connectedPort = clientRef.current?.getPort();
       if (!connectedPort) return;
       if (disconnectedPort && disconnectedPort !== connectedPort) return;

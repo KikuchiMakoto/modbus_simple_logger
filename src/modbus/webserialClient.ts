@@ -67,6 +67,7 @@ export class WebSerialModbusClient {
     },
     serialApi?: Serial,
     isExtendedPrecision = false,
+    isUsingPolyfillOverride?: boolean,
     verboseFrameLogging = false,
   ) {
     this.slaveId = slaveId;
@@ -75,7 +76,8 @@ export class WebSerialModbusClient {
     this.isExtendedPrecision = isExtendedPrecision;
     this.verboseFrameLogging = verboseFrameLogging;
     this.isUsingPolyfill =
-      typeof navigator === 'undefined' || !('serial' in navigator) || this.serialApi !== navigator.serial;
+      isUsingPolyfillOverride ??
+      (typeof navigator === 'undefined' || !('serial' in navigator) || !('requestPort' in navigator.serial));
     this.minMessageIntervalMs = this.calculateMinInterval();
     console.info(
       `${this.debugPrefix} initialized`,
