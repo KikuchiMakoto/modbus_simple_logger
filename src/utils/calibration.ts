@@ -3,7 +3,6 @@ import { readJsonCookie, writeJsonCookie } from './cookies';
 
 const AI_COOKIE_KEY = 'ai_calibration_v1';
 const INT16_MAX = 32767;
-const INT16_MIN = -32768;
 const WARNING_THRESHOLD = 0.8;
 const DANGER_THRESHOLD = 0.9;
 
@@ -31,12 +30,6 @@ export const getAiStatus = (raw: number): AiChannel['status'] => {
   if (ratio >= WARNING_THRESHOLD) return 'warning';
   return 'normal';
 };
-
-export const clampVoltage = (voltage: number): number =>
-  Math.max(0, Math.min(10, voltage));
-
-export const voltageToModbus = (voltage: number): number =>
-  Math.round(clampVoltage(voltage) * 1000);
 
 // HX711 (AI CH 0-7): raw → mV/V
 export const hx711RawToMvPerV = (raw: number): number =>
