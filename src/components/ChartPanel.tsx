@@ -1,4 +1,4 @@
-import { type CSSProperties, type ComponentType, useEffect, useMemo } from 'react';
+import { type CSSProperties, type ComponentType, useMemo } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
 import Plot from 'react-plotly.js';
 import { DataPoint } from '../types';
@@ -9,9 +9,9 @@ interface AxisOption {
 }
 
 interface ChartPanelProps {
-  title?: string;
   color: string;
   dataPoints: DataPoint[];
+  displayRevision: number;
   axisOptions: AxisOption[];
   xAxis: string;
   yAxis: string;
@@ -32,33 +32,37 @@ const isInteropDefaultExport = (
 ): value is { default: ComponentType<PlotProps> } =>
   typeof value === 'object' && value !== null && 'default' in value;
 
-// react-plotly.js can be returned as either the component itself or { default: component }
-// depending on CJS/ESM interop, which can otherwise cause React runtime error #130.
 const NormalizedPlot: ComponentType<PlotProps> = isInteropDefaultExport(Plot)
   ? Plot.default
   : Plot;
 
-function resolveAxisValue(point: DataPoint, key: string): number {
-  if (key === 'time') return point.timestamp;
-  if (key.startsWith('raw_')) {
-    const idx = Number(key.replace('raw_', ''));
-    return point.aiRaw[idx];
+type AxisDescriptor =
+  | { kind: 'time' }
+  | { kind: 'raw'; index: number }
+  | { kind: 'phy'; index: number }
+  | { kind: 'vlt'; index: number };
+
+function parseAxisKey(key: string): AxisDescriptor {
+  if (key === 'time') return { kind: 'time' };
+  if (key.startsWith('raw_')) return { kind: 'raw', index: Number(key.slice(4)) };
+  if (key.startsWith('phy_')) return { kind: 'phy', index: Number(key.slice(4)) };
+  if (key.startsWith('vlt_')) return { kind: 'vlt', index: Number(key.slice(4)) };
+  return { kind: 'time' };
+}
+
+function resolveAxisValue(point: DataPoint, desc: AxisDescriptor): number {
+  switch (desc.kind) {
+    case 'time': return point.timestamp;
+    case 'raw': return point.aiRaw[desc.index];
+    case 'phy': return point.aiPhysical[desc.index];
+    case 'vlt': return point.aiVoltage[desc.index] ?? 0;
   }
-  if (key.startsWith('phy_')) {
-    const idx = Number(key.replace('phy_', ''));
-    return point.aiPhysical[idx];
-  }
-  if (key.startsWith('vlt_')) {
-    const idx = Number(key.replace('vlt_', ''));
-    return point.aiVoltage[idx] ?? 0;
-  }
-  return 0;
 }
 
 export function ChartPanel({
-  title,
   color,
   dataPoints,
+  displayRevision,
   axisOptions,
   xAxis,
   yAxis,
@@ -66,15 +70,14 @@ export function ChartPanel({
   onXAxisChange,
   onYAxisChange,
 }: ChartPanelProps) {
-  const isWebGLAvailable = useMemo(() => {
+  const xDesc = useMemo(() => parseAxisKey(xAxis), [xAxis]);
+  const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
+
+  useMemo(() => {
     if (typeof document === 'undefined') return false;
     const canvas = document.createElement('canvas');
     return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
   }, []);
-
-  useEffect(() => {
-    console.log(`GPU(WebGL): ${isWebGLAvailable ? 'ON' : 'OFF'}`);
-  }, [isWebGLAvailable]);
 
   const palette = useMemo(
     () =>
@@ -95,8 +98,8 @@ export function ChartPanel({
   );
 
   const plotData = useMemo(() => {
-    const xData = dataPoints.map((p) => resolveAxisValue(p, xAxis));
-    const yData = dataPoints.map((p) => resolveAxisValue(p, yAxis));
+    const xData = dataPoints.map((p) => resolveAxisValue(p, xDesc));
+    const yData = dataPoints.map((p) => resolveAxisValue(p, yDesc));
 
     return [
       {
@@ -108,10 +111,7 @@ export function ChartPanel({
         name: `${yAxis} vs ${xAxis}`,
       },
     ];
-  }, [xAxis, yAxis, dataPoints, color]);
-
-  // Extract datarevision value so plotLayout memo doesn't depend on the entire array
-  const dataRevision = dataPoints.length > 0 ? dataPoints[dataPoints.length - 1].timestamp : 0;
+  }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints]);
 
   const plotLayout = useMemo(
     () => ({
@@ -130,9 +130,9 @@ export function ChartPanel({
       },
       margin: { t: 30, r: 30, b: 50, l: 50 },
       uirevision: `${xAxis}-${yAxis}`,
-      datarevision: dataRevision,
+      datarevision: displayRevision,
     }),
-    [xAxis, yAxis, palette, dataRevision],
+    [xAxis, yAxis, palette, displayRevision],
   );
 
   const plotConfig = useMemo(
@@ -140,7 +140,6 @@ export function ChartPanel({
       displayModeBar: true,
       responsive: true,
       displaylogo: false,
-      // Optimize rendering performance
       scrollZoom: true,
       doubleClick: 'reset' as const,
     }),
@@ -150,16 +149,6 @@ export function ChartPanel({
   return (
     <section className="card space-y-1.5">
       <div className="flex items-center gap-2">
-        {title ? (
-          <h2 className={`text-lg font-semibold ${
-            color === '#34d399' ? 'text-emerald-400' :
-            color === '#60a5fa' ? 'text-blue-400' :
-            color === '#f59e0b' ? 'text-amber-400' :
-            'text-pink-400'
-          }`}>
-            {title}
-          </h2>
-        ) : null}
         <span className="text-xs text-slate-400">X:</span>
         <select
           value={xAxis}

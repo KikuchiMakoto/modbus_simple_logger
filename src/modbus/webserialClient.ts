@@ -47,8 +47,8 @@ export class WebSerialModbusClient {
   private isExtendedPrecision = false;
   private readonly isUsingPolyfill: boolean;
   private readonly debugPrefix = '[WebSerialModbusClient]';
-  /** Enable detailed TX/RX hex dump logs for deep troubleshooting. */
   private readonly verboseFrameLogging: boolean;
+  private disconnecting = false;
 
   /**
    * @param slaveId - Modbus slave ID.
@@ -195,32 +195,31 @@ export class WebSerialModbusClient {
   }
 
   async disconnect() {
+    if (this.disconnecting) return;
+    this.disconnecting = true;
     console.info(`${this.debugPrefix} disconnect() start`);
     try {
-      // Release reader and writer
       if (this.reader) {
         console.info(`${this.debugPrefix} cancelling reader`);
         await this.reader.cancel();
         this.reader.releaseLock();
-        this.reader = null;
       }
       if (this.writer) {
         console.info(`${this.debugPrefix} closing writer`);
         await this.writer.close();
-        this.writer = null;
       }
-      // Close port
       if (this.port) {
         console.info(`${this.debugPrefix} closing port`);
         await this.port.close();
-        this.port = null;
       }
       console.info(`${this.debugPrefix} disconnect() complete`);
     } catch (err) {
       console.error('Error during disconnect:', err);
+    } finally {
       this.port = null;
       this.reader = null;
       this.writer = null;
+      this.disconnecting = false;
     }
   }
 
@@ -411,6 +410,13 @@ export class WebSerialModbusClient {
 
       // Convert to DataView
       const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
+      if (buffer.length > expectedLength) {
+        console.warn(`${this.debugPrefix} transfer() excess bytes discarded`, {
+          expected: expectedLength,
+          received: buffer.length,
+          excess: buffer.length - expectedLength,
+        });
+      }
       console.debug(`${this.debugPrefix} transfer() response assembled`, {
         responseLength: responseArray.length,
         ...(this.verboseFrameLogging ? { rxHex: this.toHexString(responseArray) } : {}),

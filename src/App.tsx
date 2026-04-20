@@ -101,12 +101,13 @@ const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 
 const computeSensorValues = (raw: number, idx: number) => {
   if (idx < 8) {
-    // HX711 (AI 0-7)
     return { voltage: hx711RawToMvPerV(raw), microStrain: hx711RawToMicroStrain(raw) };
   }
-  // ADS1115 (AI 8-15)
   return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
 };
+
+const computeVoltage = (raw: number, idx: number): number =>
+  idx < 8 ? hx711RawToMvPerV(raw) : ads1115RawToVolt(raw);
 
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
@@ -247,7 +248,6 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
   const [status, setStatus] = useState('Disconnected');
-  const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
   const [tsvWriter, setTsvWriter] = useState<TsvWriter | null>(null);
   const [activeSaveFilename, setActiveSaveFilename] = useState('');
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
@@ -271,13 +271,13 @@ function App() {
   );
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
-  const aiPhysicalSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
   const scriptExecutingRef = useRef(false);
   const pyWorkerRef = useRef<Worker | null>(null);
   const interruptBufferRef = useRef<Uint8Array | null>(null);
   const aiRawShareRef = useRef<Float64Array | null>(null);
   const aiPhysicalShareRef = useRef<Float64Array | null>(null);
+  const dataReadyVersionRef = useRef<Int32Array | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
   const lastSentAoRawRef = useRef<number[] | null>(null);
@@ -290,7 +290,13 @@ function App() {
   const tsvWriterRef = useRef<TsvWriter | null>(null);
   const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const saveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const displayUpdateCountRef = useRef(0);
+  const saveUpdateCountRef = useRef(0);
+  const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
+  const connectInProgressRef = useRef(false);
+  const dataBufferRef = useRef<DataPoint[]>([]);
+  const [displayRevision, setDisplayRevision] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
@@ -337,10 +343,6 @@ function App() {
   }, [aiCalibration]);
 
   useEffect(() => {
-    aiPhysicalSourceRef.current = aiChannels.map((ch) => ch.physical);
-  }, [aiChannels]);
-
-  useEffect(() => {
     writeJsonCookie(CHART_AXES_COOKIE_KEY, {
       chart1: { x: chart1X, y: chart1Y },
       chart2: { x: chart2X, y: chart2Y },
@@ -362,22 +364,16 @@ function App() {
   const flushPendingDataPoints = useCallback(() => {
     if (pendingDataPoints.current.length === 0) return;
 
-    const pointsToAdd = [...pendingDataPoints.current];
+    const pointsToAdd = pendingDataPoints.current;
     pendingDataPoints.current = [];
     const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
 
-    setDataPoints((prev) => {
-      const currentCount = prev.length;
-      const pointsToAddCount = pointsToAdd.length;
-      const totalAfterAdd = currentCount + pointsToAddCount;
-
-      if (totalAfterAdd > displayLimit) {
-        const pointsToRemove = totalAfterAdd - displayLimit;
-        return [...prev.slice(pointsToRemove), ...pointsToAdd];
-      }
-
-      return [...prev, ...pointsToAdd];
-    });
+    const buffer = dataBufferRef.current;
+    for (const p of pointsToAdd) buffer.push(p);
+    if (buffer.length > displayLimit) {
+      dataBufferRef.current = buffer.slice(buffer.length - displayLimit);
+    }
+    setDisplayRevision((v) => v + 1);
   }, []);
 
   const syncAoChannels = useCallback((values: number[]) => {
@@ -443,10 +439,12 @@ function App() {
     const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
     const phySab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
     const intSab = new SharedArrayBuffer(1);
+    const verSab = new SharedArrayBuffer(4);
 
     aiRawShareRef.current = new Float64Array(rawSab);
     aiPhysicalShareRef.current = new Float64Array(phySab);
     interruptBufferRef.current = new Uint8Array(intSab);
+    dataReadyVersionRef.current = new Int32Array(verSab);
 
     const worker = new Worker(new URL('./pyodideWorker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (event: MessageEvent) => {
@@ -485,6 +483,7 @@ function App() {
       rawSab,
       phySab,
       intSab,
+      verSab,
     });
 
     pyWorkerRef.current = worker;
@@ -614,14 +613,14 @@ function App() {
     };
 
     try {
-      // Save to IndexedDB
       await dataStorage.addDataPoint(dataPoint);
 
-      const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
-      await dataStorage.keepLatestPoints(displayLimit);
+      keepLatestCountRef.current++;
+      if (keepLatestCountRef.current % 10 === 0) {
+        const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
+        await dataStorage.keepLatestPoints(displayLimit);
+      }
 
-      // Add new point to pending buffer for incremental chart update
-      // This updates the chart without accessing IndexedDB
       pendingDataPoints.current.push({
         timestamp,
         aiRaw,
@@ -629,16 +628,13 @@ function App() {
         aiVoltage,
       });
 
-      // Batch update: flush every 5 points or after 100ms
       if (pendingDataPoints.current.length >= 5) {
-        // Clear any pending timer
         if (batchUpdateTimer.current !== undefined) {
           window.clearTimeout(batchUpdateTimer.current);
           batchUpdateTimer.current = undefined;
         }
         flushPendingDataPoints();
       } else if (batchUpdateTimer.current === undefined) {
-        // Schedule flush after 100ms if not already scheduled
         batchUpdateTimer.current = window.setTimeout(() => {
           batchUpdateTimer.current = undefined;
           flushPendingDataPoints();
@@ -647,7 +643,6 @@ function App() {
     } catch (err) {
       console.error('Error updating data history:', err);
       setStatus(`IndexedDB error: ${(err as Error).message}`);
-      // Don't throw - allow polling to continue
     }
   }, [flushPendingDataPoints]);
 
@@ -692,6 +687,10 @@ function App() {
       .catch((err) => {
         console.error('[App] display update event failed', err);
       });
+    displayUpdateCountRef.current++;
+    if (displayUpdateCountRef.current % 100 === 0) {
+      displayUpdateChainRef.current = Promise.resolve();
+    }
   }, [updateDataHistory]);
 
   const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
@@ -714,6 +713,10 @@ function App() {
         console.error('[App] save update event failed', err);
         setStatus(`TSV write error: ${(err as Error).message}`);
       });
+    saveUpdateCountRef.current++;
+    if (saveUpdateCountRef.current % 100 === 0) {
+      saveUpdateChainRef.current = Promise.resolve();
+    }
   }, []);
 
   const pollOnce = useCallback(async () => {
@@ -778,17 +781,19 @@ function App() {
       const aiPhysical = aiSourceValues.map((value, idx) =>
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
-      const aiVoltage = aiRaw.map((raw, idx) => computeSensorValues(raw, idx).voltage);
-      aiPhysicalSourceRef.current = aiPhysical;
+      const aiVoltage = aiRaw.map((raw, idx) => computeVoltage(raw, idx));
       const aiRawShare = aiRawShareRef.current;
       const aiPhysicalShare = aiPhysicalShareRef.current;
-      if (aiRawShare && aiPhysicalShare) {
-        aiRaw.forEach((value, index) => {
+      const dataReadyVersion = dataReadyVersionRef.current;
+      if (aiRawShare && aiPhysicalShare && dataReadyVersion) {
+        Atomics.store(dataReadyVersion, 0, 1);
+        aiRawShare.forEach((value, index) => {
           aiRawShare[index] = value;
         });
-        aiPhysical.forEach((value, index) => {
+        aiPhysicalShare.forEach((value, index) => {
           aiPhysicalShare[index] = value;
         });
+        Atomics.store(dataReadyVersion, 0, 0);
       }
 
       await waitAfterTimestamp(lastAiReadCompletedAtRef.current, MIN_AI_TO_AO_INTERVAL_MS);
@@ -992,6 +997,8 @@ function App() {
   }, [scheduleImmediatePoll]);
 
   const handleConnect = async () => {
+    if (connectInProgressRef.current || disconnectInProgressRef.current) return;
+    connectInProgressRef.current = true;
     console.info('[App] handleConnect start', {
       slaveId,
       serialSettings,
@@ -1011,10 +1018,9 @@ function App() {
 
       // Clear IndexedDB for new session
       await dataStorage.clearAllData();
-      setDataPoints([]);
+      dataBufferRef.current = [];
+      setDisplayRevision((v) => v + 1);
 
-      // Use WebSerialModbusClient with the selected Serial API (native or polyfill)
-      // On Android and unsupported platforms, this will use web-serial-polyfill with WebUSB
       const client = new WebSerialModbusClient(
         slaveId,
         serialSettings,
@@ -1046,10 +1052,10 @@ function App() {
       setAcquiring(true);
       setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
       await requestWakeLock();
+      keepLatestCountRef.current = 0;
       console.info('[App] handleConnect complete');
     } catch (err) {
       console.error('[App] handleConnect failed', err);
-      // Clean up on error
       if (clientRef.current) {
         await clientRef.current.disconnect();
         clientRef.current = null;
@@ -1066,6 +1072,8 @@ function App() {
         return;
       }
       setStatus((err as Error).message);
+    } finally {
+      connectInProgressRef.current = false;
     }
   };
 
@@ -1101,11 +1109,10 @@ function App() {
       lastAiReadCompletedAtRef.current = 0;
       displayUpdateChainRef.current = Promise.resolve();
       saveUpdateChainRef.current = Promise.resolve();
-      // Clear pending data points buffer
       pendingDataPoints.current = [];
-      // Clear IndexedDB on disconnect
       await dataStorage.clearAllData();
-      setDataPoints([]);
+      dataBufferRef.current = [];
+      setDisplayRevision((v) => v + 1);
       console.info('[App] handleDisconnect data/session cleanup complete');
     } catch (err) {
       console.error('Error during disconnect:', err);
@@ -1207,11 +1214,10 @@ function App() {
       // Clear pending data points buffer
       pendingDataPoints.current = [];
 
-      // Clear chart data and IndexedDB for fresh start
       await dataStorage.clearAllData();
-      setDataPoints([]);
+      dataBufferRef.current = [];
+      setDisplayRevision((v) => v + 1);
 
-      // Update both state and ref
       setTsvWriter(writer);
       tsvWriterRef.current = writer;
       setActiveSaveFilename(writer.getFileName());
@@ -1251,9 +1257,9 @@ function App() {
       // Clear pending data points buffer
       pendingDataPoints.current = [];
 
-      // Clear chart data and IndexedDB
       await dataStorage.clearAllData();
-      setDataPoints([]);
+      dataBufferRef.current = [];
+      setDisplayRevision((v) => v + 1);
 
       setStatus('Stopped saving');
     }
@@ -1449,7 +1455,8 @@ function App() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <ChartPanel
           color="#34d399"
-          dataPoints={dataPoints}
+          dataPoints={dataBufferRef.current}
+          displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart1X}
           yAxis={chart1Y}
@@ -1459,7 +1466,8 @@ function App() {
         />
         <ChartPanel
           color="#60a5fa"
-          dataPoints={dataPoints}
+          dataPoints={dataBufferRef.current}
+          displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart2X}
           yAxis={chart2Y}

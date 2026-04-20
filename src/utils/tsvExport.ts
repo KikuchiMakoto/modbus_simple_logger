@@ -128,17 +128,6 @@ export class TsvWriter {
    * Write multiple data rows to the file
    * @param dataPoints - Array of data points to write
    */
-  async writeRows(
-    dataPoints: Array<{ timestamp: number; aiRaw: number[]; aiPhysical: number[]; aiVoltage: number[] }>
-  ): Promise<void> {
-    for (const point of dataPoints) {
-      await this.writeRow(point.timestamp, point.aiRaw, point.aiPhysical, point.aiVoltage);
-    }
-  }
-
-  /**
-   * Close the file stream
-   */
   async close(): Promise<void> {
     await this.stream.close();
   }
@@ -146,10 +135,6 @@ export class TsvWriter {
   /**
    * Get the underlying stream
    */
-  getStream(): FileSystemWritableFileStream {
-    return this.stream;
-  }
-
   getFileName(): string {
     return this.fileName;
   }

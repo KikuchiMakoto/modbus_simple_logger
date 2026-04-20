@@ -9,7 +9,7 @@ type PyodideLike = {
 };
 
 type WorkerIncomingMessage =
-  | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; intSab: SharedArrayBuffer }
+  | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; intSab: SharedArrayBuffer; verSab: SharedArrayBuffer }
   | { type: 'setAiData'; aiRaw?: number[]; aiPhysical?: number[] }
   | { type: 'run'; code: string }
   | { type: 'interrupt' };
@@ -20,6 +20,7 @@ let running = false;
 let aiRawShare: Float64Array | null = null;
 let aiPhysicalShare: Float64Array | null = null;
 let interruptBuffer: Uint8Array | null = null;
+let versionBuffer: Int32Array | null = null;
 
 const postWorkerMessage = (message: Record<string, unknown>) => {
   self.postMessage(message);
@@ -33,15 +34,24 @@ const readAiValue = (buffer: Float64Array | null, ch: number): number => {
 
 const readAiAll = (buffer: Float64Array | null): number[] => {
   if (!buffer) return [];
+  if (!versionBuffer) return Array.from(buffer);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const v1 = Atomics.load(versionBuffer, 0);
+    if (v1 !== 0) continue;
+    const result = Array.from(buffer);
+    const v2 = Atomics.load(versionBuffer, 0);
+    if (v1 === v2) return result;
+  }
   return Array.from(buffer);
 };
 
-const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayBuffer, intSab: SharedArrayBuffer) => {
+const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayBuffer, intSab: SharedArrayBuffer, verSab: SharedArrayBuffer) => {
   postWorkerMessage({ type: 'status', message: 'Initializing Pyodide...' });
 
   aiRawShare = new Float64Array(rawSab);
   aiPhysicalShare = new Float64Array(phySab);
   interruptBuffer = new Uint8Array(intSab);
+  versionBuffer = new Int32Array(verSab);
 
   pyodide = await loadPyodide({
     indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/',
@@ -70,7 +80,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
 
   if (message.type === 'init') {
     if (!initPromise) {
-      initPromise = initializePyodide(message.rawSab, message.phySab, message.intSab);
+      initPromise = initializePyodide(message.rawSab, message.phySab, message.intSab, message.verSab);
     }
     try {
       await initPromise;
