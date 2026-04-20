@@ -45,6 +45,7 @@ export class WebSerialModbusClient {
   private lastTransferTime = 0;
   private minMessageIntervalMs: number;
   private isExtendedPrecision = false;
+  private readonly isUsingPolyfill: boolean;
   private readonly debugPrefix = '[WebSerialModbusClient]';
   /** Enable detailed TX/RX hex dump logs for deep troubleshooting. */
   private readonly verboseFrameLogging: boolean;
@@ -66,6 +67,7 @@ export class WebSerialModbusClient {
     },
     serialApi?: Serial,
     isExtendedPrecision = false,
+    isUsingPolyfillOverride?: boolean,
     verboseFrameLogging = false,
   ) {
     this.slaveId = slaveId;
@@ -73,6 +75,9 @@ export class WebSerialModbusClient {
     this.serialApi = serialApi || navigator.serial;
     this.isExtendedPrecision = isExtendedPrecision;
     this.verboseFrameLogging = verboseFrameLogging;
+    this.isUsingPolyfill =
+      isUsingPolyfillOverride ??
+      (typeof navigator === 'undefined' || !('serial' in navigator) || !('requestPort' in navigator.serial));
     this.minMessageIntervalMs = this.calculateMinInterval();
     console.info(
       `${this.debugPrefix} initialized`,
@@ -80,6 +85,7 @@ export class WebSerialModbusClient {
         slaveId: this.slaveId,
         serialSettings: this.serialSettings,
         isExtendedPrecision: this.isExtendedPrecision,
+        isUsingPolyfill: this.isUsingPolyfill,
         verboseFrameLogging: this.verboseFrameLogging,
         minMessageIntervalMs: this.minMessageIntervalMs,
       },
@@ -218,6 +224,10 @@ export class WebSerialModbusClient {
     }
   }
 
+  getPort(): SerialPort | null {
+    return this.port;
+  }
+
   private ensureReady() {
     if (!this.port || !this.reader || !this.writer) {
       throw new Error('Device not connected');
@@ -244,10 +254,11 @@ export class WebSerialModbusClient {
    * Drain and discard stale bytes from receive buffer.
    * Uses a short read window to avoid blocking regular polling.
    */
-  private async flushReceiveBuffer(maxFlushMs = 30): Promise<void> {
+  private async flushReceiveBuffer(maxFlushMs?: number): Promise<void> {
     if (!this.reader || !this.port?.readable) {
       return;
     }
+    const effectiveMaxFlushMs = maxFlushMs ?? (this.isUsingPolyfill ? 80 : 30);
 
     const reader = this.reader;
     const start = Date.now();
@@ -255,10 +266,10 @@ export class WebSerialModbusClient {
 
     while (true) {
       const elapsedMs = Date.now() - start;
-      if (elapsedMs >= maxFlushMs) {
+      if (elapsedMs >= effectiveMaxFlushMs) {
         break;
       }
-      const remainingMs = maxFlushMs - elapsedMs;
+      const remainingMs = effectiveMaxFlushMs - elapsedMs;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const readResult = await Promise.race<ReadableStreamReadResult<Uint8Array> | null>([
         reader.read(),
@@ -288,9 +299,13 @@ export class WebSerialModbusClient {
           } catch (getReaderError) {
             console.warn(`${this.debugPrefix} flushReceiveBuffer() getReader failed`, getReaderError);
             this.reader = null;
+            await this.disconnect();
+            return;
           }
         } else {
           this.reader = null;
+          await this.disconnect();
+          return;
         }
         break;
       }
