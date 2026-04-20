@@ -404,48 +404,33 @@ function App() {
     return Math.min(10000, Math.max(0, milliVolt));
   }, []);
 
-  const getAiRaw = useCallback((ch: number): number | number[] => {
-    if (ch === -1) return [...aiRawSourceRef.current];
-    if (!Number.isInteger(ch) || ch < 0 || ch >= AI_CHANNELS) return 0;
-    return aiRawSourceRef.current[ch] ?? 0;
-  }, []);
-
-  const getAiPhysical = useCallback((ch: number): number | number[] => {
-    if (ch === -1) return [...aiPhysicalSourceRef.current];
-    if (!Number.isInteger(ch) || ch < 0 || ch >= AI_CHANNELS) return 0;
-    return aiPhysicalSourceRef.current[ch] ?? 0;
+  const applyAoRawValues = useCallback((nextRaw: number[]) => {
+    aoRawSourceRef.current = nextRaw;
+    setAoChannels((prev) =>
+      prev.map((channel, idx) => {
+        const value = nextRaw[idx] ?? channel.raw;
+        return { ...channel, raw: value, physical: value };
+      }),
+    );
   }, []);
 
   const setAo = useCallback((ch: number, data: number) => {
     if (!Number.isInteger(ch) || ch < 0 || ch >= AO_CHANNELS) return;
     const nextRaw = [...aoRawSourceRef.current];
     nextRaw[ch] = clampAoVoltageToMilliVolt(data);
-    aoRawSourceRef.current = nextRaw;
-    setAoChannels((prev) =>
-      prev.map((channel, idx) => {
-        const value = nextRaw[idx] ?? channel.raw;
-        return { ...channel, raw: value, physical: value };
-      }),
-    );
-  }, [clampAoVoltageToMilliVolt]);
+    applyAoRawValues(nextRaw);
+  }, [applyAoRawValues, clampAoVoltageToMilliVolt]);
 
-  const setAoAll = useCallback((data: unknown) => {
-    if (!Array.isArray(data)) return;
-    const nextRaw = [...aoRawSourceRef.current];
-    const count = Math.min(data.length, AO_CHANNELS);
-    for (let idx = 0; idx < count; idx += 1) {
-      const voltage = Number(data[idx]);
-      if (!Number.isFinite(voltage)) continue;
-      nextRaw[idx] = clampAoVoltageToMilliVolt(voltage);
-    }
-    aoRawSourceRef.current = nextRaw;
-    setAoChannels((prev) =>
-      prev.map((channel, idx) => {
-        const value = nextRaw[idx] ?? channel.raw;
-        return { ...channel, raw: value, physical: value };
+  const applyCalibrationToChannels = useCallback(
+    (channels: AiChannel[], calibration: AiCalibration[]) =>
+      channels.map((ch, idx) => {
+        const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
+        const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
+        const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+        return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
       }),
-    );
-  }, [clampAoVoltageToMilliVolt]);
+    [],
+  );
 
   const ensureWorkerReady = useCallback((): Worker => {
     if (pyWorkerRef.current) return pyWorkerRef.current;
@@ -1161,15 +1146,7 @@ function App() {
     setAiCalibration((prev) => {
       const next = [...prev];
       next[idx] = { ...next[idx], [key]: value };
-      setAiChannels((chs) =>
-        chs.map((ch, cIdx) => {
-          if (cIdx !== idx) return ch;
-          const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
-          const physical = aiToPhysical(rawValue, next[idx]);
-          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-          return { ...ch, physical, status: getAiStatus(ch.raw), voltage, microStrain };
-        }),
-      );
+      setAiChannels((chs) => applyCalibrationToChannels(chs, next));
       return next;
     });
   };
@@ -1214,14 +1191,7 @@ function App() {
       }
 
       setAiCalibration(loadedCalibration);
-      setAiChannels((prev) =>
-        prev.map((ch, idx) => {
-          const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
-          const physical = aiToPhysical(rawValue, loadedCalibration[idx]);
-          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-          return { ...ch, physical, status: getAiStatus(ch.raw), voltage, microStrain };
-        }),
-      );
+      setAiChannels((prev) => applyCalibrationToChannels(prev, loadedCalibration));
       setStatus('Calibration loaded successfully');
     } catch (err) {
       setStatus((err as Error).message);
@@ -1326,6 +1296,7 @@ function App() {
                 <p className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / Points: {savePointCount}
                 </p>
+                <p className="tabular-nums">Status: {status}</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
