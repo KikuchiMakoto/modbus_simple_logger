@@ -54,8 +54,9 @@ function isMobileDevice(): boolean {
 // Select which Serial API to use
 // On mobile devices, always use polyfill for better compatibility
 // On desktop, use polyfill only if native Web Serial API is not available
-const serial: Serial = (isMobileDevice() || !('serial' in navigator)) ? serialPolyfill as unknown as Serial : navigator.serial;
-const isUsingPolyfill = isMobileDevice() || !('serial' in navigator);
+const shouldUsePolyfill = isMobileDevice() || !('serial' in navigator);
+const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial : navigator.serial;
+const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
@@ -90,6 +91,11 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
 const AI_START_REGISTER = 0;
 const AI_FLOAT_START_REGISTER = 5000;
 const AO_START_REGISTER = 0;
+const RETRY_DELAY_MS = 10;
+const MIN_AI_TO_AO_INTERVAL_MS = 10;
+const MIN_AI_TO_NEXT_AI_INTERVAL_MS = 100;
+const INPUT_READ_RETRY_WINDOW_MS = 60_000;
+const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
 const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
 const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 
@@ -276,10 +282,15 @@ function App() {
   const pollingInProgressRef = useRef(false);
   const lastSentAoRawRef = useRef<number[] | null>(null);
   const outputHoldingFailureTimestampsRef = useRef<number[]>([]);
+  const inputReadFailureTimestampsRef = useRef<number[]>([]);
+  const lastAiReadCompletedAtRef = useRef(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
+  const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const saveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const disconnectInProgressRef = useRef(false);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
@@ -655,22 +666,127 @@ function App() {
     }
   }, [flushPendingDataPoints]);
 
+  const waitMs = useCallback(async (ms: number) => {
+    if (ms <= 0) return;
+    await new Promise((resolve) => window.setTimeout(resolve, ms));
+  }, []);
+
+  const waitAfterTimestamp = useCallback(async (timestampMs: number, minimumDelayMs: number) => {
+    if (timestampMs <= 0 || minimumDelayMs <= 0) return;
+    const elapsed = Date.now() - timestampMs;
+    if (elapsed < minimumDelayMs) {
+      await waitMs(minimumDelayMs - elapsed);
+    }
+  }, [waitMs]);
+
+  const pruneFailuresInWindow = useCallback((timestampsRef: { current: number[] }, windowMs: number) => {
+    const now = Date.now();
+    timestampsRef.current = timestampsRef.current.filter((timestamp) => now - timestamp < windowMs);
+    return timestampsRef.current.length;
+  }, []);
+
+  const enqueueDisplayUpdate = useCallback((aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
+    displayUpdateChainRef.current = displayUpdateChainRef.current
+      .then(async () => {
+        setAiChannels((prev) =>
+          prev.map((ch, idx) => {
+            const rawValue = aiRaw[idx] ?? ch.raw;
+            const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+            return {
+              ...ch,
+              raw: rawValue,
+              physical: aiPhysical[idx] ?? ch.physical,
+              status: getAiStatus(rawValue),
+              voltage,
+              microStrain,
+            };
+          }),
+        );
+        await updateDataHistory(aiRaw, aiPhysical, aiVoltage);
+      })
+      .catch((err) => {
+        console.error('[App] display update event failed', err);
+      });
+  }, [updateDataHistory]);
+
+  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
+    saveUpdateChainRef.current = saveUpdateChainRef.current
+      .then(async () => {
+        const writer = tsvWriterRef.current;
+        if (!writer) return;
+        try {
+          await writer.writeRow(timestamp, aiRaw, aiPhysical, aiVoltage);
+          setSavePointCount((prev) => prev + 1);
+        } catch (err) {
+          if (err instanceof TypeError && (err as Error).message.includes('closing')) {
+            console.warn('Stream is closing, skipping write');
+            return;
+          }
+          throw err;
+        }
+      })
+      .catch((err) => {
+        console.error('[App] save update event failed', err);
+        setStatus(`TSV write error: ${(err as Error).message}`);
+      });
+  }, []);
+
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     let firstError: Error | null = null;
-    const pruneAndCountOutputHoldingFailures = () => {
-      const now = Date.now();
-      outputHoldingFailureTimestampsRef.current = outputHoldingFailureTimestampsRef.current.filter(
-        (timestamp) => now - timestamp < OUTPUT_HOLDING_RETRY_WINDOW_MS,
-      );
-      return outputHoldingFailureTimestampsRef.current.length;
-    };
+    let displayEventPayload: { aiRaw: number[]; aiPhysical: number[]; aiVoltage: number[]; timestamp: number } | null = null;
+    const pruneAndCountOutputHoldingFailures = () =>
+      pruneFailuresInWindow(outputHoldingFailureTimestampsRef, OUTPUT_HOLDING_RETRY_WINDOW_MS);
+    const pruneAndCountInputReadFailures = () =>
+      pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
     try {
       const effectivePrecision: 'normal' | 'extended' = modbusPrecision;
-
-      const aiSourceValues = effectivePrecision === 'extended'
-        ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
-        : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
+      await waitAfterTimestamp(lastAiReadCompletedAtRef.current, MIN_AI_TO_NEXT_AI_INTERVAL_MS);
+      let aiSourceValues: number[] | null = null;
+      if (pruneAndCountInputReadFailures() >= INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+        const retryLimitError = new Error(
+          `AI read retry rate exceeded (${INPUT_READ_MAX_FAILURES_PER_WINDOW}/min). Skipping AI read until failure rate decreases.`,
+        );
+        if (!firstError) firstError = retryLimitError;
+      } else {
+        try {
+          aiSourceValues = effectivePrecision === 'extended'
+            ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
+            : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
+        } catch (readError) {
+          inputReadFailureTimestampsRef.current.push(Date.now());
+          const normalizedReadError =
+            readError instanceof Error ? readError : new Error(String(readError));
+          console.warn('[App] AI read failed; retrying once', normalizedReadError);
+          await waitMs(RETRY_DELAY_MS);
+          if (pruneAndCountInputReadFailures() >= INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+            if (!firstError) {
+              firstError = new Error(
+                `Failed to read AI Input Registers: ${normalizedReadError.message} (retry rate limit reached)`,
+              );
+            }
+          } else {
+            try {
+              aiSourceValues = effectivePrecision === 'extended'
+                ? await clientRef.current.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
+                : await clientRef.current.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
+            } catch (retryReadError) {
+              inputReadFailureTimestampsRef.current.push(Date.now());
+              const normalizedRetryReadError =
+                retryReadError instanceof Error ? retryReadError : new Error(String(retryReadError));
+              if (!firstError) {
+                firstError = new Error(
+                  `Failed to read AI Input Registers after retry: ${normalizedRetryReadError.message}`,
+                );
+              }
+            }
+          }
+        }
+      }
+      if (!aiSourceValues) {
+        throw firstError ?? new Error('AI read failed');
+      }
+      lastAiReadCompletedAtRef.current = Date.now();
 
       aiRawSourceRef.current = aiSourceValues;
       const aiRaw = aiSourceValues;
@@ -690,40 +806,7 @@ function App() {
         });
       }
 
-      setAiChannels((prev) =>
-        prev.map((ch, idx) => {
-          const rawValue = aiRaw[idx] ?? ch.raw;
-          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-          return {
-            ...ch,
-            raw: rawValue,
-            physical: aiPhysical[idx] ?? ch.physical,
-            status: getAiStatus(rawValue),
-            voltage,
-            microStrain,
-          };
-        }),
-      );
-
-      // Wait for data history update to complete
-      await updateDataHistory(aiRaw, aiPhysical, aiVoltage);
-
-      // Write to TSV file if recording is active
-      // Use ref to avoid race condition when closing the writer
-      const writer = tsvWriterRef.current;
-      if (writer) {
-        try {
-          await writer.writeRow(Date.now(), aiRaw, aiPhysical, aiVoltage);
-          setSavePointCount((prev) => prev + 1);
-        } catch (err) {
-          // Ignore errors if stream is closing
-          if (err instanceof TypeError && (err as Error).message.includes('closing')) {
-            console.warn('Stream is closing, skipping write');
-          } else {
-            throw err;
-          }
-        }
-      }
+      await waitAfterTimestamp(lastAiReadCompletedAtRef.current, MIN_AI_TO_AO_INTERVAL_MS);
 
       console.debug('[App] pollOnce success', {
         effectivePrecision,
@@ -732,6 +815,12 @@ function App() {
         aoCount: aoRawSourceRef.current.length,
         aoPreview: aoRawSourceRef.current.slice(0, 10),
       });
+      displayEventPayload = {
+        aiRaw,
+        aiPhysical,
+        aiVoltage,
+        timestamp: Date.now(),
+      };
     } catch (err) {
       console.error('[App] pollOnce failed', err);
       firstError = err instanceof Error ? err : new Error(String(err));
@@ -757,6 +846,7 @@ function App() {
           const normalizedWriteError =
             writeError instanceof Error ? writeError : new Error(String(writeError));
           console.warn('[App] AO write failed; retrying once', normalizedWriteError);
+          await waitMs(RETRY_DELAY_MS);
 
           const failureCount = pruneAndCountOutputHoldingFailures();
           if (failureCount >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
@@ -784,12 +874,34 @@ function App() {
       }
     }
 
+    if (displayEventPayload) {
+      enqueueDisplayUpdate(
+        displayEventPayload.aiRaw,
+        displayEventPayload.aiPhysical,
+        displayEventPayload.aiVoltage,
+      );
+      enqueueSaveUpdate(
+        displayEventPayload.timestamp,
+        displayEventPayload.aiRaw,
+        displayEventPayload.aiPhysical,
+        displayEventPayload.aiVoltage,
+      );
+    }
+
     if (firstError) {
       setStatus(firstError.message);
     } else {
       setStatus('Polling');
     }
-  }, [aiCalibration, modbusPrecision, updateDataHistory]);
+  }, [
+    aiCalibration,
+    modbusPrecision,
+    enqueueDisplayUpdate,
+    enqueueSaveUpdate,
+    pruneFailuresInWindow,
+    waitAfterTimestamp,
+    waitMs,
+  ]);
 
   const runPollingLoop = useCallback(async () => {
     if (pollTimer.current === undefined || pollingInProgressRef.current) return;
@@ -970,7 +1082,9 @@ function App() {
     }
   };
 
-  const handleDisconnect = async () => {
+  const handleDisconnect = useCallback(async () => {
+    if (disconnectInProgressRef.current) return;
+    disconnectInProgressRef.current = true;
     console.info('[App] handleDisconnect start');
     stopScriptRunner('Stopped');
     setAcquiring(false);
@@ -995,7 +1109,9 @@ function App() {
         clientRef.current = null;
       }
       lastSentAoRawRef.current = null;
+      inputReadFailureTimestampsRef.current = [];
       outputHoldingFailureTimestampsRef.current = [];
+      lastAiReadCompletedAtRef.current = 0;
       // Clear pending data points buffer
       pendingDataPoints.current = [];
       // Clear IndexedDB on disconnect
@@ -1008,9 +1124,26 @@ function App() {
       await releaseWakeLock();
       setConnected(false);
       setStatus('Disconnected');
+      disconnectInProgressRef.current = false;
       console.info('[App] handleDisconnect complete');
     }
-  };
+  }, [releaseWakeLock, stopPolling, stopScriptRunner]);
+
+  useEffect(() => {
+    if (typeof serial.addEventListener !== 'function') return;
+    const onSerialDisconnect = (event: Event) => {
+      const disconnectedPort = (event as SerialConnectionEvent).port;
+      const connectedPort = clientRef.current?.getPort();
+      if (!connectedPort) return;
+      if (disconnectedPort && disconnectedPort !== connectedPort) return;
+      console.warn('[App] USB disconnect event received for active port');
+      void handleDisconnect();
+    };
+    serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
+    return () => {
+      serial.removeEventListener('disconnect', onSerialDisconnect as EventListener);
+    };
+  }, [handleDisconnect]);
 
   const handleToggleConnection = async () => {
     if (connected) {
@@ -1179,7 +1312,7 @@ function App() {
               <div>
                 <h1 className="text-xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  {isUsingPolyfill ? 'WebUSB' : 'WebSerial'} - {formatSerialSettings(serialSettings)}
+                  {serialTransportLabel} - {formatSerialSettings(serialSettings)}
                 </p>
               </div>
               <div role="status" aria-live="polite" className="text-left text-xs text-slate-600 dark:text-slate-400">
