@@ -4,14 +4,12 @@ import { AiCalibration } from '../types';
 type CalibCellProps = {
   value: number;
   onChange: (v: number) => void;
-  className?: string;
 };
 
-function CalibCell({ value, onChange, className }: CalibCellProps) {
+function CalibCell({ value, onChange }: CalibCellProps) {
   const [localValue, setLocalValue] = useState(() => String(value));
   const focusedRef = useRef(false);
 
-  // Sync from prop whenever the field is not being edited (e.g. after file load)
   useEffect(() => {
     if (!focusedRef.current) {
       setLocalValue(String(value));
@@ -23,7 +21,7 @@ function CalibCell({ value, onChange, className }: CalibCellProps) {
       type="text"
       inputMode="decimal"
       value={localValue}
-      className={className}
+      className="w-full rounded border border-slate-300 bg-white px-1.5 py-0.5 text-right text-sm font-semibold text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
       onFocus={() => {
         focusedRef.current = true;
       }}
@@ -41,7 +39,6 @@ function CalibCell({ value, onChange, className }: CalibCellProps) {
             return;
           }
         }
-        // Invalid or empty — reset to the last valid prop value
         setLocalValue(String(value));
       }}
     />
@@ -68,7 +65,6 @@ export function CalibrationPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <>
-      {/* Backdrop */}
       {open && (
         <div
           className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity"
@@ -76,14 +72,12 @@ export function CalibrationPanel({
         />
       )}
 
-      {/* Slide-in Panel from right */}
       <div
-        className={`fixed inset-y-0 right-0 z-50 w-full max-w-2xl transform bg-white shadow-2xl transition-transform duration-300 dark:bg-slate-900 ${
+        className={`fixed inset-y-0 right-0 z-50 w-full max-w-sm transform bg-white shadow-2xl transition-transform duration-300 dark:bg-slate-900 ${
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
         <div className="flex h-full flex-col">
-          {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-700">
             <div>
               <h2 className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
@@ -108,16 +102,16 @@ export function CalibrationPanel({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
+                className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
               >
-                Load Calib
+                Load
               </button>
               <button
                 type="button"
                 onClick={onSaveCalibration}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
+                className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
               >
-                Save Calib
+                Save
               </button>
               <button
                 type="button"
@@ -133,51 +127,42 @@ export function CalibrationPanel({
             </div>
           </div>
 
-          {/* Calibration Table */}
-          <div className="flex-1 overflow-y-auto p-4">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-left text-slate-600 dark:border-slate-700 dark:text-slate-400">
-                  <th className="pb-2 pr-2 font-semibold">CH</th>
-                  <th className="pb-2 px-2 font-semibold">a</th>
-                  <th className="pb-2 px-2 font-semibold">b</th>
-                  <th className="pb-2 pl-2 font-semibold">c</th>
-                </tr>
-              </thead>
-              <tbody>
-                {aiCalibration.map((cal, idx) => (
-                  <tr
-                    key={idx}
-                    className="border-b border-slate-100 dark:border-slate-800"
-                  >
-                    <td className="py-1.5 pr-2 font-semibold text-slate-700 dark:text-slate-200">
-                      CH {idx.toString().padStart(2, '0')}
-                    </td>
-                    <td className="py-1.5 px-2">
+          <div className="flex-1 overflow-y-auto p-3">
+            <div className="space-y-1.5">
+              {aiCalibration.map((cal, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800"
+                >
+                  <span className="w-10 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    {idx.toString().padStart(2, '0')}
+                  </span>
+                  <div className="flex flex-1 items-center gap-1.5">
+                    <span className="text-xs text-slate-500 dark:text-slate-400">a</span>
+                    <div className="w-20">
                       <CalibCell
                         value={cal.a}
                         onChange={(v) => onUpdateCalibration(idx, 'a', v)}
-                        className="input-compact w-full"
                       />
-                    </td>
-                    <td className="py-1.5 px-2">
+                    </div>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">b</span>
+                    <div className="w-20">
                       <CalibCell
                         value={cal.b}
                         onChange={(v) => onUpdateCalibration(idx, 'b', v)}
-                        className="input-compact w-full"
                       />
-                    </td>
-                    <td className="py-1.5 pl-2">
+                    </div>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">c</span>
+                    <div className="w-20">
                       <CalibCell
                         value={cal.c}
                         onChange={(v) => onUpdateCalibration(idx, 'c', v)}
-                        className="input-compact w-full"
                       />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
