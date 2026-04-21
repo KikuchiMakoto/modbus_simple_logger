@@ -8,7 +8,7 @@ type HamburgerMenuProps = {
 
 const MENU_ITEMS = [
   { key: 'modbusConfig', label: 'Modbus Config', icon: '🔌', wip: false },
-  { key: 'calibration', label: 'Calibration', icon: '⚙', wip: false },
+  { key: 'calibration', label: 'Input Calibration', icon: '⚙', wip: false },
   { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
   { key: 'menu1', label: 'Menu 1 (WIP)', icon: '📊', wip: true },
 ];

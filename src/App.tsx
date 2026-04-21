@@ -73,6 +73,8 @@ const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial :
 const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 
 const POLLING_OPTIONS: PollingRateOption[] = [
+  { label: '50 ms', valueMs: 50 },
+  { label: '100 ms', valueMs: 100 },
   { label: '200 ms', valueMs: 200 },
   { label: '500 ms', valueMs: 500 },
   { label: '1 s', valueMs: 1000 },
@@ -198,7 +200,7 @@ function App() {
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
   const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
-  const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
+  const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS.find(p => p.valueMs === 200)!);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
   const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels());
@@ -225,6 +227,8 @@ function App() {
   const inputReadFailureTimestampsRef = useRef<number[]>([]);
   const lastAiReadCompletedAtRef = useRef(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const recentTimestampsRef = useRef<number[]>([]);
+  const [actualRateHz, setActualRateHz] = useState<number>(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
@@ -456,6 +460,16 @@ function App() {
         aiRaw,
         aiPhysical,
       });
+
+      const ts = recentTimestampsRef.current;
+      ts.push(timestamp);
+      if (ts.length > 20) ts.splice(0, ts.length - 20);
+      if (ts.length >= 2) {
+        const elapsed = ts[ts.length - 1] - ts[0];
+        if (elapsed > 0) {
+          setActualRateHz(Math.round(((ts.length - 1) / elapsed) * 1000 * 10) / 10);
+        }
+      }
 
       if (pendingDataPoints.current.length >= BATCH_FLUSH_THRESHOLD) {
         if (batchUpdateTimer.current !== undefined) {
@@ -923,6 +937,8 @@ function App() {
       displayUpdateChainRef.current = Promise.resolve();
       saveUpdateChainRef.current = Promise.resolve();
       pendingDataPoints.current = [];
+      recentTimestampsRef.current = [];
+      setActualRateHz(0);
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
       setDisplayRevision((v) => v + 1);
@@ -1027,6 +1043,8 @@ function App() {
       const startedAt = Date.now();
 
       pendingDataPoints.current = [];
+      recentTimestampsRef.current = [];
+      setActualRateHz(0);
 
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
@@ -1061,11 +1079,13 @@ function App() {
       console.warn('Error closing TSV writer:', err);
     }
 
-    pendingDataPoints.current = [];
+      pendingDataPoints.current = [];
+      recentTimestampsRef.current = [];
+      setActualRateHz(0);
 
-    await dataStorage.clearAllData();
-    dataBufferRef.current = [];
-    setDisplayRevision((v) => v + 1);
+      await dataStorage.clearAllData();
+      dataBufferRef.current = [];
+      setDisplayRevision((v) => v + 1);
 
     setStatus('Stopped saving');
   };
@@ -1092,6 +1112,9 @@ function App() {
                 </p>
               </div>
               <div role="status" aria-live="polite" className="text-left text-xs text-slate-600 dark:text-slate-400">
+                <p className="tabular-nums">
+                  Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz / Actual: {actualRateHz.toFixed(1)} Hz
+                </p>
                 <p className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
                 </p>

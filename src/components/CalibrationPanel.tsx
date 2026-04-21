@@ -68,7 +68,7 @@ export function CalibrationPanel({
     <SlidePanel
       open={open}
       onClose={onClose}
-      title="AI Calibration"
+      title="Input Calibration"
       subtitle="a·x² + b·x + c = y"
       maxWidth="max-w-sm"
       headerActions={
@@ -109,7 +109,7 @@ export function CalibrationPanel({
               className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800"
             >
               <span className="w-10 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">
-                {idx.toString().padStart(2, '0')}
+                CH {idx.toString().padStart(2, '0')}
               </span>
               <div className="flex flex-1 items-center gap-1.5">
                 <span className="text-xs text-slate-500 dark:text-slate-400">a</span>
