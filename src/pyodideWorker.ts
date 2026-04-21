@@ -16,8 +16,8 @@ type WorkerIncomingMessage =
 let pyodide: PyodideLike | null = null;
 let initPromise: Promise<void> | null = null;
 let running = false;
-let aiRawShare: Float64Array | null = null;
-let aiPhysicalShare: Float64Array | null = null;
+let aiRawShare: Float32Array | null = null;
+let aiPhysicalShare: Float32Array | null = null;
 let interruptBuffer: Uint8Array | null = null;
 let versionBuffer: Int32Array | null = null;
 
@@ -25,13 +25,13 @@ const postWorkerMessage = (message: Record<string, unknown>) => {
   self.postMessage(message);
 };
 
-const readAiValue = (buffer: Float64Array | null, ch: number): number => {
+const readAiValue = (buffer: Float32Array | null, ch: number): number => {
   if (!buffer) return 0;
   if (!Number.isInteger(ch) || ch < 0 || ch >= buffer.length) return 0;
   return buffer[ch] ?? 0;
 };
 
-const readAiAll = (buffer: Float64Array | null): number[] => {
+const readAiAll = (buffer: Float32Array | null): number[] => {
   if (!buffer) return [];
   if (!versionBuffer) return Array.from(buffer);
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -47,8 +47,8 @@ const readAiAll = (buffer: Float64Array | null): number[] => {
 const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayBuffer, intSab: SharedArrayBuffer, verSab: SharedArrayBuffer) => {
   postWorkerMessage({ type: 'status', message: 'Initializing Pyodide...' });
 
-  aiRawShare = new Float64Array(rawSab);
-  aiPhysicalShare = new Float64Array(phySab);
+  aiRawShare = new Float32Array(rawSab);
+  aiPhysicalShare = new Float32Array(phySab);
   interruptBuffer = new Uint8Array(intSab);
   versionBuffer = new Int32Array(verSab);
 
@@ -84,6 +84,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
     try {
       await initPromise;
     } catch (err) {
+      initPromise = null;
       postWorkerMessage({ type: 'error', message: (err as Error).message });
     }
     return;

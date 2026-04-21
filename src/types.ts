@@ -27,10 +27,10 @@ export type PollingRateOption = {
 };
 
 export type DataPoint = {
+  seq: number;
   timestamp: number;
-  aiRaw: number[];
-  aiPhysical: number[];
-  aiVoltage: number[];
+  aiRaw: Float32Array;
+  aiPhysical: Float32Array;
 };
 
 export type SerialParity = 'none' | 'odd' | 'even';
@@ -90,6 +90,7 @@ export interface OpenFilePickerOptions {
 }
 
 export interface FileSystemFileHandle {
+  name: string;
   getFile(): Promise<File>;
   createWritable(): Promise<FileSystemWritableFileStream>;
 }

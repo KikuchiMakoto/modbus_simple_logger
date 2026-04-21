@@ -1,22 +1,26 @@
+import { MAX_POINTS_IN_MEMORY, MAX_POINTS_WHILE_SAVING } from '../constants';
+
 const DB_NAME = 'ModbusLoggerDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'dataPoints';
-const MAX_POINTS_IN_MEMORY = 256;
-const MAX_POINTS_WHILE_SAVING = 65536;
 
 export type StoredDataPoint = {
   id?: number;
+  seq: number;
   timestamp: number;
   aiRaw: number[];
   aiPhysical: number[];
-  aiVoltage: number[];
 };
 
 class DataStorage {
   private db: IDBDatabase | null = null;
+  private initPromise: Promise<void> | null = null;
 
   async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    if (this.db) return;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onerror = () => reject(new Error(`Database initialization failed: ${request.error?.message}`));
@@ -33,6 +37,8 @@ class DataStorage {
         }
       };
     });
+
+    return this.initPromise;
   }
 
   private ensureInitialized(): void {
@@ -77,10 +83,11 @@ class DataStorage {
       const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const index = store.index('timestamp');
-      const request = index.openCursor();
 
       let deleteCount = count - maxPoints;
       let deletedCount = 0;
+
+      const request = index.openCursor();
 
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
