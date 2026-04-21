@@ -11,6 +11,26 @@ import {
   VoltageMode,
 } from './types';
 import {
+  AI_CHANNELS,
+  AO_CHANNELS,
+  AI_START_REGISTER,
+  AI_FLOAT_START_REGISTER,
+  AO_START_REGISTER,
+  RETRY_DELAY_MS,
+  MIN_AI_TO_AO_INTERVAL_MS,
+  MIN_AI_TO_NEXT_AI_INTERVAL_MS,
+  INPUT_READ_RETRY_WINDOW_MS,
+  INPUT_READ_MAX_FAILURES_PER_WINDOW,
+  OUTPUT_HOLDING_RETRY_WINDOW_MS,
+  OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
+  MAX_POINTS_IN_MEMORY,
+  MAX_POINTS_WHILE_SAVING,
+  BATCH_FLUSH_THRESHOLD,
+  BATCH_FLUSH_INTERVAL_MS,
+  KEEP_LATEST_TRIM_INTERVAL,
+  PROMISE_CHAIN_RESET_INTERVAL,
+} from './constants';
+import {
   aiToPhysical,
   loadAiCalibration,
   saveAiCalibration,
@@ -26,8 +46,6 @@ import {
 } from './utils/calibration';
 import {
   dataStorage,
-  MAX_POINTS_IN_MEMORY,
-  MAX_POINTS_WHILE_SAVING,
   StoredDataPoint,
 } from './utils/dataStorage';
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
@@ -36,31 +54,20 @@ import { CalibrationPanel } from './components/CalibrationPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { ModbusConfigPanel } from './components/ModbusConfigPanel';
 import { VoltageConfigPanel } from './components/VoltageConfigPanel';
-import { readJsonCookie, writeJsonCookie } from './utils/cookies';
-
-// Polyfill Web Serial API for environments without native support (e.g., Android)
-// Uses WebUSB as fallback when Web Serial API is not available
+import { useTheme } from './hooks/useTheme';
+import { useChartAxes } from './hooks/useChartAxes';
+import { useScriptRunner } from './hooks/useScriptRunner';
 import { serial as serialPolyfill } from 'web-serial-polyfill';
 
-// Detect if the device is mobile
 function isMobileDevice(): boolean {
-  // Check user agent for mobile keywords
   const userAgent = navigator.userAgent.toLowerCase();
   const mobileKeywords = ['android', 'webos', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone', 'mobile'];
   const isMobileUA = mobileKeywords.some(keyword => userAgent.includes(keyword));
-
-  // Check if it's a touch device
   const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-
-  // Check screen size (optional additional check)
   const isSmallScreen = window.innerWidth <= 768;
-
   return isMobileUA || (isTouchDevice && isSmallScreen);
 }
 
-// Select which Serial API to use
-// On mobile devices, always use polyfill for better compatibility
-// On desktop, use polyfill only if native Web Serial API is not available
 const shouldUsePolyfill = isMobileDevice() || !('serial' in navigator);
 const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial : navigator.serial;
 const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
@@ -79,8 +86,6 @@ const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '5 min', valueMs: 300000 },
 ];
 
-const AI_CHANNELS = 16;
-const AO_CHANNELS = 8;  // Used only for initialization
 const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
@@ -95,16 +100,6 @@ const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
   stopBits: 1,
   parity: 'none',
 };
-const AI_START_REGISTER = 0;
-const AI_FLOAT_START_REGISTER = 5000;
-const AO_START_REGISTER = 0;
-const RETRY_DELAY_MS = 10;
-const MIN_AI_TO_AO_INTERVAL_MS = 10;
-const MIN_AI_TO_NEXT_AI_INTERVAL_MS = 100;
-const INPUT_READ_RETRY_WINDOW_MS = 60_000;
-const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
-const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
-const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 
 const computeSensorValues = (raw: number, idx: number) => {
   if (idx < 8) {
@@ -189,67 +184,17 @@ const axisOptions = [
     key: `phy_${idx.toString().padStart(2, '0')}`,
     label: `phy_${idx.toString().padStart(2, '0')}`
   })),
-  ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
-    key: `vlt_${idx.toString().padStart(2, '0')}`,
-    label: `vlt_${idx.toString().padStart(2, '0')}`
-  })),
 ];
 
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 
-type ThemeMode = 'light' | 'dark';
-
-type ChartAxisSelections = {
-  chart1: { x: string; y: string };
-  chart2: { x: string; y: string };
-};
-
-const THEME_COOKIE_KEY = 'theme_preference_v1';
-const CHART_AXES_COOKIE_KEY = 'chart_axes_v1';
-
-const DEFAULT_CHART_AXES: ChartAxisSelections = {
-  chart1: { x: 'time', y: 'raw_00' },
-  chart2: { x: 'time', y: 'raw_01' },
-};
-
-const DEFAULT_SCRIPT = `# get_ai_raw(ch): Read raw AI value for a channel.
-# get_ai_phy(ch): Read calibrated AI value for a channel.
-# set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
-#
-# To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
-# This runner executes scripts in an async context (top-level await supported).
-# Use asyncio instead:
-# import asyncio
-# await asyncio.sleep(1)`;
-
-const getSystemTheme = (): ThemeMode => {
-  if (typeof window === 'undefined') return 'light';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-};
-
-const loadChartAxes = (): ChartAxisSelections => {
-  const saved = readJsonCookie<Partial<ChartAxisSelections>>(CHART_AXES_COOKIE_KEY) ?? {};
-  const sanitize = (value: string | undefined, fallback: string, allowTime: boolean) => {
-    if (!value || !axisOptionKeys.has(value)) return fallback;
-    if (!allowTime && value === 'time') return fallback;
-    return value;
-  };
-  return {
-    chart1: {
-      x: sanitize(saved.chart1?.x, DEFAULT_CHART_AXES.chart1.x, true),
-      y: sanitize(saved.chart1?.y, DEFAULT_CHART_AXES.chart1.y, false),
-    },
-    chart2: {
-      x: sanitize(saved.chart2?.x, DEFAULT_CHART_AXES.chart2.x, true),
-      y: sanitize(saved.chart2?.y, DEFAULT_CHART_AXES.chart2.y, false),
-    },
-  };
-};
-
 function App() {
-  const savedTheme = useMemo(() => readJsonCookie<ThemeMode>(THEME_COOKIE_KEY), []);
-  const [hasUserThemePreference, setHasUserThemePreference] = useState(() => savedTheme !== null);
-  const [theme, setTheme] = useState<ThemeMode>(() => savedTheme ?? getSystemTheme());
+  const { theme, isDarkMode, toggleTheme } = useTheme();
+  const {
+    chart1X, setChart1X, chart1Y, setChart1Y,
+    chart2X, setChart2X, chart2Y, setChart2Y,
+  } = useChartAxes(axisOptionKeys);
+
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
   const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
@@ -259,37 +204,20 @@ function App() {
   const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels());
   const [connected, setConnected] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
-  const [status, setStatus] = useState('Disconnected');
-  const [tsvWriter, setTsvWriter] = useState<TsvWriter | null>(null);
   const [activeSaveFilename, setActiveSaveFilename] = useState('');
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedMs, setSaveElapsedMs] = useState(0);
   const [savePointCount, setSavePointCount] = useState(0);
-  const initialAxes = useMemo(() => loadChartAxes(), []);
-  const [chart1X, setChart1X] = useState(initialAxes.chart1.x);
-  const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
-  const [chart2X, setChart2X] = useState(initialAxes.chart2.x);
-  const [chart2Y, setChart2Y] = useState(initialAxes.chart2.y);
-  const [scriptCode, setScriptCode] = useState(DEFAULT_SCRIPT);
-  const scriptRunnerSupported = useMemo(
-    () => typeof SharedArrayBuffer !== 'undefined' && window.crossOriginIsolated,
-    [],
-  );
-  const [scriptRunning, setScriptRunning] = useState(false);
-  const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
-    scriptRunnerSupported
-      ? 'Idle'
-      : 'Unavailable: requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
-  );
+  const [displayRevision, setDisplayRevision] = useState(0);
+  const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
+  const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
+  const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
+  const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
+  const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
+
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
-  const scriptExecutingRef = useRef(false);
-  const pyWorkerRef = useRef<Worker | null>(null);
-  const interruptBufferRef = useRef<Uint8Array | null>(null);
-  const aiRawShareRef = useRef<Float64Array | null>(null);
-  const aiPhysicalShareRef = useRef<Float64Array | null>(null);
-  const dataReadyVersionRef = useRef<Int32Array | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
   const lastSentAoRawRef = useRef<number[] | null>(null);
@@ -300,6 +228,7 @@ function App() {
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvWriter | null>(null);
+  const seqCounterRef = useRef(0);
   const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const saveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const displayUpdateCountRef = useRef(0);
@@ -307,13 +236,10 @@ function App() {
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
+  const acquiringRef = useRef(false);
+  const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
   const dataBufferRef = useRef<DataPoint[]>([]);
-  const [displayRevision, setDisplayRevision] = useState(0);
-  const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
-  const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
-  const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
-  const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
-  const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -325,52 +251,29 @@ function App() {
     }
   };
 
-  // Initialize IndexedDB
+  const setStatus = useCallback((msg: string) => {
+    if (statusRef.current) statusRef.current.textContent = msg;
+  }, []);
+
   useEffect(() => {
     dataStorage.init().catch((err) => {
       console.error('Failed to initialize IndexedDB:', err);
       setStatus('IndexedDB initialization failed');
     });
-  }, []);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.toggle('dark', theme === 'dark');
-    root.style.colorScheme = theme;
-  }, [theme]);
-
-  useEffect(() => {
-    if (!hasUserThemePreference) return;
-    writeJsonCookie(THEME_COOKIE_KEY, theme);
-  }, [theme, hasUserThemePreference]);
-
-  useEffect(() => {
-    if (hasUserThemePreference) return;
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (event: MediaQueryListEvent) => {
-      setTheme(event.matches ? 'dark' : 'light');
-    };
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [hasUserThemePreference]);
+  }, [setStatus]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
+    aiCalibrationRef.current = aiCalibration;
   }, [aiCalibration]);
 
   useEffect(() => {
     saveVoltageConfig(voltageConfig);
   }, [voltageConfig]);
 
+  const isSaving = !!tsvWriterRef.current;
   useEffect(() => {
-    writeJsonCookie(CHART_AXES_COOKIE_KEY, {
-      chart1: { x: chart1X, y: chart1Y },
-      chart2: { x: chart2X, y: chart2Y },
-    });
-  }, [chart1X, chart1Y, chart2X, chart2Y]);
-
-  useEffect(() => {
-    if (!tsvWriter || saveStartedAt === null) {
+    if (!isSaving || saveStartedAt === null) {
       setSaveElapsedMs(0);
       return;
     }
@@ -378,9 +281,8 @@ function App() {
       setSaveElapsedMs(Math.max(0, Date.now() - saveStartedAt));
     }, 1000);
     return () => window.clearInterval(elapsedTimer);
-  }, [tsvWriter, saveStartedAt]);
+  }, [isSaving, saveStartedAt]);
 
-  // Flush pending data points to chart (batched update)
   const flushPendingDataPoints = useCallback(() => {
     if (pendingDataPoints.current.length === 0) return;
 
@@ -437,6 +339,8 @@ function App() {
     applyAoRawValues(nextRaw);
   }, [applyAoRawValues, clampAoVoltageToMilliVolt]);
 
+  const scriptRunner = useScriptRunner(setAo);
+
   const applyCalibrationToChannels = useCallback(
     (channels: AiChannel[], calibration: AiCalibration[]) =>
       channels.map((ch, idx) => {
@@ -447,102 +351,6 @@ function App() {
       }),
     [],
   );
-
-  const ensureWorkerReady = useCallback((): Worker => {
-    if (pyWorkerRef.current) return pyWorkerRef.current;
-    if (!scriptRunnerSupported) {
-      throw new Error(
-        'ScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
-      );
-    }
-
-    const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
-    const phySab = new SharedArrayBuffer(AI_CHANNELS * Float64Array.BYTES_PER_ELEMENT);
-    const intSab = new SharedArrayBuffer(1);
-    const verSab = new SharedArrayBuffer(4);
-
-    aiRawShareRef.current = new Float64Array(rawSab);
-    aiPhysicalShareRef.current = new Float64Array(phySab);
-    interruptBufferRef.current = new Uint8Array(intSab);
-    dataReadyVersionRef.current = new Int32Array(verSab);
-
-    const worker = new Worker(new URL('./pyodideWorker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (event: MessageEvent) => {
-      const message = event.data as
-        | { type: 'set_ao'; ch: number; data: number }
-        | { type: 'status'; message: string }
-        | { type: 'done'; message?: string }
-        | { type: 'interrupted'; message?: string }
-        | { type: 'error'; message: string };
-      if (message.type === 'set_ao') {
-        setAo(message.ch, message.data);
-      } else if (message.type === 'status') {
-        setScriptRunnerStatus(message.message);
-      } else if (message.type === 'done') {
-        scriptExecutingRef.current = false;
-        setScriptRunning(false);
-        setScriptRunnerStatus(message.message ?? 'Completed');
-      } else if (message.type === 'interrupted') {
-        scriptExecutingRef.current = false;
-        setScriptRunning(false);
-        setScriptRunnerStatus(message.message ?? 'Stopped');
-      } else if (message.type === 'error') {
-        scriptExecutingRef.current = false;
-        setScriptRunning(false);
-        setScriptRunnerStatus(`Error: ${message.message}`);
-      }
-    };
-    worker.onerror = (event) => {
-      scriptExecutingRef.current = false;
-      setScriptRunning(false);
-      setScriptRunnerStatus(`Error: ${event.message}`);
-    };
-
-    worker.postMessage({
-      type: 'init',
-      rawSab,
-      phySab,
-      intSab,
-      verSab,
-    });
-
-    pyWorkerRef.current = worker;
-    return worker;
-  }, [scriptRunnerSupported, setAo]);
-
-  const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
-    if (interruptBufferRef.current) {
-      interruptBufferRef.current[0] = 2;
-      pyWorkerRef.current?.postMessage({ type: 'interrupt' });
-    }
-    scriptExecutingRef.current = false;
-    setScriptRunning(false);
-    setScriptRunnerStatus(nextStatus);
-  }, []);
-
-  const startScriptRunner = useCallback(async () => {
-    if (scriptExecutingRef.current) return;
-    try {
-      const worker = ensureWorkerReady();
-      if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;
-      scriptExecutingRef.current = true;
-      setScriptRunning(true);
-      setScriptRunnerStatus('Running');
-      worker.postMessage({ type: 'run', code: scriptCode });
-    } catch (err) {
-      scriptExecutingRef.current = false;
-      setScriptRunning(false);
-      stopScriptRunner(`Error: ${(err as Error).message}`);
-    }
-  }, [ensureWorkerReady, scriptCode, stopScriptRunner]);
-
-  const handleToggleScriptRunner = useCallback(() => {
-    if (scriptRunning) {
-      stopScriptRunner('Stopped');
-      return;
-    }
-    void startScriptRunner();
-  }, [scriptRunning, startScriptRunner, stopScriptRunner]);
 
   const handleScriptEditorKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Tab') return;
@@ -560,7 +368,7 @@ function App() {
     if (!event.shiftKey) {
       if (!hasSelection) {
         const nextValue = `${value.slice(0, selectionStart)}${indent}${value.slice(selectionEnd)}`;
-        setScriptCode(nextValue);
+        scriptRunner.setScriptCode(nextValue);
         window.requestAnimationFrame(() => {
           const nextCursor = selectionStart + indent.length;
           textarea.setSelectionRange(nextCursor, nextCursor);
@@ -576,7 +384,7 @@ function App() {
         .map((line) => (!line.trim() ? line : `${indent}${line}`))
         .join('\n');
       const nextValue = `${value.slice(0, blockStart)}${indentedBlock}${value.slice(blockEnd)}`;
-      setScriptCode(nextValue);
+      scriptRunner.setScriptCode(nextValue);
       window.requestAnimationFrame(() => {
         const selectionEndOffset = indentedBlock.length - block.length;
         textarea.setSelectionRange(selectionStart + indent.length, selectionEnd + selectionEndOffset);
@@ -610,7 +418,7 @@ function App() {
     }).join('\n');
 
     const nextValue = `${value.slice(0, blockStart)}${outdentedBlock}${value.slice(blockEnd)}`;
-    setScriptCode(nextValue);
+    scriptRunner.setScriptCode(nextValue);
     window.requestAnimationFrame(() => {
       if (!hasSelection) {
         const nextCursor = Math.max(lineStartIndex, selectionStart - removedFromFirstLine);
@@ -621,34 +429,35 @@ function App() {
       const nextEnd = Math.max(nextStart, selectionEnd - removedTotal);
       textarea.setSelectionRange(nextStart, nextEnd);
     });
-  }, [setScriptCode]);
+  }, [scriptRunner]);
 
-  const updateDataHistory = useCallback(async (aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
+  const updateDataHistory = useCallback(async (aiRaw: Float32Array, aiPhysical: Float32Array) => {
     const timestamp = Date.now();
+    const seq = seqCounterRef.current++;
     const dataPoint: StoredDataPoint = {
+      seq,
       timestamp,
-      aiRaw,
-      aiPhysical,
-      aiVoltage,
+      aiRaw: Array.from(aiRaw),
+      aiPhysical: Array.from(aiPhysical),
     };
 
     try {
       await dataStorage.addDataPoint(dataPoint);
 
       keepLatestCountRef.current++;
-      if (keepLatestCountRef.current % 10 === 0) {
+      if (keepLatestCountRef.current % KEEP_LATEST_TRIM_INTERVAL === 0) {
         const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
         await dataStorage.keepLatestPoints(displayLimit);
       }
 
       pendingDataPoints.current.push({
+        seq,
         timestamp,
         aiRaw,
         aiPhysical,
-        aiVoltage,
       });
 
-      if (pendingDataPoints.current.length >= 5) {
+      if (pendingDataPoints.current.length >= BATCH_FLUSH_THRESHOLD) {
         if (batchUpdateTimer.current !== undefined) {
           window.clearTimeout(batchUpdateTimer.current);
           batchUpdateTimer.current = undefined;
@@ -658,13 +467,13 @@ function App() {
         batchUpdateTimer.current = window.setTimeout(() => {
           batchUpdateTimer.current = undefined;
           flushPendingDataPoints();
-        }, 100);
+        }, BATCH_FLUSH_INTERVAL_MS);
       }
     } catch (err) {
       console.error('Error updating data history:', err);
       setStatus(`IndexedDB error: ${(err as Error).message}`);
     }
-  }, [flushPendingDataPoints]);
+  }, [flushPendingDataPoints, setStatus]);
 
   const waitMs = useCallback(async (ms: number) => {
     if (ms <= 0) return;
@@ -685,7 +494,7 @@ function App() {
     return timestampsRef.current.length;
   }, []);
 
-  const enqueueDisplayUpdate = useCallback((aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
+  const enqueueDisplayUpdate = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(async () => {
         setAiChannels((prev) =>
@@ -702,18 +511,18 @@ function App() {
             };
           }),
         );
-        await updateDataHistory(aiRaw, aiPhysical, aiVoltage);
+        await updateDataHistory(aiRaw, aiPhysical);
       })
       .catch((err) => {
         console.error('[App] display update event failed', err);
       });
     displayUpdateCountRef.current++;
-    if (displayUpdateCountRef.current % 100 === 0) {
+    if (displayUpdateCountRef.current % PROMISE_CHAIN_RESET_INTERVAL === 0) {
       displayUpdateChainRef.current = Promise.resolve();
     }
   }, [updateDataHistory]);
 
-  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: number[], aiPhysical: number[]) => {
+  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array) => {
     saveUpdateChainRef.current = saveUpdateChainRef.current
       .then(async () => {
         const writer = tsvWriterRef.current;
@@ -734,15 +543,15 @@ function App() {
         setStatus(`TSV write error: ${(err as Error).message}`);
       });
     saveUpdateCountRef.current++;
-    if (saveUpdateCountRef.current % 100 === 0) {
+    if (saveUpdateCountRef.current % PROMISE_CHAIN_RESET_INTERVAL === 0) {
       saveUpdateChainRef.current = Promise.resolve();
     }
-  }, []);
+  }, [setStatus]);
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     let firstError: Error | null = null;
-    let displayEventPayload: { aiRaw: number[]; aiPhysical: number[]; aiVoltage: number[]; timestamp: number } | null = null;
+    let displayEventPayload: { aiRaw: Float32Array; aiPhysical: Float32Array; aiVoltage: Float32Array; timestamp: number } | null = null;
     const pruneAndCountOutputHoldingFailures = () =>
       pruneFailuresInWindow(outputHoldingFailureTimestampsRef, OUTPUT_HOLDING_RETRY_WINDOW_MS);
     const pruneAndCountInputReadFailures = () =>
@@ -797,14 +606,15 @@ function App() {
       lastAiReadCompletedAtRef.current = Date.now();
 
       aiRawSourceRef.current = aiSourceValues;
-      const aiRaw = aiSourceValues;
-      const aiPhysical = aiSourceValues.map((value, idx) =>
-        aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
+      const aiRaw = new Float32Array(aiSourceValues);
+      const aiPhysical = new Float32Array(
+        aiSourceValues.map((value, idx) =>
+          aiToPhysical(value, aiCalibrationRef.current[idx] ?? { a: 0, b: 1, c: 0 })
+        )
       );
-      const aiVoltage = aiRaw.map((raw, idx) => computeVoltage(raw, idx));
-      const aiRawShare = aiRawShareRef.current;
-      const aiPhysicalShare = aiPhysicalShareRef.current;
-      const dataReadyVersion = dataReadyVersionRef.current;
+      const aiRawShare = scriptRunner.aiRawShareRef.current;
+      const aiPhysicalShare = scriptRunner.aiPhysicalShareRef.current;
+      const dataReadyVersion = scriptRunner.dataReadyVersionRef.current;
       if (aiRawShare && aiPhysicalShare && dataReadyVersion) {
         Atomics.store(dataReadyVersion, 0, 1);
         aiRaw.forEach((value, index) => {
@@ -818,17 +628,10 @@ function App() {
 
       await waitAfterTimestamp(lastAiReadCompletedAtRef.current, MIN_AI_TO_AO_INTERVAL_MS);
 
-      console.debug('[App] pollOnce success', {
-        effectivePrecision,
-        aiCount: aiSourceValues.length,
-        aiPreview: aiSourceValues.slice(0, 10),
-        aoCount: aoRawSourceRef.current.length,
-        aoPreview: aoRawSourceRef.current.slice(0, 10),
-      });
       displayEventPayload = {
+        seq: seqCounterRef.current++,
         aiRaw,
         aiPhysical,
-        aiVoltage,
         timestamp: Date.now(),
       };
     } catch (err) {
@@ -888,7 +691,6 @@ function App() {
       enqueueDisplayUpdate(
         displayEventPayload.aiRaw,
         displayEventPayload.aiPhysical,
-        displayEventPayload.aiVoltage,
       );
       enqueueSaveUpdate(
         displayEventPayload.timestamp,
@@ -903,13 +705,16 @@ function App() {
       setStatus('Polling');
     }
   }, [
-    aiCalibration,
     modbusPrecision,
     enqueueDisplayUpdate,
     enqueueSaveUpdate,
     pruneFailuresInWindow,
     waitAfterTimestamp,
     waitMs,
+    setStatus,
+    scriptRunner.aiRawShareRef,
+    scriptRunner.aiPhysicalShareRef,
+    scriptRunner.dataReadyVersionRef,
   ]);
 
   const runPollingLoop = useCallback(async () => {
@@ -939,7 +744,6 @@ function App() {
   }, [runPollingLoop]);
 
   const startPolling = useCallback(() => {
-    // Start first poll immediately, which will schedule the next one
     scheduleImmediatePoll();
   }, [scheduleImmediatePoll]);
 
@@ -949,7 +753,6 @@ function App() {
       pollTimer.current = undefined;
     }
     pollingInProgressRef.current = false;
-    // Flush any pending data points when stopping
     if (batchUpdateTimer.current !== undefined) {
       window.clearTimeout(batchUpdateTimer.current);
       batchUpdateTimer.current = undefined;
@@ -992,17 +795,9 @@ function App() {
   }, [acquiring, startPolling, stopPolling]);
 
   useEffect(() => {
-    return () => {
-      if (pyWorkerRef.current) {
-        pyWorkerRef.current.terminate();
-        pyWorkerRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
+      if (!acquiringRef.current) return;
       if (pollTimer.current === undefined || pollingInProgressRef.current) return;
       scheduleImmediatePoll();
     };
@@ -1026,16 +821,13 @@ function App() {
     });
     let pendingClient: WebSerialModbusClient | null = null;
     try {
-      // Clean up any existing connection first
       if (clientRef.current) {
         await clientRef.current.disconnect();
         clientRef.current = null;
       }
 
-      // Clear pending data points buffer
       pendingDataPoints.current = [];
 
-      // Clear IndexedDB for new session
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
       setDisplayRevision((v) => v + 1);
@@ -1068,6 +860,7 @@ function App() {
       inputReadFailureTimestampsRef.current = [];
 
       setConnected(true);
+      acquiringRef.current = true;
       setAcquiring(true);
       setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
       await requestWakeLock();
@@ -1084,6 +877,7 @@ function App() {
       }
       await releaseWakeLock();
       setConnected(false);
+      acquiringRef.current = false;
       setAcquiring(false);
 
       if (err instanceof DOMException && err.name === 'NotFoundError') {
@@ -1100,12 +894,12 @@ function App() {
     if (disconnectInProgressRef.current) return;
     disconnectInProgressRef.current = true;
     console.info('[App] handleDisconnect start');
-    stopScriptRunner('Stopped');
+    scriptRunner.stopScriptRunner('Stopped');
+    acquiringRef.current = false;
     setAcquiring(false);
     stopPolling();
     const writerToClose = tsvWriterRef.current;
     tsvWriterRef.current = null;
-    setTsvWriter(null);
     setActiveSaveFilename('');
     setSaveStartedAt(null);
     setSaveElapsedMs(0);
@@ -1142,7 +936,7 @@ function App() {
       disconnectInProgressRef.current = false;
       console.info('[App] handleDisconnect complete');
     }
-  }, [releaseWakeLock, stopPolling, stopScriptRunner]);
+  }, [releaseWakeLock, stopPolling, scriptRunner, setStatus]);
 
   useEffect(() => {
     if (typeof serial.addEventListener !== 'function') return;
@@ -1177,9 +971,8 @@ function App() {
     });
   };
 
-
   const handleDownloadCalibration = () => {
-    const calibrationData: Record<string, any> = {};
+    const calibrationData: Record<string, { a: number; b: number; c: number } | string> = {};
     aiCalibration.forEach((cal, idx) => {
       const key = idx.toString().padStart(2, '0');
       calibrationData[key] = {
@@ -1230,18 +1023,15 @@ function App() {
 
   const handleStartSave = async () => {
     try {
-      // Create TSV writer (this will prompt user for file location)
       const writer = await createTsvWriter(AI_CHANNELS);
       const startedAt = Date.now();
 
-      // Clear pending data points buffer
       pendingDataPoints.current = [];
 
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
       setDisplayRevision((v) => v + 1);
 
-      setTsvWriter(writer);
       tsvWriterRef.current = writer;
       setActiveSaveFilename(writer.getFileName());
       setSaveStartedAt(startedAt);
@@ -1250,7 +1040,6 @@ function App() {
       setStatus('Saving data to file');
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        // User cancelled the file picker
         return;
       }
       setStatus((err as Error).message);
@@ -1258,42 +1047,28 @@ function App() {
   };
 
   const handleStopSave = async () => {
-    if (tsvWriter) {
-      // Clear ref first to prevent pollOnce from writing to closing stream
-      const writerToClose = tsvWriterRef.current;
-      tsvWriterRef.current = null;
-      setTsvWriter(null);
-      setActiveSaveFilename('');
-      setSaveStartedAt(null);
-      setSaveElapsedMs(0);
-      setSavePointCount(0);
+    const writerToClose = tsvWriterRef.current;
+    if (!writerToClose) return;
+    tsvWriterRef.current = null;
+    setActiveSaveFilename('');
+    setSaveStartedAt(null);
+    setSaveElapsedMs(0);
+    setSavePointCount(0);
 
-      // Close the writer if it exists
-      if (writerToClose) {
-        try {
-          await writerToClose.close();
-        } catch (err) {
-          console.warn('Error closing TSV writer:', err);
-        }
-      }
-
-      // Clear pending data points buffer
-      pendingDataPoints.current = [];
-
-      await dataStorage.clearAllData();
-      dataBufferRef.current = [];
-      setDisplayRevision((v) => v + 1);
-
-      setStatus('Stopped saving');
+    try {
+      await writerToClose.close();
+    } catch (err) {
+      console.warn('Error closing TSV writer:', err);
     }
-  };
 
-  const handleToggleTheme = () => {
-    setHasUserThemePreference(true);
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
+    pendingDataPoints.current = [];
 
-  const isDarkMode = theme === 'dark';
+    await dataStorage.clearAllData();
+    dataBufferRef.current = [];
+    setDisplayRevision((v) => v + 1);
+
+    setStatus('Stopped saving');
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
@@ -1322,7 +1097,7 @@ function App() {
                 role="switch"
                 aria-checked={isDarkMode}
                 aria-label="Toggle dark mode"
-                onClick={handleToggleTheme}
+                onClick={toggleTheme}
                 className="relative inline-flex h-8 w-16 items-center rounded-full border border-slate-300 bg-white px-1.5 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
               >
                 <span className="sr-only">Toggle theme</span>
@@ -1368,7 +1143,7 @@ function App() {
               >
                 {connected ? 'Disconnect' : 'Connect'}
               </button>
-              {!tsvWriter ? (
+              {!tsvWriterRef.current ? (
                 <button type="button" className="button-primary" onClick={handleStartSave}>
                   Start Save
                 </button>
@@ -1398,6 +1173,7 @@ function App() {
         <section className="card">
         <div className="mb-1.5 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Analog Input (16)</h2>
+          <p ref={statusRef} className="text-xs text-slate-500 dark:text-slate-400">Disconnected</p>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aiChannels.map((ch) => {
@@ -1494,7 +1270,7 @@ function App() {
           axisOptions={axisOptions}
           xAxis={chart1X}
           yAxis={chart1Y}
-          isDarkMode={theme === 'dark'}
+          isDarkMode={isDarkMode}
           onXAxisChange={setChart1X}
           onYAxisChange={setChart1Y}
         />
@@ -1505,7 +1281,7 @@ function App() {
           axisOptions={axisOptions}
           xAxis={chart2X}
           yAxis={chart2Y}
-          isDarkMode={theme === 'dark'}
+          isDarkMode={isDarkMode}
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
@@ -1515,16 +1291,16 @@ function App() {
             <button
               type="button"
               className="button-primary"
-              onClick={handleToggleScriptRunner}
-              disabled={!scriptRunnerSupported}
+              onClick={scriptRunner.toggleScriptRunner}
+              disabled={!scriptRunner.scriptRunnerSupported}
             >
-              {scriptRunning ? 'Stop' : 'Run'}
+              {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
             </button>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Status: {scriptRunnerStatus}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Status: {scriptRunner.scriptRunnerStatus}</p>
           <textarea
-            value={scriptCode}
-            onChange={(e) => setScriptCode(e.target.value)}
+            value={scriptRunner.scriptCode}
+            onChange={(e) => scriptRunner.setScriptCode(e.target.value)}
             onKeyDown={handleScriptEditorKeyDown}
             className="min-h-[240px] w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             spellCheck={false}
