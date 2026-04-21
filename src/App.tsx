@@ -1311,7 +1311,6 @@ function App() {
                 <p className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / Points: {savePointCount}
                 </p>
-                <p className="tabular-nums">Status: {status}</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
