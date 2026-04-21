@@ -90,13 +90,16 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response && response.status === 200) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, clone);
+              cache.put(BASE_PATH + 'index.html', clone.clone());
+            });
           }
           return withIsolationHeaders(response);
         })
         .catch(async () => {
           console.warn('[SW] Navigation fetch failed, serving from cache');
-          const cached = await caches.match(BASE_PATH + 'index.html');
+          const cached = await caches.match(request) || await caches.match(BASE_PATH + 'index.html');
           if (cached) return withIsolationHeaders(cached.clone());
           return withIsolationHeaders(new Response(
             '<!DOCTYPE html><html><body><h1>Offline</h1><p>No cached content available. Please connect to the internet and reload.</p></body></html>',
