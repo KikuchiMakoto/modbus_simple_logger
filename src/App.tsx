@@ -8,6 +8,7 @@ import {
   DataPoint,
   SerialSettings,
   ModbusPrecision,
+  VoltageMode,
 } from './types';
 import {
   aiToPhysical,
@@ -17,6 +18,10 @@ import {
   hx711RawToMvPerV,
   hx711RawToMicroStrain,
   ads1115RawToVolt,
+  rawToDisplayValue,
+  getLevelMeterColor,
+  loadVoltageConfig,
+  saveVoltageConfig,
 } from './utils/calibration';
 import {
   dataStorage,
@@ -29,6 +34,7 @@ import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { ModbusConfigPanel } from './components/ModbusConfigPanel';
+import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
 // Polyfill Web Serial API for environments without native support (e.g., Android)
@@ -305,12 +311,16 @@ function App() {
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
+  const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
+  const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
       setCalibrationPanelOpen(true);
     } else if (item === 'modbusConfig') {
       setModbusConfigPanelOpen(true);
+    } else if (item === 'voltageConfig') {
+      setVoltageConfigPanelOpen(true);
     }
   };
 
@@ -346,6 +356,10 @@ function App() {
   useEffect(() => {
     saveAiCalibration(aiCalibration);
   }, [aiCalibration]);
+
+  useEffect(() => {
+    saveVoltageConfig(voltageConfig);
+  }, [voltageConfig]);
 
   useEffect(() => {
     writeJsonCookie(CHART_AXES_COOKIE_KEY, {
@@ -1274,17 +1288,6 @@ function App() {
     }
   };
 
-  const getStatusColor = (status: AiChannel['status']) => {
-    switch (status) {
-      case 'danger':
-        return 'text-red-400';
-      case 'warning':
-        return 'text-yellow-400';
-      default:
-        return 'text-emerald-600 dark:text-emerald-400';
-    }
-  };
-
   const handleToggleTheme = () => {
     setHasUserThemePreference(true);
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -1397,40 +1400,49 @@ function App() {
           <h2 className="text-lg font-semibold">Analog Input (16)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
-          {aiChannels.map((ch) => (
+          {aiChannels.map((ch) => {
+            const display = rawToDisplayValue(ch.raw, voltageConfig[ch.id]);
+            const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
+            const aiMeterColor = getLevelMeterColor(aiRatio);
+            const aiMeterHeight = Math.max(2, aiRatio * 100);
+            return (
             <div
               key={ch.id}
-              className="rounded-lg border border-slate-200 bg-slate-100 p-1.5 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="flex rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
-                {formatAiChannelDisplayLabel(ch.id)}
+              <div className="flex-1 p-1.5">
+                <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                  {formatAiChannelDisplayLabel(ch.id)}
+                </div>
+                <div className="space-y-0.5 pt-0.5 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
+                    <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
+                    <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {ch.physical.toFixed(3)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-600 font-medium dark:text-slate-300">
+                      {display.unit}
+                    </span>
+                    <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
+                      {display.value.toFixed(3)}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-0.5 pt-0.5 text-sm">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
-                  <span className={`text-lg font-bold tabular-nums ${getStatusColor(ch.status)}`}>
-                    {(
-                      modbusPrecision === 'extended'
-                    ) ? Math.trunc(ch.raw) : ch.raw}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
-                  <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {ch.physical.toFixed(3)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-600 font-medium dark:text-slate-300">
-                    {ch.id < 8 ? 'mV/V' : 'V'}
-                  </span>
-                  <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
-                    {ch.voltage.toFixed(ch.id < 8 ? 4 : 3)}
-                  </span>
-                </div>
+              <div className="flex w-2 items-end overflow-hidden rounded-r-lg">
+                <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -1439,24 +1451,34 @@ function App() {
           <h2 className="text-lg font-semibold">Analog Output (8)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
-          {aoChannels.map((ch) => (
+          {aoChannels.map((ch) => {
+            const aoRatio = Math.min(1, Math.abs(ch.physical) / 10000);
+            const aoMeterColor = getLevelMeterColor(aoRatio);
+            const aoMeterHeight = Math.max(2, aoRatio * 100);
+            return (
             <div
               key={ch.id}
-              className="rounded-lg border border-slate-200 bg-slate-100 p-1.5 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="flex rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
-                {ch.label}
-              </div>
-              <div className="space-y-0.5 pt-0.5 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
-                  <span className="text-lg font-bold tabular-nums text-violet-600 dark:text-violet-300">
-                    {(ch.physical / 1000).toFixed(3)}
-                  </span>
+              <div className="flex-1 p-1.5">
+                <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                  {ch.label}
+                </div>
+                <div className="space-y-0.5 pt-0.5 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
+                    <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
+                      {(ch.physical / 1000).toFixed(3)}
+                    </span>
+                  </div>
                 </div>
               </div>
+              <div className="flex w-2 items-end overflow-hidden rounded-r-lg">
+                <div className={`w-full ${aoMeterColor}`} style={{ height: `${aoMeterHeight}%` }} />
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -1485,7 +1507,7 @@ function App() {
         />
         <section className="card space-y-2 md:col-span-2">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-amber-400">ScriptRunner (Pyodide)</h2>
+            <h2 className="text-lg font-semibold text-yellow-500 dark:text-yellow-300">ScriptRunner (Pyodide)</h2>
             <button
               type="button"
               className="button-primary"
@@ -1540,6 +1562,13 @@ function App() {
         onUpdateCalibration={updateAiCalibration}
         onSaveCalibration={handleDownloadCalibration}
         onLoadCalibration={handleLoadCalibrationFile}
+      />
+
+      <VoltageConfigPanel
+        open={voltageConfigPanelOpen}
+        onClose={() => setVoltageConfigPanelOpen(false)}
+        voltageConfig={voltageConfig}
+        onVoltageConfigChange={setVoltageConfig}
       />
     </div>
   );
