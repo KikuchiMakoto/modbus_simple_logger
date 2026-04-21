@@ -73,7 +73,6 @@ const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial :
 const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 
 const POLLING_OPTIONS: PollingRateOption[] = [
-  { label: '50 ms', valueMs: 50 },
   { label: '100 ms', valueMs: 100 },
   { label: '200 ms', valueMs: 200 },
   { label: '500 ms', valueMs: 500 },
@@ -735,6 +734,7 @@ function App() {
     if (pollTimer.current === undefined || pollingInProgressRef.current) return;
 
     pollingInProgressRef.current = true;
+    const loopStart = Date.now();
     try {
       await pollOnce();
     } finally {
@@ -742,11 +742,15 @@ function App() {
 
       if (pollTimer.current === undefined) return;
 
+      const elapsed = Date.now() - loopStart;
+      const minInterval = modbusPrecision === 'extended' ? 1 : 10;
+      const nextDelay = Math.max(minInterval, pollingRate.valueMs - elapsed);
+
       pollTimer.current = window.setTimeout(() => {
         void runPollingLoop();
-      }, pollingRate.valueMs);
+      }, nextDelay);
     }
-  }, [pollOnce, pollingRate.valueMs]);
+  }, [pollOnce, pollingRate.valueMs, modbusPrecision]);
 
   const scheduleImmediatePoll = useCallback(() => {
     if (pollTimer.current !== undefined) {
