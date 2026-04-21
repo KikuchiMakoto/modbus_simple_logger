@@ -100,6 +100,8 @@ const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
 const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
 const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 const VOLTAGE_CONFIG_COOKIE_KEY = 'voltage_config_v1';
+const ADS1115_INT16_DENOMINATOR = 32768.0;
+// Per project requirement, HX711 strain mode uses mV/V multiplied by gauge factor 2E3.
 const HX711_GAUGE_FACTOR = 2e3;
 
 const VOLTAGE_MODE_OPTIONS: { value: VoltageDisplayMode; label: string }[] = [
@@ -118,10 +120,11 @@ const VOLTAGE_MODE_SET = new Set<VoltageDisplayMode>(
   VOLTAGE_MODE_OPTIONS.map((option) => option.value),
 );
 
+const getDefaultVoltageModeForChannel = (idx: number): VoltageDisplayMode =>
+  idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v';
+
 const getDefaultVoltageDisplayModes = (): VoltageDisplayMode[] =>
-  Array.from({ length: AI_CHANNELS }, (_, idx) =>
-    idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v',
-  );
+  Array.from({ length: AI_CHANNELS }, (_, idx) => getDefaultVoltageModeForChannel(idx));
 
 const loadVoltageDisplayModes = (): VoltageDisplayMode[] => {
   const raw = readJsonCookie<string[]>(VOLTAGE_CONFIG_COOKIE_KEY);
@@ -136,7 +139,7 @@ const loadVoltageDisplayModes = (): VoltageDisplayMode[] => {
 };
 
 const ads1115RawToVolt = (raw: number, fullScaleVolt: number): number =>
-  (raw / 32768.0) * fullScaleVolt;
+  (raw / ADS1115_INT16_DENOMINATOR) * fullScaleVolt;
 
 const computeVoltageByMode = (raw: number, mode: VoltageDisplayMode): number => {
   switch (mode) {
@@ -171,7 +174,7 @@ const createAiChannels = (calibration: AiCalibration[], voltageModes: VoltageDis
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
     const physical = aiToPhysical(raw, calibration[idx]);
-    const mode = voltageModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+    const mode = voltageModes[idx] ?? getDefaultVoltageModeForChannel(idx);
     const voltage = computeVoltageByMode(raw, mode);
     const microStrain = hx711RawToMicroStrain(raw);
     return {
@@ -499,7 +502,7 @@ function App() {
       channels.map((ch, idx) => {
         const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
         const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
-        const mode = voltageDisplayModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+        const mode = voltageDisplayModes[idx] ?? getDefaultVoltageModeForChannel(idx);
         const voltage = computeVoltageByMode(rawValue, mode);
         const microStrain = hx711RawToMicroStrain(rawValue);
         return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
@@ -750,7 +753,7 @@ function App() {
         setAiChannels((prev) =>
           prev.map((ch, idx) => {
             const rawValue = aiRaw[idx] ?? ch.raw;
-            const mode = voltageDisplayModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+            const mode = voltageDisplayModes[idx] ?? getDefaultVoltageModeForChannel(idx);
             const voltage = computeVoltageByMode(rawValue, mode);
             const microStrain = hx711RawToMicroStrain(rawValue);
             return {
@@ -863,7 +866,7 @@ function App() {
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
       const aiVoltage = aiRaw.map((raw, idx) => {
-        const mode = voltageDisplayModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+        const mode = voltageDisplayModes[idx] ?? getDefaultVoltageModeForChannel(idx);
         return computeVoltageByMode(raw, mode);
       });
       const aiRawShare = aiRawShareRef.current;
@@ -1251,7 +1254,7 @@ function App() {
       setAiChannels((chs) =>
         chs.map((ch, idx) => {
           const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
-          const selectedMode = next[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+          const selectedMode = next[idx] ?? getDefaultVoltageModeForChannel(idx);
           return {
             ...ch,
             voltage: computeVoltageByMode(rawValue, selectedMode),
@@ -1522,12 +1525,12 @@ function App() {
                 </div>
                 <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-600 font-medium dark:text-slate-300">
-                    {formatVoltageModeUnit(voltageDisplayModes[ch.id] ?? (ch.id < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v'))}
+                    {formatVoltageModeUnit(voltageDisplayModes[ch.id] ?? getDefaultVoltageModeForChannel(ch.id))}
                   </span>
                   <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
                     {ch.voltage.toFixed(
                       formatVoltageModeDigits(
-                        voltageDisplayModes[ch.id] ?? (ch.id < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v'),
+                        voltageDisplayModes[ch.id] ?? getDefaultVoltageModeForChannel(ch.id),
                       ),
                     )}
                   </span>
