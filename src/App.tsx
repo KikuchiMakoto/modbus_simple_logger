@@ -1077,7 +1077,16 @@ function App() {
           <header className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-wrap items-end gap-x-4 gap-y-0.5">
               <div>
-                <h1 className="text-xl font-bold text-emerald-600 dark:text-emerald-400">ModbusSimpleLogger</h1>
+                <h1 className="text-xl font-bold">
+                  <a
+                    href="https://github.com/KikuchiMakoto/modbus_simple_logger"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-600 hover:underline dark:text-emerald-400"
+                  >
+                    ModbusSimpleLogger
+                  </a>
+                </h1>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
                   {serialTransportLabel} - {formatSerialSettings(serialSettings)}
                 </p>
