@@ -23,7 +23,7 @@ export function formatTimestamp(timestamp: number): string {
 
 /**
  * Create TSV header row for AI channel data
- * Format: timestamp\tai_raw_00\tai_raw_01\t...\tai_phy_00\tai_phy_01\t...\tvlt_00\tvlt_01\t...
+ * Format: timestamp\tai_raw_00\tai_raw_01\t...\tai_phy_00\tai_phy_01\t...
  * @param channels - Number of AI channels
  * @returns TSV header string with newline
  */
@@ -34,10 +34,7 @@ export function createTsvHeader(channels: number): string {
   const phyHeaders = Array.from({ length: channels }, (_, i) =>
     `ai_phy_${i.toString().padStart(2, '0')}`
   );
-  const vltHeaders = Array.from({ length: channels }, (_, i) =>
-    `vlt_${i.toString().padStart(2, '0')}`
-  );
-  return ['timestamp', ...rawHeaders, ...phyHeaders, ...vltHeaders].join('\t') + '\n';
+  return ['timestamp', ...rawHeaders, ...phyHeaders].join('\t') + '\n';
 }
 
 /**
@@ -45,24 +42,19 @@ export function createTsvHeader(channels: number): string {
  * @param timestamp - Unix timestamp in milliseconds
  * @param aiRaw - Array of raw AI channel values
  * @param aiPhysical - Array of physical AI channel values
- * @param aiVoltage - Array of voltage AI channel values (mV/V for HX711, V for ADS1115)
  * @param physicalPrecision - Number of decimal places for physical values (default: 3)
- * @param voltagePrecision - Number of decimal places for voltage values (default: 5)
  * @returns TSV data row string with newline
  */
 export function formatTsvRow(
   timestamp: number,
   aiRaw: number[],
   aiPhysical: number[],
-  aiVoltage: number[],
-  physicalPrecision: number = 3,
-  voltagePrecision: number = 5
+  physicalPrecision: number = 3
 ): string {
   const timestampStr = formatTimestamp(timestamp);
   const rawValues = aiRaw.map(v => v.toString());
   const phyValues = aiPhysical.map(v => v.toFixed(physicalPrecision));
-  const vltValues = aiVoltage.map(v => v.toFixed(voltagePrecision));
-  return [timestampStr, ...rawValues, ...phyValues, ...vltValues].join('\t') + '\n';
+  return [timestampStr, ...rawValues, ...phyValues].join('\t') + '\n';
 }
 
 /**
@@ -73,27 +65,17 @@ export class TsvWriter {
   private stream: FileSystemWritableFileStream;
   private channels: number;
   private physicalPrecision: number;
-  private voltagePrecision: number;
   private fileName: string;
 
-  /**
-   * Create a new TSV writer
-   * @param stream - FileSystemWritableFileStream to write to
-   * @param channels - Number of AI channels
-   * @param physicalPrecision - Decimal places for physical values (default: 3)
-   * @param voltagePrecision - Decimal places for voltage values (default: 5)
-   */
   constructor(
     stream: FileSystemWritableFileStream,
     channels: number,
     physicalPrecision: number = 3,
-    voltagePrecision: number = 5,
     fileName: string = 'unnamed.tsv'
   ) {
     this.stream = stream;
     this.channels = channels;
     this.physicalPrecision = physicalPrecision;
-    this.voltagePrecision = voltagePrecision;
     this.fileName = fileName;
   }
 
@@ -110,19 +92,15 @@ export class TsvWriter {
    * @param timestamp - Unix timestamp in milliseconds
    * @param aiRaw - Array of raw AI channel values
    * @param aiPhysical - Array of physical AI channel values
-   * @param aiVoltage - Array of voltage AI channel values (mV/V for HX711, V for ADS1115)
    */
-  async writeRow(timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]): Promise<void> {
+  async writeRow(timestamp: number, aiRaw: number[], aiPhysical: number[]): Promise<void> {
     this.assertChannelCount('raw values', aiRaw);
     this.assertChannelCount('physical values', aiPhysical);
-    this.assertChannelCount('voltage values', aiVoltage);
     const row = formatTsvRow(
       timestamp,
       aiRaw,
       aiPhysical,
-      aiVoltage,
-      this.physicalPrecision,
-      this.voltagePrecision
+      this.physicalPrecision
     );
     await this.stream.write(row);
   }
@@ -142,7 +120,7 @@ export class TsvWriter {
     return this.fileName;
   }
 
-  private assertChannelCount(fieldLabel: 'raw values' | 'physical values' | 'voltage values', values: number[]): void {
+  private assertChannelCount(fieldLabel: 'raw values' | 'physical values', values: number[]): void {
     if (values.length !== this.channels) {
       throw new Error(
         `Invalid ${fieldLabel} column count: expected ${this.channels}, got ${values.length}.`,
@@ -156,15 +134,13 @@ export class TsvWriter {
  * @param channels - Number of AI channels
  * @param suggestedName - Suggested filename (default: auto-generated with timestamp)
  * @param physicalPrecision - Decimal places for physical values (default: 3)
- * @param voltagePrecision - Decimal places for voltage values (default: 5)
  * @returns TsvWriter instance
  * @throws Error if File System Access API is not supported
  */
 export async function createTsvWriter(
   channels: number,
   suggestedName?: string,
-  physicalPrecision: number = 3,
-  voltagePrecision: number = 5
+  physicalPrecision: number = 3
 ): Promise<TsvWriter> {
   if (!('showSaveFilePicker' in window)) {
     throw new Error('File System Access API not supported in this browser');
@@ -183,7 +159,7 @@ export async function createTsvWriter(
   });
 
   const stream = await fileHandle.createWritable();
-  const writer = new TsvWriter(stream, channels, physicalPrecision, voltagePrecision, fileHandle.name);
+  const writer = new TsvWriter(stream, channels, physicalPrecision, fileHandle.name);
 
   // Write header automatically
   await writer.writeHeader();

@@ -19,6 +19,7 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
   rawToDisplayValue,
+  isUnknownMode,
   getLevelMeterColor,
   loadVoltageConfig,
   saveVoltageConfig,
@@ -712,13 +713,13 @@ function App() {
     }
   }, [updateDataHistory]);
 
-  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
+  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: number[], aiPhysical: number[]) => {
     saveUpdateChainRef.current = saveUpdateChainRef.current
       .then(async () => {
         const writer = tsvWriterRef.current;
         if (!writer) return;
         try {
-          await writer.writeRow(timestamp, aiRaw, aiPhysical, aiVoltage);
+          await writer.writeRow(timestamp, aiRaw, aiPhysical);
           setSavePointCount((prev) => prev + 1);
         } catch (err) {
           if (err instanceof TypeError && (err as Error).message.includes('closing')) {
@@ -893,7 +894,6 @@ function App() {
         displayEventPayload.timestamp,
         displayEventPayload.aiRaw,
         displayEventPayload.aiPhysical,
-        displayEventPayload.aiVoltage,
       );
     }
 
@@ -1401,10 +1401,12 @@ function App() {
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aiChannels.map((ch) => {
-            const display = rawToDisplayValue(ch.raw, voltageConfig[ch.id]);
+            const mode = voltageConfig[ch.id];
+            const display = rawToDisplayValue(ch.raw, mode);
             const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
             const aiMeterColor = getLevelMeterColor(aiRatio);
             const aiMeterHeight = Math.max(2, aiRatio * 100);
+            const showVoltage = !isUnknownMode(mode);
             return (
             <div
               key={ch.id}
@@ -1427,6 +1429,7 @@ function App() {
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
+                  {showVoltage && (
                   <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                     <span className="text-slate-600 font-medium dark:text-slate-300">
                       {display.unit}
@@ -1435,6 +1438,7 @@ function App() {
                       {display.value.toFixed(3)}
                     </span>
                   </div>
+                  )}
                 </div>
               </div>
               <div className="flex w-2 items-end overflow-hidden rounded-r-lg">

@@ -45,6 +45,7 @@ export type SerialSettings = {
 export type ModbusPrecision = 'normal' | 'extended';
 
 export type VoltageMode =
+  | 'unknown'
   | 'hx711_mv_per_v'
   | 'hx711_micro_strain'
   | 'ads1115_10v'
@@ -56,6 +57,7 @@ export type VoltageMode =
   | 'ads1115_256mv';
 
 export const VOLTAGE_MODES: { value: VoltageMode; label: string; unit: string }[] = [
+  { value: 'unknown', label: 'Unknown', unit: '' },
   { value: 'hx711_mv_per_v', label: 'HX711 (mV/V)', unit: 'mV/V' },
   { value: 'hx711_micro_strain', label: 'HX711 (με)', unit: 'με' },
   { value: 'ads1115_10v', label: 'ADS1115 (10 V)', unit: 'V' },

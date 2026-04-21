@@ -49,8 +49,12 @@ export const hx711RawToMicroStrain = (raw: number): number =>
 export const ads1115RawToVolt = (raw: number): number =>
   raw / 32768.0 * 6.144;
 
+export const isUnknownMode = (mode: VoltageMode): boolean => mode === 'unknown';
+
 export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: number; unit: string } => {
   switch (mode) {
+    case 'unknown':
+      return { value: NaN, unit: '' };
     case 'hx711_mv_per_v':
       return { value: hx711RawToMvPerV(raw), unit: 'mV/V' };
     case 'hx711_micro_strain':
