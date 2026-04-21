@@ -40,7 +40,7 @@ import {
   ads1115RawToVolt,
   rawToDisplayValue,
   isUnknownMode,
-  getLevelMeterColor,
+  getLevelColor,
   loadVoltageConfig,
   saveVoltageConfig,
 } from './utils/calibration';
@@ -1171,7 +1171,7 @@ function App() {
 
       <div className="space-y-3 p-3">
         <section className="card">
-        <div className="mb-1.5 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Analog Input (16)</h2>
           <p ref={statusRef} className="text-xs text-slate-500 dark:text-slate-400">Disconnected</p>
         </div>
@@ -1180,7 +1180,7 @@ function App() {
             const mode = voltageConfig[ch.id];
             const display = rawToDisplayValue(ch.raw, mode);
             const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
-            const aiMeterColor = getLevelMeterColor(aiRatio);
+            const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
             const aiMeterHeight = Math.max(2, aiRatio * 100);
             const showVoltage = !isUnknownMode(mode);
             return (
@@ -1188,25 +1188,25 @@ function App() {
               key={ch.id}
               className="flex rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="flex-1 p-1.5">
-                <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+              <div className="flex-1 p-1">
+                <div className="border-b border-slate-200 pb-px text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
                   {formatAiChannelDisplayLabel(ch.id)}
                 </div>
-                <div className="space-y-0.5 pt-0.5 text-sm">
+                <div className="space-y-0 pt-px text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
-                    <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                    <span className={`text-lg font-bold tabular-nums ${aiTextColor}`}>
                       {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700">
                     <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
-                    <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                    <span className={`text-lg font-bold tabular-nums ${aiTextColor}`}>
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
                   {showVoltage && (
-                  <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
+                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700">
                     <span className="text-slate-600 font-medium dark:text-slate-300">
                       {display.unit}
                     </span>
@@ -1217,7 +1217,7 @@ function App() {
                   )}
                 </div>
               </div>
-              <div className="flex w-2 items-end overflow-hidden rounded-r-lg">
+              <div className="flex w-4 items-end overflow-hidden rounded-r-lg">
                 <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
               </div>
             </div>
@@ -1227,38 +1227,28 @@ function App() {
       </section>
 
       <section className="card">
-        <div className="mb-1.5 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Analog Output (8)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
-          {aoChannels.map((ch) => {
-            const aoRatio = Math.min(1, Math.abs(ch.physical) / 10000);
-            const aoMeterColor = getLevelMeterColor(aoRatio);
-            const aoMeterHeight = Math.max(2, aoRatio * 100);
-            return (
+          {aoChannels.map((ch) => (
             <div
               key={ch.id}
-              className="flex rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="flex-1 p-1.5">
-                <div className="border-b border-slate-200 pb-0.5 text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
-                  {ch.label}
-                </div>
-                <div className="space-y-0.5 pt-0.5 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
-                    <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
-                      {(ch.physical / 1000).toFixed(3)}
-                    </span>
-                  </div>
-                </div>
+              <div className="border-b border-slate-200 pb-px text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                {ch.label}
               </div>
-              <div className="flex w-2 items-end overflow-hidden rounded-r-lg">
-                <div className={`w-full ${aoMeterColor}`} style={{ height: `${aoMeterHeight}%` }} />
+              <div className="pt-px text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
+                  <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
+                    {(ch.physical / 1000).toFixed(3)}
+                  </span>
+                </div>
               </div>
             </div>
-            );
-          })}
+          ))}
         </div>
       </section>
 
