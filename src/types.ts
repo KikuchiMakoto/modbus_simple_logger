@@ -44,6 +44,17 @@ export type SerialSettings = {
 
 export type ModbusPrecision = 'normal' | 'extended';
 
+export type VoltageDisplayMode =
+  | 'hx711_mv_per_v'
+  | 'hx711_micro_strain'
+  | 'ads1115_10v'
+  | 'ads1115_6_114v'
+  | 'ads1115_4_096v'
+  | 'ads1115_2_048v'
+  | 'ads1115_1_024v'
+  | 'ads1115_512mv'
+  | 'ads1115_256mv';
+
 // File System Access API types
 export interface FilePickerAcceptType {
   description?: string;

@@ -8,6 +8,7 @@ import {
   DataPoint,
   SerialSettings,
   ModbusPrecision,
+  VoltageDisplayMode,
 } from './types';
 import {
   aiToPhysical,
@@ -16,7 +17,6 @@ import {
   getAiStatus,
   hx711RawToMvPerV,
   hx711RawToMicroStrain,
-  ads1115RawToVolt,
 } from './utils/calibration';
 import {
   dataStorage,
@@ -29,6 +29,7 @@ import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { ModbusConfigPanel } from './components/ModbusConfigPanel';
+import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { readJsonCookie, writeJsonCookie } from './utils/cookies';
 
 // Polyfill Web Serial API for environments without native support (e.g., Android)
@@ -98,22 +99,81 @@ const INPUT_READ_RETRY_WINDOW_MS = 60_000;
 const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
 const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
 const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
+const VOLTAGE_CONFIG_COOKIE_KEY = 'voltage_config_v1';
+const HX711_GAUGE_FACTOR = 2e3;
 
-const computeSensorValues = (raw: number, idx: number) => {
-  if (idx < 8) {
-    return { voltage: hx711RawToMvPerV(raw), microStrain: hx711RawToMicroStrain(raw) };
-  }
-  return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
+const VOLTAGE_MODE_OPTIONS: { value: VoltageDisplayMode; label: string }[] = [
+  { value: 'hx711_mv_per_v', label: 'HX711 (mV/V)' },
+  { value: 'hx711_micro_strain', label: 'HX711 (με)' },
+  { value: 'ads1115_10v', label: 'ADS1115 (10 V)' },
+  { value: 'ads1115_6_114v', label: 'ADS1115 (6.114 V)' },
+  { value: 'ads1115_4_096v', label: 'ADS1115 (4.096 V)' },
+  { value: 'ads1115_2_048v', label: 'ADS1115 (2.048 V)' },
+  { value: 'ads1115_1_024v', label: 'ADS1115 (1.024 V)' },
+  { value: 'ads1115_512mv', label: 'ADS1115 (512 mV)' },
+  { value: 'ads1115_256mv', label: 'ADS1115 (256 mV)' },
+];
+
+const VOLTAGE_MODE_SET = new Set<VoltageDisplayMode>(
+  VOLTAGE_MODE_OPTIONS.map((option) => option.value),
+);
+
+const getDefaultVoltageDisplayModes = (): VoltageDisplayMode[] =>
+  Array.from({ length: AI_CHANNELS }, (_, idx) =>
+    idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v',
+  );
+
+const loadVoltageDisplayModes = (): VoltageDisplayMode[] => {
+  const raw = readJsonCookie<string[]>(VOLTAGE_CONFIG_COOKIE_KEY);
+  const defaults = getDefaultVoltageDisplayModes();
+  if (!Array.isArray(raw)) return defaults;
+  return defaults.map((defaultMode, idx) => {
+    const mode = raw[idx];
+    return typeof mode === 'string' && VOLTAGE_MODE_SET.has(mode as VoltageDisplayMode)
+      ? (mode as VoltageDisplayMode)
+      : defaultMode;
+  });
 };
 
-const computeVoltage = (raw: number, idx: number): number =>
-  idx < 8 ? hx711RawToMvPerV(raw) : ads1115RawToVolt(raw);
+const ads1115RawToVolt = (raw: number, fullScaleVolt: number): number =>
+  (raw / 32768.0) * fullScaleVolt;
 
-const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
+const computeVoltageByMode = (raw: number, mode: VoltageDisplayMode): number => {
+  switch (mode) {
+    case 'hx711_mv_per_v':
+      return hx711RawToMvPerV(raw);
+    case 'hx711_micro_strain':
+      return hx711RawToMvPerV(raw) * HX711_GAUGE_FACTOR;
+    case 'ads1115_10v':
+      return ads1115RawToVolt(raw, 10);
+    case 'ads1115_6_114v':
+      return ads1115RawToVolt(raw, 6.114);
+    case 'ads1115_4_096v':
+      return ads1115RawToVolt(raw, 4.096);
+    case 'ads1115_2_048v':
+      return ads1115RawToVolt(raw, 2.048);
+    case 'ads1115_1_024v':
+      return ads1115RawToVolt(raw, 1.024);
+    case 'ads1115_512mv':
+      return ads1115RawToVolt(raw, 0.512);
+    case 'ads1115_256mv':
+      return ads1115RawToVolt(raw, 0.256);
+  }
+};
+
+const formatVoltageModeUnit = (mode: VoltageDisplayMode): string =>
+  mode === 'hx711_mv_per_v' ? 'mV/V' : mode === 'hx711_micro_strain' ? 'με' : 'V';
+
+const formatVoltageModeDigits = (mode: VoltageDisplayMode): number =>
+  mode === 'hx711_mv_per_v' ? 4 : mode === 'hx711_micro_strain' ? 1 : 3;
+
+const createAiChannels = (calibration: AiCalibration[], voltageModes: VoltageDisplayMode[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
     const physical = aiToPhysical(raw, calibration[idx]);
-    const { voltage, microStrain } = computeSensorValues(raw, idx);
+    const mode = voltageModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+    const voltage = computeVoltageByMode(raw, mode);
+    const microStrain = hx711RawToMicroStrain(raw);
     return {
       id: idx,
       raw,
@@ -248,7 +308,12 @@ function App() {
   const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS[0]);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
-  const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
+  const [voltageDisplayModes, setVoltageDisplayModes] = useState<VoltageDisplayMode[]>(
+    loadVoltageDisplayModes,
+  );
+  const [aiChannels, setAiChannels] = useState<AiChannel[]>(
+    createAiChannels(aiCalibration, voltageDisplayModes),
+  );
   const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels());
   const [connected, setConnected] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
@@ -305,12 +370,15 @@ function App() {
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
+  const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
       setCalibrationPanelOpen(true);
     } else if (item === 'modbusConfig') {
       setModbusConfigPanelOpen(true);
+    } else if (item === 'voltageConfig') {
+      setVoltageConfigPanelOpen(true);
     }
   };
 
@@ -353,6 +421,10 @@ function App() {
       chart2: { x: chart2X, y: chart2Y },
     });
   }, [chart1X, chart1Y, chart2X, chart2Y]);
+
+  useEffect(() => {
+    writeJsonCookie(VOLTAGE_CONFIG_COOKIE_KEY, voltageDisplayModes);
+  }, [voltageDisplayModes]);
 
   useEffect(() => {
     if (!tsvWriter || saveStartedAt === null) {
@@ -427,10 +499,12 @@ function App() {
       channels.map((ch, idx) => {
         const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
         const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
-        const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+        const mode = voltageDisplayModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+        const voltage = computeVoltageByMode(rawValue, mode);
+        const microStrain = hx711RawToMicroStrain(rawValue);
         return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
       }),
-    [],
+    [voltageDisplayModes],
   );
 
   const ensureWorkerReady = useCallback((): Worker => {
@@ -676,7 +750,9 @@ function App() {
         setAiChannels((prev) =>
           prev.map((ch, idx) => {
             const rawValue = aiRaw[idx] ?? ch.raw;
-            const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+            const mode = voltageDisplayModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+            const voltage = computeVoltageByMode(rawValue, mode);
+            const microStrain = hx711RawToMicroStrain(rawValue);
             return {
               ...ch,
               raw: rawValue,
@@ -696,7 +772,7 @@ function App() {
     if (displayUpdateCountRef.current % 100 === 0) {
       displayUpdateChainRef.current = Promise.resolve();
     }
-  }, [updateDataHistory]);
+  }, [updateDataHistory, voltageDisplayModes]);
 
   const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: number[], aiPhysical: number[], aiVoltage: number[]) => {
     saveUpdateChainRef.current = saveUpdateChainRef.current
@@ -786,7 +862,10 @@ function App() {
       const aiPhysical = aiSourceValues.map((value, idx) =>
         aiToPhysical(value, aiCalibration[idx] ?? { a: 0, b: 1, c: 0 })
       );
-      const aiVoltage = aiRaw.map((raw, idx) => computeVoltage(raw, idx));
+      const aiVoltage = aiRaw.map((raw, idx) => {
+        const mode = voltageDisplayModes[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+        return computeVoltageByMode(raw, mode);
+      });
       const aiRawShare = aiRawShareRef.current;
       const aiPhysicalShare = aiPhysicalShareRef.current;
       const dataReadyVersion = dataReadyVersionRef.current;
@@ -891,6 +970,7 @@ function App() {
   }, [
     aiCalibration,
     modbusPrecision,
+    voltageDisplayModes,
     enqueueDisplayUpdate,
     enqueueSaveUpdate,
     pruneFailuresInWindow,
@@ -1163,6 +1243,26 @@ function App() {
     });
   };
 
+  const handleVoltageModeChange = (channelIndex: number, mode: VoltageDisplayMode) => {
+    if (channelIndex < 0 || channelIndex >= AI_CHANNELS) return;
+    setVoltageDisplayModes((prev) => {
+      const next = [...prev];
+      next[channelIndex] = mode;
+      setAiChannels((chs) =>
+        chs.map((ch, idx) => {
+          const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
+          const selectedMode = next[idx] ?? (idx < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v');
+          return {
+            ...ch,
+            voltage: computeVoltageByMode(rawValue, selectedMode),
+            microStrain: hx711RawToMicroStrain(rawValue),
+          };
+        }),
+      );
+      return next;
+    });
+  };
+
 
   const handleDownloadCalibration = () => {
     const calibrationData: Record<string, any> = {};
@@ -1422,10 +1522,14 @@ function App() {
                 </div>
                 <div className="flex justify-between items-center pt-0.5 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-slate-600 font-medium dark:text-slate-300">
-                    {ch.id < 8 ? 'mV/V' : 'V'}
+                    {formatVoltageModeUnit(voltageDisplayModes[ch.id] ?? (ch.id < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v'))}
                   </span>
                   <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
-                    {ch.voltage.toFixed(ch.id < 8 ? 4 : 3)}
+                    {ch.voltage.toFixed(
+                      formatVoltageModeDigits(
+                        voltageDisplayModes[ch.id] ?? (ch.id < 8 ? 'hx711_mv_per_v' : 'ads1115_6_114v'),
+                      ),
+                    )}
                   </span>
                 </div>
               </div>
@@ -1436,7 +1540,7 @@ function App() {
 
       <section className="card">
         <div className="mb-1.5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Analog Output (8)</h2>
+          <h2 className="text-lg font-semibold text-sky-700 dark:text-sky-300">Analog Output (8)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
           {aoChannels.map((ch) => (
@@ -1450,7 +1554,7 @@ function App() {
               <div className="space-y-0.5 pt-0.5 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
-                  <span className="text-lg font-bold tabular-nums text-violet-600 dark:text-violet-300">
+                  <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-300">
                     {(ch.physical / 1000).toFixed(3)}
                   </span>
                 </div>
@@ -1485,7 +1589,7 @@ function App() {
         />
         <section className="card space-y-2 md:col-span-2">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-amber-400">ScriptRunner (Pyodide)</h2>
+            <h2 className="text-lg font-semibold text-yellow-600 dark:text-yellow-300">ScriptRunner (Pyodide)</h2>
             <button
               type="button"
               className="button-primary"
@@ -1531,6 +1635,14 @@ function App() {
         onPollingRateChange={setPollingRate}
         pollingOptions={POLLING_OPTIONS}
         connected={connected}
+      />
+
+      <VoltageConfigPanel
+        open={voltageConfigPanelOpen}
+        onClose={() => setVoltageConfigPanelOpen(false)}
+        modes={voltageDisplayModes}
+        modeOptions={VOLTAGE_MODE_OPTIONS}
+        onModeChange={handleVoltageModeChange}
       />
 
       <CalibrationPanel
