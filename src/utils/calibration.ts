@@ -1,4 +1,5 @@
 import { AiCalibration, AiChannel, VoltageMode, DEFAULT_VOLTAGE_CONFIG, VOLTAGE_MODES } from '../types';
+import { AI_CHANNELS } from '../constants';
 import { readJsonCookie, writeJsonCookie } from './cookies';
 
 const AI_COOKIE_KEY = 'ai_calibration_v1';
@@ -21,7 +22,7 @@ export const loadVoltageConfig = (): VoltageMode[] => {
   const raw = readJsonCookie<string[]>(VOLTAGE_CONFIG_COOKIE_KEY);
   const validValues = new Set(VOLTAGE_MODES.map(m => m.value));
   if (!Array.isArray(raw)) return [...DEFAULT_VOLTAGE_CONFIG];
-  return Array.from({ length: 16 }, (_, i) => {
+  return Array.from({ length: AI_CHANNELS }, (_, i) => {
     const v = raw[i];
     return v && validValues.has(v as VoltageMode) ? v as VoltageMode : DEFAULT_VOLTAGE_CONFIG[i];
   });
