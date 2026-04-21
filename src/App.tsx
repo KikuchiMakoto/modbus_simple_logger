@@ -148,6 +148,11 @@ function downloadJson(filename: string, data: unknown) {
   URL.revokeObjectURL(url);
 }
 
+function formatCalibrationTimestamp(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
 function formatSerialSettings(settings: SerialSettings) {
   const parityLetter = settings.parity === 'none' ? 'N' : settings.parity === 'even' ? 'E' : 'O';
   return `${settings.baudRate}bps ${settings.dataBits}${parityLetter}${settings.stopBits}`;
@@ -1170,30 +1175,34 @@ function App() {
       };
     });
     calibrationData.type = 'Calibration';
-    downloadJson('calibration.json', calibrationData);
+    downloadJson(`${formatCalibrationTimestamp(new Date())}.cal.json`, calibrationData);
   };
 
   const handleLoadCalibrationFile = async (file: File) => {
     try {
       const text = await file.text();
-      const data = JSON.parse(text);
+      const data = JSON.parse(text) as Record<string, unknown>;
 
       if (data.type !== 'Calibration') {
         setStatus('Invalid calibration file format: missing "type": "Calibration" field');
         return;
       }
 
-      const loadedCalibration: AiCalibration[] = [];
+      const loadedCalibration: AiCalibration[] = aiCalibration.map((cal) => ({ ...cal }));
       for (let i = 0; i < AI_CHANNELS; i++) {
         const key = i.toString().padStart(2, '0');
-        if (data[key]) {
-          loadedCalibration.push({
-            a: data[key].a ?? 0,
-            b: data[key].b ?? 1,
-            c: data[key].c ?? 0,
-          });
-        } else {
-          loadedCalibration.push({ a: 0, b: 1, c: 0 });
+        const channelData = data[key];
+        if (!channelData || typeof channelData !== 'object') continue;
+
+        const parsed = channelData as Partial<AiCalibration>;
+        if (typeof parsed.a === 'number' && Number.isFinite(parsed.a)) {
+          loadedCalibration[i].a = parsed.a;
+        }
+        if (typeof parsed.b === 'number' && Number.isFinite(parsed.b)) {
+          loadedCalibration[i].b = parsed.b;
+        }
+        if (typeof parsed.c === 'number' && Number.isFinite(parsed.c)) {
+          loadedCalibration[i].c = parsed.c;
         }
       }
 
