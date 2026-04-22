@@ -4,8 +4,6 @@
 
 🔌 **デモ**: https://kikuchimakoto.github.io/modbus_simple_logger/
 
-📁 **リポジトリ**: https://github.com/KikuchiMakoto/modbus_simple_logger
-
 ---
 
 ## 主な機能
