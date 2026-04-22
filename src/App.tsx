@@ -1076,14 +1076,14 @@ function App() {
                 </p>
               </div>
               <div role="status" aria-live="polite" className="text-left text-xs text-slate-600 dark:text-slate-400">
-                <p className="tabular-nums">
-                  Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz / Actual: {actualRateHz.toFixed(1)} Hz
-                </p>
                 <p className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
                 </p>
                 <p className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / Points: {savePointCount}
+                </p>
+                <p className="tabular-nums">
+                  Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz / Actual: {actualRateHz.toFixed(1)} Hz
                 </p>
               </div>
             </div>
