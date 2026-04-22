@@ -1174,7 +1174,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className={connected ? 'button-secondary' : 'button-primary'}
+                className={`min-w-[7rem] ${connected ? 'button-secondary' : 'button-primary'}`}
                 onClick={handleToggleConnection}
               >
                 {connected ? 'Disconnect' : 'Connect'}
