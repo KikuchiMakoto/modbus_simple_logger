@@ -156,7 +156,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
 
-## 変更stage前やcommit前の絶対的なルール
+## 変更stage前やcommit前のpackage.json更新のための絶対的なルール
 - 小規模変更(主観でいいです)ではマイナーバージョンをインクリメント
 - マイナーバージョンが20になる場合は、メジャーバージョンを更新(Linux,Linus Torvaldsの思想)
 - 大規模変更(主観でいいです)ではメジャーバージョンをインクリメント
