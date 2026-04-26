@@ -79,7 +79,6 @@ bun run preview
 
 ## ブラウザ要件
 
-<<<<<<< HEAD
 | API | 用途 | 備考 |
 |-----|------|------|
 | Web Serial API | Modbus RTU 通信 | Chrome 89+ / Edge 89+。モバイルでは `web-serial-polyfill` 経由で WebUSB を利用 |
