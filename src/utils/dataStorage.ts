@@ -1,5 +1,3 @@
-import { MAX_POINTS_IN_MEMORY, MAX_POINTS_WHILE_SAVING } from '../constants';
-
 const DB_NAME = 'ModbusLoggerDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'dataPoints';

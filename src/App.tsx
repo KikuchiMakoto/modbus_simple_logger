@@ -110,9 +110,6 @@ const computeSensorValues = (raw: number, idx: number) => {
   return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
 };
 
-const computeVoltage = (raw: number, idx: number): number =>
-  idx < 8 ? hx711RawToMvPerV(raw) : ads1115RawToVolt(raw);
-
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
@@ -1051,13 +1048,13 @@ function App() {
       console.warn('Error closing TSV writer:', err);
     }
 
-      pendingDataPoints.current = [];
-      recentTimestampsRef.current = [];
-      setActualRateHz(0);
+    pendingDataPoints.current = [];
+    recentTimestampsRef.current = [];
+    setActualRateHz(0);
 
-      await dataStorage.clearAllData();
-      dataBufferRef.current = [];
-      setDisplayRevision((v) => v + 1);
+    await dataStorage.clearAllData();
+    dataBufferRef.current = [];
+    setDisplayRevision((v) => v + 1);
 
     setStatus('Stopped saving');
   };
