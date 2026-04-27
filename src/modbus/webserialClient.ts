@@ -195,29 +195,28 @@ export class WebSerialModbusClient {
     if (this.disconnecting) return;
     this.disconnecting = true;
     console.info(`${this.debugPrefix} disconnect() start`);
-    try {
-      if (this.reader) {
-        console.info(`${this.debugPrefix} cancelling reader`);
-        await this.reader.cancel();
-        this.reader.releaseLock();
-      }
-      if (this.writer) {
-        console.info(`${this.debugPrefix} closing writer`);
-        await this.writer.close();
-      }
-      if (this.port) {
-        console.info(`${this.debugPrefix} closing port`);
-        await this.port.close();
-      }
-      console.info(`${this.debugPrefix} disconnect() complete`);
-    } catch (err) {
-      console.error('Error during disconnect:', err);
-    } finally {
-      this.port = null;
+
+    if (this.reader) {
+      console.info(`${this.debugPrefix} cancelling reader`);
+      try { await this.reader.cancel(); } catch (err) { console.warn(`${this.debugPrefix} reader cancel failed`, err); }
+      try { this.reader.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} reader releaseLock failed`, err); }
       this.reader = null;
-      this.writer = null;
-      this.disconnecting = false;
     }
+
+    if (this.writer) {
+      console.info(`${this.debugPrefix} closing writer`);
+      try { await this.writer.close(); } catch (err) { console.warn(`${this.debugPrefix} writer close failed`, err); }
+      this.writer = null;
+    }
+
+    if (this.port) {
+      console.info(`${this.debugPrefix} closing port`);
+      try { await this.port.close(); } catch (err) { console.warn(`${this.debugPrefix} port close failed`, err); }
+      this.port = null;
+    }
+
+    this.disconnecting = false;
+    console.info(`${this.debugPrefix} disconnect() complete`);
   }
 
   getPort(): SerialPort | null {
