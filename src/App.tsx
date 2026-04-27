@@ -53,6 +53,7 @@ import { HamburgerMenu } from './components/HamburgerMenu';
 import { ModbusConfigPanel } from './components/ModbusConfigPanel';
 import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
+import { ManualPanel } from './components/ManualPanel';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -215,6 +216,7 @@ function App() {
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
   const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
+  const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
 
   const clientRef = useRef<WebSerialModbusClient | null>(null);
@@ -256,6 +258,8 @@ function App() {
       setVoltageConfigPanelOpen(true);
     } else if (item === 'appInfo') {
       setAppInfoPanelOpen(true);
+    } else if (item === 'manual') {
+      setManualPanelOpen(true);
     }
   };
 
@@ -1344,6 +1348,11 @@ function App() {
       <AppInfoPanel
         open={appInfoPanelOpen}
         onClose={() => setAppInfoPanelOpen(false)}
+      />
+
+      <ManualPanel
+        open={manualPanelOpen}
+        onClose={() => setManualPanelOpen(false)}
       />
     </div>
   );

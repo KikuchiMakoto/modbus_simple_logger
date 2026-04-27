@@ -10,6 +10,7 @@ const MENU_ITEMS = [
   { key: 'modbusConfig', label: 'Modbus Config', icon: '🔌', wip: false },
   { key: 'calibration', label: 'Input Calibration', icon: '⚙', wip: false },
   { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
+  { key: 'manual', label: 'Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'App Info', icon: 'ℹ️', wip: false },
 ];
 
