@@ -1221,7 +1221,7 @@ function App() {
                   )}
                 </div>
               </div>
-              <div className="flex w-4 items-end overflow-hidden rounded-r-lg">
+              <div className="flex w-2 items-end overflow-hidden rounded-r-lg">
                 <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
               </div>
             </div>
