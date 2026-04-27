@@ -111,7 +111,7 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
                 <Pin label="A" sub="E+" color="bg-red-500 text-white" />
               </div>
               <div className="grid grid-cols-3 gap-1">
-                <Pin label="C" sub="E−" color="bg-gray-700 text-white border-gray-500 dark:bg-gray-500" />
+                <Pin label="C" sub="E−" color="bg-black text-white border-gray-500" />
                 <Pin label="G" sub="" color="bg-slate-500 text-white dark:bg-slate-700" />
                 <Pin label="F" sub="" color="bg-slate-500 text-white dark:bg-slate-700" />
                </div>
