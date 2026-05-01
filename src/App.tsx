@@ -244,7 +244,6 @@ function App() {
   const aoWriteInProgressRef = useRef(false);
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
-  const statusRef = useRef<HTMLParagraphElement>(null);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -260,8 +259,8 @@ function App() {
     }
   };
 
-  const setStatus = useCallback((msg: string) => {
-    if (statusRef.current) statusRef.current.textContent = msg;
+  const setStatus = useCallback((_msg: string) => {
+    // Status display removed from header
   }, []);
 
   useEffect(() => {
@@ -1090,7 +1089,6 @@ function App() {
                 <p className="tabular-nums">
                   Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz / Actual: {actualRateHz.toFixed(1)} Hz
                 </p>
-                <p ref={statusRef} className="tabular-nums text-slate-500 dark:text-slate-400">Disconnected</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
