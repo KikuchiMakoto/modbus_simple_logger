@@ -69,7 +69,7 @@ export function CalibrationPanel({
       open={open}
       onClose={onClose}
       title="Input Calibration"
-      subtitle="a·x² + b·x + c = y"
+      subtitle="a·(Raw)²+b·(Raw)+c = Phy"
       maxWidth="max-w-sm"
       headerActions={
         <>
