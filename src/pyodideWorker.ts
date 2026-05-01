@@ -1,5 +1,3 @@
-import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.mjs';
-
 type PyodideLike = {
   setInterruptBuffer: (buffer: Uint8Array) => void;
   runPythonAsync: (code: string) => Promise<unknown>;
@@ -52,6 +50,8 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   interruptBuffer = new Uint8Array(intSab);
   versionBuffer = new Int32Array(verSab);
 
+  const pyodideUrl = 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.mjs';
+  const { loadPyodide } = await import(/* @vite-ignore */ pyodideUrl);
   pyodide = await loadPyodide({
     indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/',
   }) as PyodideLike;
