@@ -1090,6 +1090,7 @@ function App() {
                 <p className="tabular-nums">
                   Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz / Actual: {actualRateHz.toFixed(1)} Hz
                 </p>
+                <p ref={statusRef} className="tabular-nums text-slate-500 dark:text-slate-400">Disconnected</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
@@ -1174,7 +1175,14 @@ function App() {
         <section className="card">
         <div className="mb-1 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Analog Input (16)</h2>
-          <p ref={statusRef} className="text-xs text-slate-500 dark:text-slate-400">Disconnected</p>
+          <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
+            <p className="text-[0.65rem] italic">
+              <em>Phy</em> = <em>a</em>&#x22C5;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&#x22C5;(<em>Raw</em>) + <em>c</em>
+            </p>
+            <p className="text-[0.6rem]">
+              <em>a</em>, <em>b</em>, <em>c</em> : Input Calibration
+            </p>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {aiChannels.map((ch) => {
