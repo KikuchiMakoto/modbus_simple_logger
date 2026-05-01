@@ -1203,13 +1203,13 @@ function App() {
                 </div>
                 <div className="space-y-0 pt-px text-sm">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-600 font-medium dark:text-slate-300">Raw(x)</span>
+                    <span className="text-slate-600 font-medium dark:text-slate-300">Raw</span>
                     <span className={`text-lg font-bold tabular-nums ${aiTextColor}`}>
                       {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700">
-                    <span className="text-slate-600 font-medium dark:text-slate-300">Phy(y)</span>
+                    <span className="text-slate-600 font-medium dark:text-slate-300">Phy</span>
                     <span className={`text-lg font-bold tabular-nums ${aiTextColor}`}>
                       {ch.physical.toFixed(3)}
                     </span>
