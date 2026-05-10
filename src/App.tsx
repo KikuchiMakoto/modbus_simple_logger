@@ -1284,7 +1284,7 @@ function App() {
         />
         <section className="card space-y-2 md:col-span-2">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-yellow-500 dark:text-yellow-300">[&#128679;WIP] ScriptRunner</h2>
+            <h2 className="text-lg font-semibold text-yellow-500 dark:text-yellow-300">&#128679;WIP ScriptRunner</h2>
             <button
               type="button"
               className="button-primary"
