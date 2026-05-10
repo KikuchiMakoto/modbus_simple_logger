@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS } from '../constants';
+import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
+
+const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
 
 export function useScriptRunner(setAo: (ch: number, data: number) => void) {
   const scriptRunnerSupported = typeof SharedArrayBuffer !== 'undefined' && window.crossOriginIsolated;
-  const [scriptCode, setScriptCode] = useState(getDefaultScript());
+  const [scriptCode, setScriptCode] = useState(() => {
+    const stored = readJsonStorage<string>(SCRIPT_RUNNER_STORAGE_KEY);
+    return stored ?? getDefaultScript();
+  });
   const [scriptRunning, setScriptRunning] = useState(false);
   const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
     scriptRunnerSupported
@@ -113,6 +119,14 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     void startScriptRunner();
   }, [scriptRunning, startScriptRunner, stopScriptRunner]);
 
+  const clearScriptCode = useCallback(() => {
+    setScriptCode(getDefaultScript());
+  }, []);
+
+  useEffect(() => {
+    writeJsonStorage(SCRIPT_RUNNER_STORAGE_KEY, scriptCode);
+  }, [scriptCode]);
+
   useEffect(() => {
     return () => {
       if (pyWorkerRef.current) {
@@ -130,6 +144,7 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     scriptRunnerStatus,
     toggleScriptRunner,
     stopScriptRunner,
+    clearScriptCode,
     aiRawShareRef,
     aiPhysicalShareRef,
     dataReadyVersionRef,

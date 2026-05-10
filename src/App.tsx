@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -54,6 +54,7 @@ import { ModbusConfigPanel } from './components/ModbusConfigPanel';
 import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
+import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -214,6 +215,7 @@ function App() {
   const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
+  const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
 
   const clientRef = useRef<WebSerialModbusClient | null>(null);
@@ -256,6 +258,8 @@ function App() {
       setAppInfoPanelOpen(true);
     } else if (item === 'manual') {
       setManualPanelOpen(true);
+    } else if (item === 'scriptRunner') {
+      setScriptRunnerPanelOpen(true);
     }
   };
 
@@ -359,85 +363,6 @@ function App() {
       }),
     [],
   );
-
-  const handleScriptEditorKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Tab') return;
-
-    event.preventDefault();
-
-    const textarea = event.currentTarget;
-    const value = textarea.value;
-    const selectionStart = textarea.selectionStart;
-    const selectionEnd = textarea.selectionEnd;
-    const lineStartIndex = value.lastIndexOf('\n', selectionStart - 1) + 1;
-    const hasSelection = selectionStart !== selectionEnd;
-    const indent = '  ';
-
-    if (!event.shiftKey) {
-      if (!hasSelection) {
-        const nextValue = `${value.slice(0, selectionStart)}${indent}${value.slice(selectionEnd)}`;
-        scriptRunner.setScriptCode(nextValue);
-        window.requestAnimationFrame(() => {
-          const nextCursor = selectionStart + indent.length;
-          textarea.setSelectionRange(nextCursor, nextCursor);
-        });
-        return;
-      }
-
-      const blockStart = lineStartIndex;
-      const blockEnd = selectionEnd;
-      const block = value.slice(blockStart, blockEnd);
-      const indentedBlock = block
-        .split('\n')
-        .map((line) => (!line.trim() ? line : `${indent}${line}`))
-        .join('\n');
-      const nextValue = `${value.slice(0, blockStart)}${indentedBlock}${value.slice(blockEnd)}`;
-      scriptRunner.setScriptCode(nextValue);
-      window.requestAnimationFrame(() => {
-        const selectionEndOffset = indentedBlock.length - block.length;
-        textarea.setSelectionRange(selectionStart + indent.length, selectionEnd + selectionEndOffset);
-      });
-      return;
-    }
-
-    const blockStart = lineStartIndex;
-    const nextLineBreak = value.indexOf('\n', selectionStart);
-    let blockEnd = selectionEnd;
-    if (!hasSelection) {
-      blockEnd = nextLineBreak === -1 ? value.length : nextLineBreak;
-    }
-    const block = value.slice(blockStart, blockEnd);
-    const lines = block.split('\n');
-
-    let removedFromFirstLine = 0;
-    let removedTotal = 0;
-    const outdentedBlock = lines.map((line, idx) => {
-      let removeCount = 0;
-      if (line.startsWith(indent)) {
-        removeCount = indent.length;
-      } else if (line.startsWith(' ')) {
-        removeCount = 1;
-      }
-      if (idx === 0) {
-        removedFromFirstLine = removeCount;
-      }
-      removedTotal += removeCount;
-      return line.slice(removeCount);
-    }).join('\n');
-
-    const nextValue = `${value.slice(0, blockStart)}${outdentedBlock}${value.slice(blockEnd)}`;
-    scriptRunner.setScriptCode(nextValue);
-    window.requestAnimationFrame(() => {
-      if (!hasSelection) {
-        const nextCursor = Math.max(lineStartIndex, selectionStart - removedFromFirstLine);
-        textarea.setSelectionRange(nextCursor, nextCursor);
-        return;
-      }
-      const nextStart = Math.max(lineStartIndex, selectionStart - removedFromFirstLine);
-      const nextEnd = Math.max(nextStart, selectionEnd - removedTotal);
-      textarea.setSelectionRange(nextStart, nextEnd);
-    });
-  }, [scriptRunner]);
 
   const updateDataHistory = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array) => {
     const timestamp = Date.now();
@@ -1282,27 +1207,6 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <section className="card space-y-2 md:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-yellow-500 dark:text-yellow-300">&#128679;WIP ScriptRunner</h2>
-            <button
-              type="button"
-              className="button-primary"
-              onClick={scriptRunner.toggleScriptRunner}
-              disabled={!scriptRunner.scriptRunnerSupported}
-            >
-              {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
-            </button>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Status: {scriptRunner.scriptRunnerStatus}</p>
-          <textarea
-            value={scriptRunner.scriptCode}
-            onChange={(e) => scriptRunner.setScriptCode(e.target.value)}
-            onKeyDown={handleScriptEditorKeyDown}
-            className="min-h-[240px] w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            spellCheck={false}
-          />
-        </section>
       </div>
       </div>
 
@@ -1356,6 +1260,18 @@ function App() {
       <ManualPanel
         open={manualPanelOpen}
         onClose={() => setManualPanelOpen(false)}
+      />
+
+      <ScriptRunnerPanel
+        open={scriptRunnerPanelOpen}
+        onClose={() => setScriptRunnerPanelOpen(false)}
+        scriptCode={scriptRunner.scriptCode}
+        onScriptCodeChange={scriptRunner.setScriptCode}
+        scriptRunning={scriptRunner.scriptRunning}
+        scriptRunnerStatus={scriptRunner.scriptRunnerStatus}
+        scriptRunnerSupported={scriptRunner.scriptRunnerSupported}
+        onToggleScriptRunner={scriptRunner.toggleScriptRunner}
+        onClearScript={scriptRunner.clearScriptCode}
       />
     </div>
   );
