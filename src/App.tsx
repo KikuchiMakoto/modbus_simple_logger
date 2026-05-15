@@ -246,6 +246,7 @@ function App() {
   const aoWriteInProgressRef = useRef(false);
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
+  const pollingRateRef = useRef(pollingRate.valueMs);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -273,6 +274,10 @@ function App() {
       setStatus('IndexedDB initialization failed');
     });
   }, [setStatus]);
+
+  useEffect(() => {
+    pollingRateRef.current = pollingRate.valueMs;
+  }, [pollingRate.valueMs]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -600,6 +605,13 @@ function App() {
     const pruneAndCountAI = () =>
       pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
 
+    // Limit timeout to 75% of the polling interval so a slow/failed read never
+    // blocks longer than one cycle.  Floor at 100 ms, cap at 900 ms.
+    const readTimeoutMs = Math.min(Math.max(Math.floor(pollingRateRef.current * 0.75), 100), 900);
+    // Only retry when the polling interval is long enough that a second attempt
+    // fits within the cycle.  At ≤ 400 ms the retry would always overflow.
+    const canRetry = pollingRateRef.current >= 500;
+
     let aiSourceValues: number[] | null = null;
     if (pruneAndCountAI() >= INPUT_READ_MAX_FAILURES_PER_WINDOW) {
       firstError = new Error(
@@ -608,25 +620,28 @@ function App() {
     } else {
       try {
         aiSourceValues = modbusPrecision === 'extended'
-          ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
-          : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
+          ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
+          : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
       } catch (readError) {
         inputReadFailureTimestampsRef.current.push(Date.now());
         const normalizedReadError =
           readError instanceof Error ? readError : new Error(String(readError));
-        console.warn('[App] AI read failed; retrying once', normalizedReadError);
-        if (pruneAndCountAI() < INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+        if (canRetry && pruneAndCountAI() < INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+          console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
             aiSourceValues = modbusPrecision === 'extended'
-              ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS)
-              : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS);
+              ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
+              : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
           } catch (retryReadError) {
             inputReadFailureTimestampsRef.current.push(Date.now());
             firstError = new Error(
               `Failed to read AI Input Registers after retry: ${(retryReadError instanceof Error ? retryReadError : new Error(String(retryReadError))).message}`,
             );
           }
+        } else if (!canRetry) {
+          console.warn('[App] AI read failed; skipping retry (polling interval too short)', normalizedReadError);
+          firstError = new Error(`Failed to read AI Input Registers: ${normalizedReadError.message}`);
         } else {
           firstError = new Error(
             `Failed to read AI Input Registers: ${normalizedReadError.message} (retry rate limit reached)`,
@@ -1185,6 +1200,7 @@ function App() {
             return (
             <div
               key={ch.id}
+              translate="no"
               className="flex rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="flex-1 p-1">
