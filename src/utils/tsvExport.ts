@@ -72,6 +72,7 @@ export class TsvWriter {
   private channels: number;
   private physicalPrecision: number;
   private fileName: string;
+  private writeBuffer: string[] = [];
 
   constructor(
     stream: FileSystemWritableFileStream,
@@ -90,13 +91,14 @@ export class TsvWriter {
     await this.stream.write(header);
   }
 
-  /**
-   * Write a single data row to the file
-   * @param timestamp - Unix timestamp in milliseconds
-   * @param aiRaw - Array of raw AI channel values (Float32Array or number[])
-   * @param aiPhysical - Array of physical AI channel values (Float32Array or number[])
-   */
-  async writeRow(timestamp: number, aiRaw: Float32Array | number[], aiPhysical: Float32Array | number[]): Promise<void> {
+  async flush(): Promise<void> {
+    if (this.writeBuffer.length === 0) return;
+    const data = this.writeBuffer.join('');
+    this.writeBuffer = [];
+    await this.stream.write(data);
+  }
+
+  writeRow(timestamp: number, aiRaw: Float32Array | number[], aiPhysical: Float32Array | number[]): void {
     const rawArr = toArrayLike(aiRaw);
     const phyArr = toArrayLike(aiPhysical);
     if (rawArr.length !== this.channels) {
@@ -105,16 +107,11 @@ export class TsvWriter {
     if (phyArr.length !== this.channels) {
       throw new Error(`Invalid physical values column count: expected ${this.channels}, got ${phyArr.length}.`);
     }
-    const row = formatTsvRow(
-      timestamp,
-      aiRaw,
-      aiPhysical,
-      this.physicalPrecision
-    );
-    await this.stream.write(row);
+    this.writeBuffer.push(formatTsvRow(timestamp, aiRaw, aiPhysical, this.physicalPrecision));
   }
 
   async close(): Promise<void> {
+    await this.flush();
     await this.stream.close();
   }
 

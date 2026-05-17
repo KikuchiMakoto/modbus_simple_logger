@@ -27,6 +27,7 @@ import {
   BATCH_FLUSH_INTERVAL_MS,
   KEEP_LATEST_TRIM_INTERVAL,
   PROMISE_CHAIN_RESET_INTERVAL,
+  TSV_FLUSH_INTERVAL_MS,
 } from './constants';
 import {
   aiToPhysical,
@@ -235,9 +236,8 @@ function App() {
   const tsvWriterRef = useRef<TsvWriter | null>(null);
   const seqCounterRef = useRef(0);
   const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
-  const saveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const displayUpdateCountRef = useRef(0);
-  const saveUpdateCountRef = useRef(0);
+  const flushTimerRef = useRef<number | undefined>(undefined);
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
@@ -446,17 +446,18 @@ function App() {
       aiPhysical: Array.from(aiPhysical),
     };
 
-    dataStorage.addDataPoint(dataPoint).catch((err) => {
-      console.error('Error adding data point:', err);
-      setStatus(`IndexedDB error: ${(err as Error).message}`);
-    });
-
-    keepLatestCountRef.current++;
-    if (keepLatestCountRef.current % KEEP_LATEST_TRIM_INTERVAL === 0) {
-      const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
-      dataStorage.keepLatestPoints(displayLimit).catch((err) => {
-        console.error('Error trimming data points:', err);
+    if (!tsvWriterRef.current) {
+      dataStorage.addDataPoint(dataPoint).catch((err) => {
+        console.error('Error adding data point:', err);
+        setStatus(`IndexedDB error: ${(err as Error).message}`);
       });
+
+      keepLatestCountRef.current++;
+      if (keepLatestCountRef.current % KEEP_LATEST_TRIM_INTERVAL === 0) {
+        dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
+          console.error('Error trimming data points:', err);
+        });
+      }
     }
 
     pendingDataPoints.current.push({
@@ -530,28 +531,14 @@ function App() {
   }, [updateDataHistory]);
 
   const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array) => {
-    saveUpdateChainRef.current = saveUpdateChainRef.current
-      .then(async () => {
-        const writer = tsvWriterRef.current;
-        if (!writer) return;
-        try {
-          await writer.writeRow(timestamp, aiRaw, aiPhysical);
-          setSavePointCount((prev) => prev + 1);
-        } catch (err) {
-          if (err instanceof TypeError && (err as Error).message.includes('closing')) {
-            console.warn('Stream is closing, skipping write');
-            return;
-          }
-          throw err;
-        }
-      })
-      .catch((err) => {
-        console.error('[App] save update event failed', err);
-        setStatus(`TSV write error: ${(err as Error).message}`);
-      });
-    saveUpdateCountRef.current++;
-    if (saveUpdateCountRef.current % PROMISE_CHAIN_RESET_INTERVAL === 0) {
-      saveUpdateChainRef.current = Promise.resolve();
+    const writer = tsvWriterRef.current;
+    if (!writer) return;
+    try {
+      writer.writeRow(timestamp, aiRaw, aiPhysical);
+      setSavePointCount((prev) => prev + 1);
+    } catch (err) {
+      console.error('[App] save update failed', err);
+      setStatus(`TSV write error: ${(err as Error).message}`);
     }
   }, [setStatus]);
 
@@ -886,6 +873,8 @@ function App() {
     acquiringRef.current = false;
     setAcquiring(false);
     stopPolling();
+    window.clearInterval(flushTimerRef.current);
+    flushTimerRef.current = undefined;
     const writerToClose = tsvWriterRef.current;
     tsvWriterRef.current = null;
     setActiveSaveFilename('');
@@ -910,7 +899,6 @@ function App() {
       outputHoldingFailureTimestampsRef.current = [];
       lastAiReadCompletedAtRef.current = 0;
       displayUpdateChainRef.current = Promise.resolve();
-      saveUpdateChainRef.current = Promise.resolve();
       pendingDataPoints.current = [];
       recentTimestampsRef.current = [];
       setActualRateHz(0);
@@ -1026,6 +1014,9 @@ function App() {
       setDisplayRevision((v) => v + 1);
 
       tsvWriterRef.current = writer;
+      flushTimerRef.current = window.setInterval(() => {
+        tsvWriterRef.current?.flush().catch((err) => console.error('TSV flush error:', err));
+      }, TSV_FLUSH_INTERVAL_MS);
       setActiveSaveFilename(writer.getFileName());
       setSaveStartedAt(startedAt);
       setSaveElapsedMs(0);
@@ -1043,6 +1034,8 @@ function App() {
     const writerToClose = tsvWriterRef.current;
     if (!writerToClose) return;
     tsvWriterRef.current = null;
+    window.clearInterval(flushTimerRef.current);
+    flushTimerRef.current = undefined;
     setActiveSaveFilename('');
     setSaveStartedAt(null);
     setSaveElapsedMs(0);
