@@ -23,7 +23,7 @@ export function formatTimestamp(timestamp: number): string {
 
 /**
  * Create TSV header row for AI/AO channel data
- * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tao_raw_00\t...\tai_vlt_00\t...\tao_vlt_00\t...
+ * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tao_raw_00\t...\tai_vlt_00\t...
  * @param aiChannels - Number of AI channels
  * @param aoChannels - Number of AO channels
  * @returns TSV header string with newline
@@ -37,7 +37,6 @@ export function createTsvHeader(aiChannels: number, aoChannels: number): string 
     ...ch('ai_phy_', aiChannels),
     ...ch('ao_raw_', aoChannels),
     ...ch('ai_vlt_', aiChannels),
-    ...ch('ao_vlt_', aoChannels),
   ].join('\t') + '\n';
 }
 
@@ -52,7 +51,6 @@ function toArrayLike(data: Float32Array | number[]): number[] {
  * @param aiPhysical - Array of physical AI channel values
  * @param aoRaw - Array of raw AO channel values (millivolts)
  * @param aiVoltage - Array of AI voltage display values
- * @param aoVoltage - Array of AO voltage values (volts)
  * @param physicalPrecision - Number of decimal places for physical/voltage values (default: 3)
  * @returns TSV data row string with newline
  */
@@ -62,7 +60,6 @@ export function formatTsvRow(
   aiPhysical: Float32Array | number[],
   aoRaw: Float32Array | number[],
   aiVoltage: Float32Array | number[],
-  aoVoltage: Float32Array | number[],
   physicalPrecision: number = 3
 ): string {
   const timestampStr = formatTimestamp(timestamp);
@@ -73,7 +70,6 @@ export function formatTsvRow(
     ...toArrayLike(aiPhysical).map(fmt),
     ...toArrayLike(aoRaw).map(v => v.toString()),
     ...toArrayLike(aiVoltage).map(fmt),
-    ...toArrayLike(aoVoltage).map(fmt),
   ].join('\t') + '\n';
 }
 
@@ -120,8 +116,7 @@ export class TsvWriter {
     aiRaw: Float32Array | number[],
     aiPhysical: Float32Array | number[],
     aoRaw: Float32Array | number[],
-    aiVoltage: Float32Array | number[],
-    aoVoltage: Float32Array | number[]
+    aiVoltage: Float32Array | number[]
   ): void {
     const rawArr = toArrayLike(aiRaw);
     const phyArr = toArrayLike(aiPhysical);
@@ -131,7 +126,7 @@ export class TsvWriter {
     if (phyArr.length !== this.aiChannels) {
       throw new Error(`Invalid AI physical column count: expected ${this.aiChannels}, got ${phyArr.length}.`);
     }
-    this.writeBuffer.push(formatTsvRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, aoVoltage, this.physicalPrecision));
+    this.writeBuffer.push(formatTsvRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, this.physicalPrecision));
   }
 
   async close(): Promise<void> {

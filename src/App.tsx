@@ -540,8 +540,7 @@ function App() {
       const aiVoltage = new Float32Array(
         Array.from(aiRaw).map((v, i) => rawToDisplayValue(v, voltageConfigRef.current[i] ?? 'unknown').value)
       );
-      const aoVoltage = aoRaw.map(v => v / 1000);
-      writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, aoVoltage);
+      writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage);
       setSavePointCount((prev) => prev + 1);
     } catch (err) {
       console.error('[App] save update failed', err);
