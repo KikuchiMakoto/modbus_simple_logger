@@ -56,8 +56,8 @@ export function SlidePanel({
       <div
         ref={panelRef}
         onTransitionEnd={handleTransitionEnd}
-        className={`fixed inset-y-0 right-0 z-50 w-full ${maxWidth} transform bg-white shadow-2xl transition-transform duration-300 dark:bg-slate-900 ${
-          panelOpen ? 'translate-x-0' : 'translate-x-full'
+        className={`fixed inset-y-0 right-0 z-50 w-full ${maxWidth} transform bg-white transition-transform duration-300 dark:bg-slate-900 ${
+          panelOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'
         }`}
         role="dialog"
         aria-modal="true"
