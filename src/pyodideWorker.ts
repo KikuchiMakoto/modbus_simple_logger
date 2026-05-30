@@ -1,10 +1,39 @@
 type PyodideLike = {
   setInterruptBuffer: (buffer: Uint8Array) => void;
+  runPython: (code: string) => unknown;
   runPythonAsync: (code: string) => Promise<unknown>;
   globals: {
     set: (name: string, value: unknown) => void;
   };
 };
+
+// Helper installed into the Pyodide namespace. It runs the user's script as a
+// cancellable asyncio Task. KeyboardInterrupt (via setInterruptBuffer) only
+// fires while Python bytecode is executing, so it cannot break an `async` loop
+// that is parked in `await asyncio.sleep(...)`. Cancelling the task injects a
+// CancelledError directly at the current `await`, stopping async while/for
+// loops immediately without requiring any special notation in the script.
+const RUNNER_SETUP = `
+import asyncio
+from pyodide.code import eval_code_async
+
+class _ScriptRunner:
+    task = None
+
+async def _runner_run(code):
+    _ScriptRunner.task = asyncio.ensure_future(eval_code_async(code, globals=globals()))
+    try:
+        await _ScriptRunner.task
+    finally:
+        _ScriptRunner.task = None
+
+def _runner_stop():
+    task = _ScriptRunner.task
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False
+`;
 
 type WorkerIncomingMessage =
   | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; intSab: SharedArrayBuffer; verSab: SharedArrayBuffer }
@@ -57,6 +86,7 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   }) as PyodideLike;
 
   pyodide.setInterruptBuffer(interruptBuffer);
+  pyodide.runPython(RUNNER_SETUP);
   pyodide.globals.set('get_ai_raw', (ch: number) => readAiValue(aiRawShare, Number(ch)));
   pyodide.globals.set('get_ai_raw_all', () => readAiAll(aiRawShare));
   pyodide.globals.set('get_ai_phy', (ch: number) => readAiValue(aiPhysicalShare, Number(ch)));
@@ -91,7 +121,19 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
   }
 
   if (message.type === 'interrupt') {
+    // Raise KeyboardInterrupt for synchronous loops (checked while bytecode
+    // runs, even when the worker thread is blocked in a busy loop)...
     if (interruptBuffer) interruptBuffer[0] = 2;
+    // ...and cancel the running asyncio Task so loops parked in `await`
+    // (e.g. asyncio.sleep) stop immediately instead of waiting for the await
+    // to resolve. Safe to call while the worker is idle between awaits.
+    if (pyodide && running) {
+      try {
+        pyodide.runPython('_runner_stop()');
+      } catch {
+        // Ignore: the task may have already finished.
+      }
+    }
     return;
   }
 
@@ -114,12 +156,15 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
 
       running = true;
       postWorkerMessage({ type: 'status', message: 'Running' });
-      await pyodide.runPythonAsync(message.code);
+      pyodide.globals.set('__user_code__', message.code);
+      await pyodide.runPythonAsync('await _runner_run(__user_code__)');
       postWorkerMessage({ type: 'done', message: 'Completed' });
     } catch (err) {
       const error = err as Error;
       const text = error.message ?? String(error);
-      if (text.includes('KeyboardInterrupt')) {
+      // KeyboardInterrupt: sync loop stopped. CancelledError: async Task
+      // cancelled. Both mean the user pressed Stop.
+      if (text.includes('KeyboardInterrupt') || text.includes('CancelledError')) {
         postWorkerMessage({ type: 'interrupted', message: 'Stopped' });
       } else {
         postWorkerMessage({ type: 'error', message: text });

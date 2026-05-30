@@ -160,5 +160,8 @@ function getDefaultScript(): string {
 # This runner executes scripts in an async context (top-level await supported).
 # Use asyncio instead:
 # import asyncio
-# await asyncio.sleep(1)`;
+# await asyncio.sleep(1)
+#
+# Press Stop to halt execution at any time. Plain async while/for loops are
+# stopped immediately - no special stop checks are needed in your script.`;
 }
