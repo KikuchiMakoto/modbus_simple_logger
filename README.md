@@ -29,11 +29,11 @@
 
 | レイヤー | 技術 | バージョン |
 |---------|------|-----------|
-| フレームワーク | React | ^19.2.5 |
+| フレームワーク | React | ^19.2.7 |
 | 言語 | TypeScript | ^6.0.3 |
-| ビルドツール | Vite | ^8.0.9 |
-| スタイリング | Tailwind CSS | ^4.2.3 |
-| チャート | Plotly.js + react-plotly.js | ^3.5.0 / ^2.6.0 |
+| ビルドツール | Vite | ^8.0.16 |
+| スタイリング | Tailwind CSS | ^4.3.1 |
+| チャート | Plotly.js + react-plotly.js | ^3.6.0 / ^3.0.0 |
 | Modbus 通信 | Web Serial API + web-serial-polyfill | ^1.0.15 |
 | スクリプト実行 | Pyodide（CDN v314.0.0 / Python 3.14） | — |
 | パッケージマネージャ | Bun | — |

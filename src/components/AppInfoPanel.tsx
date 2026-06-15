@@ -1,11 +1,11 @@
 import { SlidePanel } from './SlidePanel';
 
 const LIBRARIES = [
-  { name: 'React', version: '19', license: 'MIT' },
-  { name: 'React DOM', version: '19', license: 'MIT' },
-  { name: 'Plotly.js', version: '3.5', license: 'MIT' },
-  { name: 'react-plotly.js', version: '2.6', license: 'MIT' },
-  { name: 'Tailwind CSS', version: '4.2', license: 'MIT' },
+  { name: 'React', version: '19.2', license: 'MIT' },
+  { name: 'React DOM', version: '19.2', license: 'MIT' },
+  { name: 'Plotly.js', version: '3.6', license: 'MIT' },
+  { name: 'react-plotly.js', version: '3.0', license: 'MIT' },
+  { name: 'Tailwind CSS', version: '4.3', license: 'MIT' },
   { name: 'Vite', version: '8', license: 'MIT' },
   { name: 'TypeScript', version: '6.0', license: 'Apache-2.0' },
   { name: 'web-serial-polyfill', version: '1.0', license: 'BSD-3-Clause' },
