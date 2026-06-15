@@ -1,6 +1,6 @@
 import { type CSSProperties, type ComponentType, useMemo } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
-import Plot from 'react-plotly.js';
+import { Plot } from '../plotly';
 import { DataPoint } from '../types';
 
 interface AxisOption {
@@ -27,14 +27,9 @@ type PlotProps = {
   style?: CSSProperties;
 };
 
-const isInteropDefaultExport = (
-  value: unknown,
-): value is { default: ComponentType<PlotProps> } =>
-  typeof value === 'object' && value !== null && 'default' in value;
-
-const NormalizedPlot: ComponentType<PlotProps> = isInteropDefaultExport(Plot)
-  ? Plot.default
-  : Plot;
+// The factory in src/plotly.ts already returns the React component directly, so
+// no CJS/ESM default-export normalization is needed here.
+const NormalizedPlot = Plot as ComponentType<PlotProps>;
 
 type AxisDescriptor =
   | { kind: 'time' }

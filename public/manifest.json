@@ -2,21 +2,21 @@
   "name": "ModbusSimpleLogger",
   "short_name": "MSL",
   "description": "ModbusRTU WebUSB data logger and visualization tool",
-  "start_url": "/modbus_simple_logger/",
-  "scope": "/modbus_simple_logger/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#020617",
   "theme_color": "#0f172a",
   "orientation": "any",
   "icons": [
     {
-      "src": "/modbus_simple_logger/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
     },
     {
-      "src": "/modbus_simple_logger/icon.svg",
+      "src": "./icon.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
