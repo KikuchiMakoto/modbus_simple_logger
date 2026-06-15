@@ -1,5 +1,5 @@
 // Service Worker for Modbus WebUSB Logger PWA
-const CACHE_NAME = 'modbus-logger-v5';
+const CACHE_NAME = 'modbus-logger-v6';
 const BASE_PATH = '/modbus_simple_logger/';
 const ISOLATION_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',

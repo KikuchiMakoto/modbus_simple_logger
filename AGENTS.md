@@ -82,16 +82,21 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 100ms〜5分の定期ポーリング（`setTimeout` 再帰スケジュール）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ内最大10回）
-- **IndexedDB 書き込みは fire-and-forget**（`updateDataHistory` は同期関数、`.catch()` でエラーハンドリング）
-- チャート表示ポイント上限: 通常 256 / 保存中 65536
-- ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと）
+- **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
+- **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
+  - 非保存時: 直近 `NON_SAVING_CHART_WINDOW_MS`（60s）のスライディング時間窓
+  - 保存時: 保存開始〜現在の全期間を `CHART_MAX_POINTS`(4096) へストライド間引き（`saveDecimationStrideRef`/`saveRawCounterRef`、バッファが 2×超で偶数 index 再間引き＆stride 倍化 → メモリ一定）
+  - 共通上限 `CHART_MAX_POINTS`。`MAX_POINTS_IN_MEMORY`(256) は IndexedDB trim 専用
+- ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファ更新と IndexedDB バッチ書込みを実施）
 - `pageshow` / `visibilitychange` による復帰時即時ポーリング（`acquiring` 状態を ref で確認）
 - USB 物理抜けの `disconnect` イベント自動検知
 - **キャリブレーション変更時もポーリングは継続**（`aiCalibrationRef` で最新値を参照）
 - **ステータス更新は ref 経由で直接 DOM を更新**（不要な React 再レンダリングを抑制）
 
 ### ScriptRunner（`pyodideWorker.ts`）
-- Pyodide v0.27.5 を CDN からロード（Web Worker 内）
+- Pyodide v314.0.0（Python 3.14）を CDN からロード（Web Worker 内）
+  - バージョンは `PYODIDE_VERSION` 定数に集約（URL を直書きしないこと）。更新時は `AppInfoPanel.tsx` と README も同期
+  - v314.0 以降は **module worker 必須**（classic worker 非対応）。本 Worker は `{ type: 'module' }` で生成済み
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
 - `set_ao()` / `set_ao_all()` でメインスレッドへ AO 制御命令を postMessage
 - `SharedArrayBuffer` による割込み停止（`interruptBuffer[0] = 2`）
@@ -138,8 +143,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 | `INPUT_READ_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AI 読取り最大失敗回数 |
 | `OUTPUT_HOLDING_RETRY_WINDOW_MS` | 60000 | AO 書込みリトライ制限の評価ウィンドウ |
 | `OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AO 書込み最大失敗回数 |
-| `MAX_POINTS_IN_MEMORY` | 256 | 通常時のチャート表示上限 |
-| `MAX_POINTS_WHILE_SAVING` | 65536 | 保存中のチャート表示上限 |
+| `MAX_POINTS_IN_MEMORY` | 256 | 非保存時の IndexedDB 保持点数（trim 専用） |
+| `CHART_MAX_POINTS` | 4096 | チャート描画点数の上限（保存時ダウンサンプル目標） |
+| `NON_SAVING_CHART_WINDOW_MS` | 60000 | 非保存時チャートのスライディング時間窓 |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
 | `BATCH_FLUSH_INTERVAL_MS` | 100 | バッチフラッシュの最大遅延 |
 
@@ -147,7 +153,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 - 通信方式は「Web Serial API」を基準に記述する（WebUSB は polyfill 経由のフォールバック）
 - ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
-- `react-plotly.js` は CJS/ESM interop の問題があるため `ChartPanel.tsx` で正規化済み（直接 `Plot` をインポートしないこと）
+- **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
+- **ビルドチャンク分割**（`vite.config.ts`）: Plotly 等の vendor を `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
+- **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
+- **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
+- **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）

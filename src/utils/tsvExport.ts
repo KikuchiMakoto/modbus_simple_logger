@@ -40,8 +40,14 @@ export function createTsvHeader(aiChannels: number, aoChannels: number): string 
   ].join('\t') + '\n';
 }
 
-function toArrayLike(data: Float32Array | number[]): number[] {
-  return data instanceof Float32Array ? Array.from(data) : data;
+/** Append each element of `data` to `out` formatted by `fmt` (no intermediate
+ * array — works for both Float32Array and number[]). */
+function appendFormatted(
+  out: string[],
+  data: Float32Array | number[],
+  fmt: (v: number) => string,
+): void {
+  for (let i = 0; i < data.length; i++) out.push(fmt(data[i]));
 }
 
 /**
@@ -62,15 +68,15 @@ export function formatTsvRow(
   aiVoltage: Float32Array | number[],
   physicalPrecision: number = 3
 ): string {
-  const timestampStr = formatTimestamp(timestamp);
+  const toStr = (v: number) => v.toString();
   const fmt = (v: number) => v.toFixed(physicalPrecision);
-  return [
-    timestampStr,
-    ...toArrayLike(aiRaw).map(v => v.toString()),
-    ...toArrayLike(aiPhysical).map(fmt),
-    ...toArrayLike(aoRaw).map(v => v.toString()),
-    ...toArrayLike(aiVoltage).map(fmt),
-  ].join('\t') + '\n';
+  // Single preallocated parts array, filled by index — no per-column copies.
+  const parts: string[] = [formatTimestamp(timestamp)];
+  appendFormatted(parts, aiRaw, toStr);
+  appendFormatted(parts, aiPhysical, fmt);
+  appendFormatted(parts, aoRaw, toStr);
+  appendFormatted(parts, aiVoltage, fmt);
+  return parts.join('\t') + '\n';
 }
 
 /**
@@ -118,13 +124,11 @@ export class TsvWriter {
     aoRaw: Float32Array | number[],
     aiVoltage: Float32Array | number[]
   ): void {
-    const rawArr = toArrayLike(aiRaw);
-    const phyArr = toArrayLike(aiPhysical);
-    if (rawArr.length !== this.aiChannels) {
-      throw new Error(`Invalid AI raw column count: expected ${this.aiChannels}, got ${rawArr.length}.`);
+    if (aiRaw.length !== this.aiChannels) {
+      throw new Error(`Invalid AI raw column count: expected ${this.aiChannels}, got ${aiRaw.length}.`);
     }
-    if (phyArr.length !== this.aiChannels) {
-      throw new Error(`Invalid AI physical column count: expected ${this.aiChannels}, got ${phyArr.length}.`);
+    if (aiPhysical.length !== this.aiChannels) {
+      throw new Error(`Invalid AI physical column count: expected ${this.aiChannels}, got ${aiPhysical.length}.`);
     }
     this.writeBuffer.push(formatTsvRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, this.physicalPrecision));
   }

@@ -1,3 +1,9 @@
+// Pyodide release loaded from the jsdelivr CDN. The version follows the new
+// Python-aligned scheme (314.x == Python 3.14); keep the worker as the single
+// source of truth and mirror it in AppInfoPanel / README when bumping.
+const PYODIDE_VERSION = '314.0.0';
+const PYODIDE_CDN_BASE = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+
 type PyodideLike = {
   setInterruptBuffer: (buffer: Uint8Array) => void;
   runPython: (code: string) => unknown;
@@ -79,11 +85,8 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   interruptBuffer = new Uint8Array(intSab);
   versionBuffer = new Int32Array(verSab);
 
-  const pyodideUrl = 'https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.mjs';
-  const { loadPyodide } = await import(/* @vite-ignore */ pyodideUrl);
-  pyodide = await loadPyodide({
-    indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.29.3/full/',
-  }) as PyodideLike;
+  const { loadPyodide } = await import(/* @vite-ignore */ `${PYODIDE_CDN_BASE}pyodide.mjs`);
+  pyodide = (await loadPyodide({ indexURL: PYODIDE_CDN_BASE })) as PyodideLike;
 
   pyodide.setInterruptBuffer(interruptBuffer);
   pyodide.runPython(RUNNER_SETUP);

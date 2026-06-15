@@ -390,12 +390,14 @@ export class WebSerialModbusClient {
           throw new Error('Stream closed unexpectedly');
         }
         if (value) {
-          buffer.push(...Array.from(value));
-          console.debug(`${this.debugPrefix} transfer() read chunk`, {
-            chunkLength: value.length,
-            totalBuffered: buffer.length,
-            ...(this.verboseFrameLogging ? { chunkHex: this.toHexString(value) } : {}),
-          });
+          for (let i = 0; i < value.length; i++) buffer.push(value[i]);
+          if (this.verboseFrameLogging) {
+            console.debug(`${this.debugPrefix} transfer() read chunk`, {
+              chunkLength: value.length,
+              totalBuffered: buffer.length,
+              chunkHex: this.toHexString(value),
+            });
+          }
         }
 
         // Check if we have enough data

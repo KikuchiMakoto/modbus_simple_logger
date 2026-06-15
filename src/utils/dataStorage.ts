@@ -58,6 +58,23 @@ class DataStorage {
     });
   }
 
+  /** Add multiple points in a single transaction (far cheaper than one
+   * transaction per point for batched writes). */
+  async addDataPoints(points: StoredDataPoint[]): Promise<void> {
+    this.ensureInitialized();
+    if (points.length === 0) return;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(new Error(`Failed to add data points: ${transaction.error?.message}`));
+
+      for (const point of points) store.add(point);
+    });
+  }
+
   private async getDataPointCount(): Promise<number> {
     this.ensureInitialized();
 

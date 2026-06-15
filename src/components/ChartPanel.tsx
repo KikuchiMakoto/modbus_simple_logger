@@ -1,6 +1,6 @@
 import { type CSSProperties, type ComponentType, useMemo } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
-import Plot from 'react-plotly.js';
+import { Plot } from '../plotly';
 import { DataPoint } from '../types';
 
 interface AxisOption {
@@ -27,14 +27,9 @@ type PlotProps = {
   style?: CSSProperties;
 };
 
-const isInteropDefaultExport = (
-  value: unknown,
-): value is { default: ComponentType<PlotProps> } =>
-  typeof value === 'object' && value !== null && 'default' in value;
-
-const NormalizedPlot: ComponentType<PlotProps> = isInteropDefaultExport(Plot)
-  ? Plot.default
-  : Plot;
+// The factory in src/plotly.ts already returns the React component directly, so
+// no CJS/ESM default-export normalization is needed here.
+const NormalizedPlot = Plot as ComponentType<PlotProps>;
 
 type AxisDescriptor =
   | { kind: 'time' }
@@ -92,10 +87,18 @@ export function ChartPanel({
 
   const plotData = useMemo(() => {
     if (isEmpty) return [];
-    const xData = dataPoints.map((p) =>
-      xDesc.kind === 'time' ? new Date(p.timestamp).toISOString() : resolveAxisValue(p, xDesc)
-    );
-    const yData = dataPoints.map((p) => resolveAxisValue(p, yDesc));
+    // Build x/y in a single pass into typed arrays. Plotly's date axis accepts
+    // epoch-ms numbers directly, so we avoid the per-point `new Date().toISOString()`
+    // allocation entirely; both axes end up numeric.
+    const n = dataPoints.length;
+    const xData = new Float64Array(n);
+    const yData = new Float64Array(n);
+    const xIsTime = xDesc.kind === 'time';
+    for (let i = 0; i < n; i++) {
+      const p = dataPoints[i];
+      xData[i] = xIsTime ? p.timestamp : resolveAxisValue(p, xDesc);
+      yData[i] = resolveAxisValue(p, yDesc);
+    }
 
     return [
       {

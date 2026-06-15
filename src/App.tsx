@@ -22,7 +22,8 @@ import {
   OUTPUT_HOLDING_RETRY_WINDOW_MS,
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
-  MAX_POINTS_WHILE_SAVING,
+  CHART_MAX_POINTS,
+  NON_SAVING_CHART_WINDOW_MS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
   KEEP_LATEST_TRIM_INTERVAL,
@@ -246,6 +247,11 @@ function App() {
   const aoWriteInProgressRef = useRef(false);
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
+  // While saving, the chart shows the whole capture downsampled to
+  // CHART_MAX_POINTS via count-stride decimation. These track the decimation
+  // stride and raw-point counter (reset on each save start).
+  const saveDecimationStrideRef = useRef(1);
+  const saveRawCounterRef = useRef(0);
   const pollingRateRef = useRef(pollingRate.valueMs);
   const voltageConfigRef = useRef<VoltageMode[]>(voltageConfig);
 
@@ -307,13 +313,59 @@ function App() {
 
     const pointsToAdd = pendingDataPoints.current;
     pendingDataPoints.current = [];
-    const displayLimit = tsvWriterRef.current ? MAX_POINTS_WHILE_SAVING : MAX_POINTS_IN_MEMORY;
-
     const buffer = dataBufferRef.current;
-    for (const p of pointsToAdd) buffer.push(p);
-    if (buffer.length > displayLimit) {
-      dataBufferRef.current = buffer.slice(buffer.length - displayLimit);
+
+    if (tsvWriterRef.current) {
+      // Saving: keep the chart bounded by downsampling the WHOLE capture
+      // (save-start → now) to ~CHART_MAX_POINTS. Add 1 of every `stride` raw
+      // points, and when the buffer doubles, re-decimate by 2 and double the
+      // stride. Memory and per-flush cost stay constant regardless of save
+      // duration. The full data still goes to TSV.
+      for (const p of pointsToAdd) {
+        if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
+          buffer.push(p);
+        }
+        saveRawCounterRef.current++;
+      }
+      if (buffer.length > 2 * CHART_MAX_POINTS) {
+        const decimated: DataPoint[] = [];
+        for (let i = 0; i < buffer.length; i += 2) decimated.push(buffer[i]);
+        dataBufferRef.current = decimated;
+        saveDecimationStrideRef.current *= 2;
+      }
+    } else {
+      // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
+      for (const p of pointsToAdd) buffer.push(p);
+      const cutoff = Date.now() - NON_SAVING_CHART_WINDOW_MS;
+      let drop = 0;
+      while (drop < buffer.length && buffer[drop].timestamp < cutoff) drop++;
+      if (buffer.length - drop > CHART_MAX_POINTS) {
+        drop = buffer.length - CHART_MAX_POINTS;
+      }
+      if (drop > 0) buffer.splice(0, drop);
+
+      // Persist this batch to IndexedDB in a single transaction (only while not
+      // saving; during save the TSV file is the durable store). Convert the
+      // Float32Array fields here so the conversion is skipped entirely on the
+      // save path.
+      const dbBatch: StoredDataPoint[] = pointsToAdd.map((p) => ({
+        seq: p.seq,
+        timestamp: p.timestamp,
+        aiRaw: Array.from(p.aiRaw),
+        aiPhysical: Array.from(p.aiPhysical),
+      }));
+      dataStorage.addDataPoints(dbBatch).catch((err) => {
+        console.error('Error adding data points:', err);
+      });
+      keepLatestCountRef.current += dbBatch.length;
+      if (keepLatestCountRef.current >= KEEP_LATEST_TRIM_INTERVAL) {
+        keepLatestCountRef.current = 0;
+        dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
+          console.error('Error trimming data points:', err);
+        });
+      }
     }
+
     setDisplayRevision((v) => v + 1);
   }, []);
 
@@ -441,27 +493,10 @@ function App() {
   const updateDataHistory = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array) => {
     const timestamp = Date.now();
     const seq = seqCounterRef.current++;
-    const dataPoint: StoredDataPoint = {
-      seq,
-      timestamp,
-      aiRaw: Array.from(aiRaw),
-      aiPhysical: Array.from(aiPhysical),
-    };
 
-    if (!tsvWriterRef.current) {
-      dataStorage.addDataPoint(dataPoint).catch((err) => {
-        console.error('Error adding data point:', err);
-        setStatus(`IndexedDB error: ${(err as Error).message}`);
-      });
-
-      keepLatestCountRef.current++;
-      if (keepLatestCountRef.current % KEEP_LATEST_TRIM_INTERVAL === 0) {
-        dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
-          console.error('Error trimming data points:', err);
-        });
-      }
-    }
-
+    // Persistence (IndexedDB while not saving) and display-buffer maintenance
+    // now happen in batches inside flushPendingDataPoints, so here we only
+    // enqueue the captured point (Float32Array kept as-is — no per-point copy).
     pendingDataPoints.current.push({
       seq,
       timestamp,
@@ -491,7 +526,7 @@ function App() {
         flushPendingDataPoints();
       }, BATCH_FLUSH_INTERVAL_MS);
     }
-  }, [flushPendingDataPoints, setStatus]);
+  }, [flushPendingDataPoints]);
 
   const waitMs = useCallback(async (ms: number) => {
     if (ms <= 0) return;
@@ -537,9 +572,10 @@ function App() {
     if (!writer) return;
     try {
       const aoRaw = new Float32Array(aoRawSourceRef.current);
-      const aiVoltage = new Float32Array(
-        Array.from(aiRaw).map((v, i) => rawToDisplayValue(v, voltageConfigRef.current[i] ?? 'unknown').value)
-      );
+      const aiVoltage = new Float32Array(aiRaw.length);
+      for (let i = 0; i < aiRaw.length; i++) {
+        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? 'unknown').value;
+      }
       writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage);
       setSavePointCount((prev) => prev + 1);
     } catch (err) {
@@ -1017,6 +1053,9 @@ function App() {
 
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
+      // Restart the whole-capture downsampling from this save start.
+      saveDecimationStrideRef.current = 1;
+      saveRawCounterRef.current = 0;
       setDisplayRevision((v) => v + 1);
 
       tsvWriterRef.current = writer;
