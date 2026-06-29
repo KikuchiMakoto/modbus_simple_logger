@@ -1,5 +1,9 @@
 // Service Worker for Modbus WebUSB Logger PWA
-const CACHE_NAME = 'modbus-logger-v6';
+// CACHE_VERSION is replaced at build time with a content hash of the precache
+// manifest (see the `precache-manifest` plugin in vite.config.ts), so every
+// deploy gets a fresh cache. Stays 'dev' for unbuilt `vite dev`.
+const CACHE_VERSION = 'dev';
+const CACHE_NAME = `modbus-logger-${CACHE_VERSION}`;
 const BASE_PATH = '/modbus_simple_logger/';
 const ISOLATION_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -18,12 +22,19 @@ const withIsolationHeaders = (response) => {
   });
 };
 
-// Pre-cache: minimal set cached during install
+// Pre-cache: every build asset (hashed JS/CSS bundles, the Pyodide worker
+// chunk, index.html, manifest, icon...) is cached during install so the app
+// shell works fully offline after the first successful online visit. The list
+// is injected at build time by the `precache-manifest` plugin in vite.config.ts
+// (it replaces the empty array below). It stays empty for unbuilt `vite dev`,
+// where the Service Worker is inactive anyway (different base path).
+const PRECACHE_MANIFEST = [];
 const PRECACHE_URLS = [
+  // The start_url (`/modbus_simple_logger/`) resolves to index.html but is a
+  // distinct cache key, so precache it explicitly for the offline navigation
+  // fallback.
   BASE_PATH,
-  BASE_PATH + 'index.html',
-  BASE_PATH + 'manifest.json',
-  BASE_PATH + 'icon.svg',
+  ...PRECACHE_MANIFEST.map((path) => BASE_PATH + path),
 ];
 
 // Install: pre-cache essential resources
