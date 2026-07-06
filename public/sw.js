@@ -11,6 +11,11 @@ const ISOLATION_HEADERS = {
 };
 
 const withIsolationHeaders = (response) => {
+  // Opaque / opaque-redirect responses cannot be rebuilt (body is not
+  // readable); pass them through untouched like coi-serviceworker does.
+  if (response.status === 0 || response.type === 'opaque' || response.type === 'opaqueredirect') {
+    return response;
+  }
   const headers = new Headers(response.headers);
   Object.entries(ISOLATION_HEADERS).forEach(([key, value]) => {
     headers.set(key, value);
@@ -37,28 +42,27 @@ const PRECACHE_URLS = [
   ...PRECACHE_MANIFEST.map((path) => BASE_PATH + path),
 ];
 
-// Install: pre-cache essential resources
+// Install: pre-cache the complete app shell, all-or-nothing. A partial cache
+// must never activate — a missing JS chunk turns into a blank page on the next
+// offline launch. If any fetch fails, install fails, the previous version
+// keeps serving, and the browser retries on the next update check.
 self.addEventListener('install', (event) => {
   console.log('[SW] Install event');
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      console.log('[SW] Pre-caching essential resources');
-      // Use individual fetches so a single failure doesn't block install
-      const results = await Promise.allSettled(
+      console.log('[SW] Pre-caching app shell,', PRECACHE_URLS.length, 'entries');
+      await Promise.all(
         PRECACHE_URLS.map(async (url) => {
           const response = await fetch(url, { cache: 'no-store' });
-            if (response.ok) {
-              await cache.put(url, withIsolationHeaders(response));
-            }
+          if (!response.ok) {
+            throw new Error(`[SW] Pre-cache failed: ${url} (${response.status})`);
+          }
+          await cache.put(url, withIsolationHeaders(response));
         })
       );
-      const failed = results.filter((r) => r.status === 'rejected');
-      if (failed.length > 0) {
-        console.warn('[SW] Some pre-cache requests failed:', failed.length);
-      }
+      await self.skipWaiting();
     })
   );
-  self.skipWaiting();
 });
 
 // Activate: clean up old caches and claim clients
@@ -81,93 +85,79 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch handler
+// Fetch: cache-first for everything under BASE_PATH.
+//
+// The precache is complete and internally consistent for this CACHE_VERSION
+// (index.html always references exactly the hashed bundles cached alongside
+// it), so serving from cache is always correct. Freshness comes solely from
+// the sw.js update cycle: a deploy changes CACHE_VERSION, the new SW
+// precaches the new shell atomically, and the client reloads on
+// controllerchange.
+//
+// Navigations deliberately do NOT go network-first: right after an OS reboot
+// the network can sit in a half-up state where fetch() neither succeeds nor
+// fails for minutes, which left the PWA window blank until the request timed
+// out. Cache-first paints instantly regardless of network state.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  if (request.method !== 'GET') return;
+  // Chromium quirk (see gzuidhof/coi-serviceworker): passing such a request
+  // to fetch() throws, so let the browser handle it.
+  if (request.cache === 'only-if-cached' && request.mode !== 'same-origin') return;
   const url = new URL(request.url);
 
   // Only handle same-origin requests under BASE_PATH
   if (url.origin !== location.origin) return;
   if (!url.pathname.startsWith(BASE_PATH)) return;
 
-  const isNavigation = request.mode === 'navigate';
+  event.respondWith(respond(request, request.mode === 'navigate'));
+});
 
-  if (isNavigation) {
-    // Navigation (HTML): Network-first
-    // Always try to get the latest HTML from the network.
-    // Fall back to cache when offline.
-    event.respondWith(
-      fetch(request, { cache: 'no-store' })
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, clone);
-              cache.put(BASE_PATH + 'index.html', clone.clone());
-            });
-          }
-          return withIsolationHeaders(response);
-        })
-        .catch(async () => {
-          console.warn('[SW] Navigation fetch failed, serving from cache');
-          const cached = await caches.match(request) || await caches.match(BASE_PATH + 'index.html');
-          if (cached) return withIsolationHeaders(cached.clone());
-          return withIsolationHeaders(new Response(
-            '<!DOCTYPE html><html><body><h1>Offline</h1><p>No cached content available. Please connect to the internet and reload.</p></body></html>',
-            {
-              status: 503,
-              statusText: 'Service Unavailable',
-              headers: { 'Content-Type': 'text/html; charset=utf-8' },
-            }
-          ));
-        })
-    );
-    return;
+async function respond(request, isNavigation) {
+  const cache = await caches.open(CACHE_NAME);
+
+  let cached = await cache.match(request);
+  if (!cached && isNavigation) {
+    // Any in-scope navigation (start_url with or without query, deep link)
+    // falls back to the precached shell.
+    cached = (await cache.match(BASE_PATH)) || (await cache.match(BASE_PATH + 'index.html'));
   }
+  if (cached) return withIsolationHeaders(cached);
 
-  // Static assets (JS/CSS/images/fonts): Stale-While-Revalidate
-  // Serve cached version immediately for fast response,
-  // then fetch fresh version in the background to update cache.
-  // This ensures:
-  //   - Offline: cached resources are served reliably
-  //   - Online: resources are always updated for the NEXT load
-  event.respondWith(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      const cachedResponse = await cache.match(request);
-
-      // Always start a background fetch to update cache (when online)
-      const fetchPromise = fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            cache.put(request, networkResponse.clone());
+  try {
+    const response = await fetch(request, isNavigation ? { cache: 'no-store' } : undefined);
+    // Opportunistically cache misses (e.g. assets requested before this SW's
+    // install finished). Never store navigations at runtime: index.html must
+    // only enter the cache atomically with its hashed bundles during install,
+    // otherwise a newer index.html paired with older cached bundles produces
+    // a blank page offline.
+    if (response.ok && !isNavigation) {
+      await cache.put(request, withIsolationHeaders(response.clone()));
+    }
+    return withIsolationHeaders(response);
+  } catch (err) {
+    console.warn('[SW] Fetch failed with no cache fallback:', request.url, err);
+    if (isNavigation) {
+      return withIsolationHeaders(
+        new Response(
+          '<!DOCTYPE html><html><body><h1>Offline</h1><p>No cached content available. Please connect to the internet and reload.</p></body></html>',
+          {
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
           }
-          return withIsolationHeaders(networkResponse);
-        })
-        .catch((err) => {
-          console.warn('[SW] Background fetch failed:', request.url, err);
-          return null;
-        });
-
-      // If we have a cached response, return it immediately
-      if (cachedResponse) {
-        return withIsolationHeaders(cachedResponse.clone());
-      }
-
-      // No cache available: wait for network response
-      const networkResponse = await fetchPromise;
-      if (networkResponse) {
-        return withIsolationHeaders(networkResponse);
-      }
-
-      // Both cache and network failed
-      return withIsolationHeaders(new Response('Offline - Resource not available', {
+        )
+      );
+    }
+    return withIsolationHeaders(
+      new Response('Offline - Resource not available', {
         status: 503,
         statusText: 'Service Unavailable',
         headers: { 'Content-Type': 'text/plain' },
-      }));
-    })
-  );
-});
+      })
+    );
+  }
+}
 
 // Message handler
 self.addEventListener('message', (event) => {

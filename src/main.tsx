@@ -105,9 +105,17 @@ if ('serviceWorker' in navigator) {
 
   // Reload the page when a new SW takes over
   let refreshing = false;
+  const startedAt = Date.now();
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;
     refreshing = true;
+    // Right after launch no measurement can be running yet, and a blocking
+    // confirm() at that point can sit on a still-blank window (startup
+    // updates often land before first paint). Reload silently instead.
+    if (Date.now() - startedAt < 10_000) {
+      window.location.reload();
+      return;
+    }
     // Prompt before reload to avoid interrupting active measurements
     const shouldReload = window.confirm(
       'A new version of the app is available. Reload now to update?\n\n' +
