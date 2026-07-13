@@ -62,6 +62,10 @@ export default defineConfig(({ command, isPreview }) => ({
     // only substitutes free references, so locals named `global` (e.g. regl's
     // codegen) are left intact.
     global: 'globalThis',
+    // react-draggable (via react-rnd) gates its debug logging on
+    // `process.env.DRAGGABLE_DEBUG`; without this substitution the bare
+    // `process` reference throws in the browser and aborts every drag start.
+    'process.env.DRAGGABLE_DEBUG': 'false',
   },
   // GitHub Pages serves this project from a sub-directory, but local `vite dev`
   // is cleaner at the root (avoids sub-path HMR/manifest quirks). The build and

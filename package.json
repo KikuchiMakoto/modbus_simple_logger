@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "1.14",
+  "version": "1.15",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-plotly.js": "^3.0.0",
+    "react-rnd": "^10.5.3",
     "web-serial-polyfill": "^1.0.15"
   },
   "devDependencies": {

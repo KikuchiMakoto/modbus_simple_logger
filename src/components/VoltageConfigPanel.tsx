@@ -1,6 +1,6 @@
 import { VoltageMode, VOLTAGE_MODES } from '../types';
 import { AI_CHANNELS } from '../constants';
-import { SlidePanel } from './SlidePanel';
+import { FloatingWindow } from './FloatingWindow';
 
 const HX711_MODES = new Set<string>([
   'unknown', 'hx711_mv_per_v', 'hx711_micro_strain',
@@ -25,12 +25,14 @@ export function VoltageConfigPanel({
   onVoltageConfigChange,
 }: VoltageConfigPanelProps) {
   return (
-    <SlidePanel
+    <FloatingWindow
       open={open}
       onClose={onClose}
       title="Voltage Config"
       subtitle="AI Channel Display Mode"
       accent="blue"
+      defaultWidth={440}
+      defaultHeight={560}
     >
       <div className="flex-1 overflow-y-auto p-4">
         <div className="space-y-2">
@@ -70,6 +72,6 @@ export function VoltageConfigPanel({
           })}
         </div>
       </div>
-    </SlidePanel>
+    </FloatingWindow>
   );
 }

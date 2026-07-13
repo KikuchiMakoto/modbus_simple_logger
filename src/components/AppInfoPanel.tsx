@@ -1,10 +1,11 @@
-import { SlidePanel } from './SlidePanel';
+import { FloatingWindow } from './FloatingWindow';
 
 const LIBRARIES = [
   { name: 'React', version: '19.2', license: 'MIT' },
   { name: 'React DOM', version: '19.2', license: 'MIT' },
   { name: 'Plotly.js', version: '3.6', license: 'MIT' },
   { name: 'react-plotly.js', version: '3.0', license: 'MIT' },
+  { name: 'react-rnd', version: '10.5', license: 'MIT' },
   { name: 'Tailwind CSS', version: '4.3', license: 'MIT' },
   { name: 'Vite', version: '8', license: 'MIT' },
   { name: 'TypeScript', version: '6.0', license: 'Apache-2.0' },
@@ -17,7 +18,7 @@ const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'modbus_simple_logger';
 
 export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <SlidePanel open={open} onClose={onClose} title="App Info" maxWidth="max-w-sm">
+    <FloatingWindow open={open} onClose={onClose} title="App Info" defaultWidth={384} defaultHeight={560}>
       <div className="flex flex-col gap-4 p-2 text-sm text-slate-700 dark:text-slate-200">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
           <h3 className="mb-1 text-base font-bold text-emerald-600 dark:text-emerald-400">
@@ -93,6 +94,6 @@ export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => 
           </ul>
         </div>
       </div>
-    </SlidePanel>
+    </FloatingWindow>
   );
 }

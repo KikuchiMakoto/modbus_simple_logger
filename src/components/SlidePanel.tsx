@@ -28,14 +28,19 @@ export function SlidePanel({
   useEffect(() => {
     if (open) {
       setVisible(true);
-      requestAnimationFrame(() => setPanelOpen(true));
-    } else {
-      setPanelOpen(false);
+      const raf = requestAnimationFrame(() => setPanelOpen(true));
+      return () => cancelAnimationFrame(raf);
     }
+    setPanelOpen(false);
+    // Fallback for when the close transition's transitionend never fires
+    // (interrupted transition, background tab, etc.) — otherwise the
+    // invisible backdrop stays mounted and blocks all pointer events.
+    const timer = window.setTimeout(() => setVisible(false), 350);
+    return () => window.clearTimeout(timer);
   }, [open]);
 
   const handleTransitionEnd = (e: React.TransitionEvent) => {
-    if (e.target === panelRef.current && !panelOpen) {
+    if (e.target === panelRef.current && !open) {
       setVisible(false);
     }
   };
@@ -48,7 +53,7 @@ export function SlidePanel({
     <>
       {visible && (
         <div
-          className={`fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ${panelOpen ? 'opacity-100' : 'opacity-0'}`}
+          className={`fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ${panelOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
           onClick={onClose}
         />
       )}

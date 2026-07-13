@@ -1,5 +1,5 @@
 import { ModbusPrecision, PollingRateOption, SerialSettings } from '../types';
-import { SlidePanel } from './SlidePanel';
+import { FloatingWindow } from './FloatingWindow';
 
 type ModbusConfigPanelProps = {
   open: boolean;
@@ -41,7 +41,7 @@ export function ModbusConfigPanel({
   connected,
 }: ModbusConfigPanelProps) {
   return (
-    <SlidePanel open={open} onClose={onClose} title="Modbus Config">
+    <FloatingWindow open={open} onClose={onClose} title="Modbus Config" defaultWidth={360} defaultHeight={600}>
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         <div>
           <label className="block text-sm text-slate-600 dark:text-slate-400">Slave ID</label>
@@ -177,6 +177,6 @@ export function ModbusConfigPanel({
           </select>
         </div>
       </div>
-    </SlidePanel>
+    </FloatingWindow>
   );
 }
