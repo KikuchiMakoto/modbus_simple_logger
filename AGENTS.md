@@ -39,11 +39,12 @@ src/
 │   └── useScriptRunner.ts           # Pyodide Worker 管理
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）
-│   ├── CalibrationPanel.tsx         # キャリブレーションサイドパネル（a·x²+b·x+c）
-│   ├── ModbusConfigPanel.tsx        # シリアル設定サイドパネル
+│   ├── CalibrationPanel.tsx         # キャリブレーションウィンドウ（a·x²+b·x+c）
+│   ├── ModbusConfigPanel.tsx        # シリアル設定ウィンドウ
 │   ├── VoltageConfigPanel.tsx       # 電圧表示モード設定（チャネルタイプ別フィルタ）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
-│   └── SlidePanel.tsx               # 共通スライドインパネル（backdrop アニメーション付き）
+│   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
+│   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）

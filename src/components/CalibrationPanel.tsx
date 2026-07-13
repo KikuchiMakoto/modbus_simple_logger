@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, memo } from 'react';
 import { AiCalibration } from '../types';
-import { SlidePanel } from './SlidePanel';
+import { FloatingWindow } from './FloatingWindow';
 
 type CalibCellProps = {
   value: number;
@@ -65,12 +65,13 @@ export function CalibrationPanel({
 }: CalibrationPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
-    <SlidePanel
+    <FloatingWindow
       open={open}
       onClose={onClose}
       title="Input Calibration"
       subtitle="a·(Raw)²+b·(Raw)+c = Phy"
-      maxWidth="max-w-sm"
+      defaultWidth={420}
+      defaultHeight={560}
       headerActions={
         <>
           <input
@@ -138,6 +139,6 @@ export function CalibrationPanel({
           ))}
         </div>
       </div>
-    </SlidePanel>
+    </FloatingWindow>
   );
 }

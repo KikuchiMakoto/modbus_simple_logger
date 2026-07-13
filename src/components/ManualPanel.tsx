@@ -1,4 +1,4 @@
-import { SlidePanel } from './SlidePanel';
+import { FloatingWindow } from './FloatingWindow';
 
 const CABLE_ROWS = [
   {
@@ -50,7 +50,7 @@ const CABLE_ROWS = [
 
 export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <SlidePanel open={open} onClose={onClose} title="Manual" maxWidth="max-w-lg">
+    <FloatingWindow open={open} onClose={onClose} title="Manual" defaultWidth={520} defaultHeight={620}>
       <div className="flex flex-col gap-5 overflow-y-auto p-4 text-sm text-slate-700 dark:text-slate-200">
 
         {/* HX711 Cable Wiring */}
@@ -190,7 +190,7 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
         </section>
 
       </div>
-    </SlidePanel>
+    </FloatingWindow>
   );
 }
 
