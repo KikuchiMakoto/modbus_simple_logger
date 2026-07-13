@@ -56,7 +56,7 @@ import { ModbusConfigPanel } from './components/ModbusConfigPanel';
 import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
-import { ScriptRunnerDocsPanel } from './components/ScriptRunnerDocsPanel';
+import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -195,6 +195,8 @@ function App() {
   const {
     chart1X, setChart1X, chart1Y, setChart1Y,
     chart2X, setChart2X, chart2Y, setChart2Y,
+    chart3X, setChart3X, chart3Y, setChart3Y,
+    chart4X, setChart4X, chart4Y, setChart4Y,
   } = useChartAxes(axisOptionKeys);
 
   const [slaveId, setSlaveId] = useState(1);
@@ -217,7 +219,7 @@ function App() {
   const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
-  const [scriptRunnerDocsPanelOpen, setScriptRunnerDocsPanelOpen] = useState(false);
+  const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
 
   const clientRef = useRef<WebSerialModbusClient | null>(null);
@@ -266,8 +268,8 @@ function App() {
       setAppInfoPanelOpen(true);
     } else if (item === 'manual') {
       setManualPanelOpen(true);
-    } else if (item === 'scriptRunnerApi') {
-      setScriptRunnerDocsPanelOpen(true);
+    } else if (item === 'scriptRunner') {
+      setScriptRunnerPanelOpen(true);
     }
   };
 
@@ -1328,38 +1330,28 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <section className="card space-y-2 md:col-span-2">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-yellow-500 dark:text-yellow-300">&#128679;WIP ScriptRunner</h2>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="button-primary py-0.5 text-sm"
-                onClick={scriptRunner.toggleScriptRunner}
-                disabled={!scriptRunner.scriptRunnerSupported}
-              >
-                {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
-              </button>
-              <button
-                type="button"
-                className="button-secondary py-0.5 text-sm"
-                onClick={scriptRunner.clearScriptCode}
-                disabled={scriptRunner.scriptRunning}
-                title="Reset script to default"
-              >
-                Clear All
-              </button>
-            </div>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Status: {scriptRunner.scriptRunnerStatus}</p>
-          <textarea
-            value={scriptRunner.scriptCode}
-            onChange={(e) => scriptRunner.setScriptCode(e.target.value)}
-            onKeyDown={handleScriptEditorKeyDown}
-            className="min-h-[240px] w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            spellCheck={false}
-          />
-        </section>
+        <ChartPanel
+          color="#f472b6"
+          dataPoints={dataBufferRef.current}
+          displayRevision={displayRevision}
+          axisOptions={axisOptions}
+          xAxis={chart3X}
+          yAxis={chart3Y}
+          isDarkMode={isDarkMode}
+          onXAxisChange={setChart3X}
+          onYAxisChange={setChart3Y}
+        />
+        <ChartPanel
+          color="#fbbf24"
+          dataPoints={dataBufferRef.current}
+          displayRevision={displayRevision}
+          axisOptions={axisOptions}
+          xAxis={chart4X}
+          yAxis={chart4Y}
+          isDarkMode={isDarkMode}
+          onXAxisChange={setChart4X}
+          onYAxisChange={setChart4Y}
+        />
       </div>
       </div>
 
@@ -1415,9 +1407,11 @@ function App() {
         onClose={() => setManualPanelOpen(false)}
       />
 
-      <ScriptRunnerDocsPanel
-        open={scriptRunnerDocsPanelOpen}
-        onClose={() => setScriptRunnerDocsPanelOpen(false)}
+      <ScriptRunnerPanel
+        open={scriptRunnerPanelOpen}
+        onClose={() => setScriptRunnerPanelOpen(false)}
+        scriptRunner={scriptRunner}
+        onEditorKeyDown={handleScriptEditorKeyDown}
       />
     </div>
   );
