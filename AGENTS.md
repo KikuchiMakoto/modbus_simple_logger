@@ -95,8 +95,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **ステータス更新は ref 経由で直接 DOM を更新**（不要な React 再レンダリングを抑制）
 
 ### ScriptRunner（`pyodideWorker.ts`）
-- Pyodide v314.0.0（Python 3.14）を CDN からロード（Web Worker 内）
-  - バージョンは `PYODIDE_VERSION` 定数に集約（URL を直書きしないこと）。更新時は `AppInfoPanel.tsx` と README も同期
+- Pyodide v314.0.0（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
+  - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
+  - バージョンは **`package.json` の `pyodide` 依存の完全固定ピン（`^` なし）が一次情報源**。URL 直書き禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
   - v314.0 以降は **module worker 必須**（classic worker 非対応）。本 Worker は `{ type: 'module' }` で生成済み
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
 - `set_ao()` / `set_ao_all()` でメインスレッドへ AO 制御命令を postMessage
@@ -116,7 +117,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
-- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は完全オフライン動作。
+- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約14MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
   - `CACHE_VERSION` も同プラグインがマニフェスト内容のハッシュへ置換（`'dev'` → 8桁ハッシュ）。デプロイ毎に新キャッシュへ切替わり旧キャッシュは activate で削除
   - 未ビルドの `vite dev` ではプレースホルダのまま（空配列／`'dev'`）。dev は base が `/` で BASE_PATH 不一致のため SW は実質無効、問題なし
@@ -124,7 +125,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - キャッシュ保存時に `request` と `BASE_PATH + 'index.html'` の両方に保存（キー不一致防止）
 - 静的アセット: Stale-While-Revalidate（プリキャッシュ済みアセットの裏での更新用。オフライン時はプリキャッシュから配信）
 - `vite.config.ts` の `server.headers` / `preview.headers` でも COOP/COEP を設定
-- SW 更新時は `window.confirm()` でユーザー確認（計測中断防止）
+- **SW 更新はユーザー承諾ゲート**（計測中断防止・バージョン固定）: `sw.js` の install は `skipWaiting()` を呼ばず、新 SW は **waiting に留まる**（旧バージョンが旧キャッシュのまま配信継続）。`main.tsx` が起動後10秒以内なら自動で、それ以降は `window.confirm()` 承諾時のみ `SKIP_WAITING` を送信 → activate（旧キャッシュ削除）→ `controllerchange` で無条件リロード。拒否時は waiting のまま次回起動時に自動適用。**activate 後の controllerchange で confirm してはならない**（その時点で旧キャッシュは削除済みのため、拒否すると未読込アセットの取得が壊れる）
 - 定期 update チェックの `setInterval` は `pagehide` でクリーンアップ
 
 ### Float32 内部表現

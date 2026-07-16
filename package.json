@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "1.16",
+  "version": "1.18",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "plotly.js": "^3.6.0",
+    "pyodide": "314.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-plotly.js": "^3.0.0",
