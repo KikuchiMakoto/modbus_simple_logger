@@ -1,8 +1,10 @@
-// Pyodide release loaded from the jsdelivr CDN. The version follows the new
-// Python-aligned scheme (314.x == Python 3.14); keep the worker as the single
-// source of truth and mirror it in AppInfoPanel / README when bumping.
-const PYODIDE_VERSION = '314.0.0';
-const PYODIDE_CDN_BASE = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+// Pyodide runtime self-hosted under <base>/pyodide/ — copied out of the npm
+// package by the `pyodide-assets` plugin in vite.config.ts and precached by
+// the Service Worker, so ScriptRunner works fully offline. The exact version
+// pin of the `pyodide` dependency in package.json is the single source of
+// truth for the Pyodide version (AppInfoPanel displays it via
+// VITE_PYODIDE_VERSION).
+const PYODIDE_BASE_URL = new URL(`${import.meta.env.BASE_URL}pyodide/`, self.location.href).href;
 
 type PyodideLike = {
   setInterruptBuffer: (buffer: Uint8Array) => void;
@@ -90,8 +92,8 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   interruptBuffer = new Uint8Array(intSab);
   versionBuffer = new Int32Array(verSab);
 
-  const { loadPyodide } = await import(/* @vite-ignore */ `${PYODIDE_CDN_BASE}pyodide.mjs`);
-  pyodide = (await loadPyodide({ indexURL: PYODIDE_CDN_BASE })) as PyodideLike;
+  const { loadPyodide } = await import(/* @vite-ignore */ `${PYODIDE_BASE_URL}pyodide.mjs`);
+  pyodide = (await loadPyodide({ indexURL: PYODIDE_BASE_URL })) as PyodideLike;
 
   pyodide.setInterruptBuffer(interruptBuffer);
   pyodide.runPython(RUNNER_SETUP);
