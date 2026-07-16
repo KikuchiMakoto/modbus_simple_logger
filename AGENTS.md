@@ -125,7 +125,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - キャッシュ保存時に `request` と `BASE_PATH + 'index.html'` の両方に保存（キー不一致防止）
 - 静的アセット: Stale-While-Revalidate（プリキャッシュ済みアセットの裏での更新用。オフライン時はプリキャッシュから配信）
 - `vite.config.ts` の `server.headers` / `preview.headers` でも COOP/COEP を設定
-- SW 更新時は `window.confirm()` でユーザー確認（計測中断防止）
+- **SW 更新はユーザー承諾ゲート**（計測中断防止・バージョン固定）: `sw.js` の install は `skipWaiting()` を呼ばず、新 SW は **waiting に留まる**（旧バージョンが旧キャッシュのまま配信継続）。`main.tsx` が起動後10秒以内なら自動で、それ以降は `window.confirm()` 承諾時のみ `SKIP_WAITING` を送信 → activate（旧キャッシュ削除）→ `controllerchange` で無条件リロード。拒否時は waiting のまま次回起動時に自動適用。**activate 後の controllerchange で confirm してはならない**（その時点で旧キャッシュは削除済みのため、拒否すると未読込アセットの取得が壊れる）
 - 定期 update チェックの `setInterval` は `pagehide` でクリーンアップ
 
 ### Float32 内部表現

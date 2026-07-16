@@ -46,6 +46,13 @@ const PRECACHE_URLS = [
 // must never activate — a missing JS chunk turns into a blank page on the next
 // offline launch. If any fetch fails, install fails, the previous version
 // keeps serving, and the browser retries on the next update check.
+//
+// Deliberately NO skipWaiting() here: after install the new SW parks in
+// `waiting` and the previous version keeps serving with its cache intact.
+// Activation (which deletes the old cache and claims clients) only happens
+// when the page posts SKIP_WAITING — silently at startup, or after the user
+// confirms mid-session (see main.tsx). This pins the running version until
+// the user consents and prevents an update from breaking a live session.
 self.addEventListener('install', (event) => {
   console.log('[SW] Install event');
   event.waitUntil(
@@ -60,7 +67,6 @@ self.addEventListener('install', (event) => {
           await cache.put(url, withIsolationHeaders(response));
         })
       );
-      await self.skipWaiting();
     })
   );
 });

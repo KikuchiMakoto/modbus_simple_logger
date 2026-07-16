@@ -60,6 +60,8 @@ if (rootElement) {
 
 // Service Worker registration (PWA)
 if ('serviceWorker' in navigator) {
+  const startedAt = Date.now();
+
   window.addEventListener('load', () => {
     const swUrl = `${import.meta.env.BASE_URL}sw.js`;
     navigator.serviceWorker
@@ -67,17 +69,36 @@ if ('serviceWorker' in navigator) {
       .then((registration) => {
         console.log('SW registered:', registration);
 
-        // If a new SW is already waiting, activate it immediately
+        // A new version left waiting by a previous session (update declined,
+        // or the tab was closed): apply it now — we are at startup, so no
+        // measurement can be interrupted.
         if (registration.waiting) {
           registration.waiting.postMessage({ type: 'SKIP_WAITING' });
         }
 
-        // Listen for new SW installations
+        // Listen for new SW installations. sw.js does NOT call skipWaiting()
+        // during install, so a freshly downloaded version parks in `waiting`
+        // while the current version keeps serving with its cache intact. The
+        // version switch (activate = old cache deleted + clients claimed)
+        // only happens once we post SKIP_WAITING below.
         registration.addEventListener('updatefound', () => {
           const newWorker = registration.installing;
           if (!newWorker) return;
           newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            if (newWorker.state !== 'installed' || !navigator.serviceWorker.controller) return;
+            // Right after launch no measurement can be running yet, and a
+            // blocking confirm() can sit on a still-blank window, so apply
+            // silently. Later, ask first: declining leaves the new version
+            // waiting (this session keeps running the current version in
+            // full, including all cached assets) and it is applied on the
+            // next launch via the `registration.waiting` branch above.
+            const shouldActivate =
+              Date.now() - startedAt < 10_000 ||
+              window.confirm(
+                'A new version of the app is available. Update and reload now?\n\n' +
+                'Warning: Reloading will stop any active measurement.'
+              );
+            if (shouldActivate) {
               newWorker.postMessage({ type: 'SKIP_WAITING' });
             }
           });
@@ -103,28 +124,15 @@ if ('serviceWorker' in navigator) {
       });
   });
 
-  // Reload the page when a new SW takes over
+  // Reload the page when a new SW takes over. Activation is consent-gated
+  // above (or happens silently at startup / on the very first install), so
+  // by the time controllerchange fires the reload has already been approved
+  // — never prompt here: the old cache is gone at this point, and declining
+  // would leave the page running a half-broken version.
   let refreshing = false;
-  const startedAt = Date.now();
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;
     refreshing = true;
-    // Right after launch no measurement can be running yet, and a blocking
-    // confirm() at that point can sit on a still-blank window (startup
-    // updates often land before first paint). Reload silently instead.
-    if (Date.now() - startedAt < 10_000) {
-      window.location.reload();
-      return;
-    }
-    // Prompt before reload to avoid interrupting active measurements
-    const shouldReload = window.confirm(
-      'A new version of the app is available. Reload now to update?\n\n' +
-      'Warning: Reloading will stop any active measurement.'
-    );
-    if (shouldReload) {
-      window.location.reload();
-    } else {
-      refreshing = false;
-    }
+    window.location.reload();
   });
 }
