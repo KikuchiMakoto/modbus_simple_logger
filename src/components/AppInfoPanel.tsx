@@ -70,6 +70,14 @@ export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => 
               <span className="font-medium">Ryota MANO</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">Bug Reporter</span>
             </li>
+            <li className="flex items-center justify-between rounded px-2 py-1">
+              <span className="font-medium">Itsuki SATO</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">Feature Proposal</span>
+            </li>
+            <li className="flex items-center justify-between rounded px-2 py-1">
+              <span className="font-medium">Ying CUI</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">Feature Proposal</span>
+            </li>
           </ul>
         </div>
 
