@@ -7,7 +7,7 @@ body {
 }
 
 .card {
-  @apply rounded-xl bg-white shadow-lg border border-slate-200 p-3 dark:bg-slate-900 dark:border-slate-800;
+  @apply rounded-xl bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
 }
 
 .button-primary {

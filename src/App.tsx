@@ -13,6 +13,7 @@ import {
 import {
   AI_CHANNELS,
   AO_CHANNELS,
+  PARAM_CHANNELS,
   AI_START_REGISTER,
   AI_FLOAT_START_REGISTER,
   AO_START_REGISTER,
@@ -43,6 +44,12 @@ import {
   getLevelColor,
   loadVoltageConfig,
   saveVoltageConfig,
+  loadAiFreeLabels,
+  saveAiFreeLabels,
+  loadAoFreeLabels,
+  saveAoFreeLabels,
+  loadParamFreeLabels,
+  saveParamFreeLabels,
 } from './utils/calibration';
 import {
   dataStorage,
@@ -134,13 +141,11 @@ const createAoChannels = (): AoChannel[] =>
     id: channelIndex,
     raw: 0,
     physical: 0,
-    label: `CH ${channelIndex} (GP8403-${channelIndex})`,
+    label: `CH ${channelIndex}`,
   }));
 
 const formatAiChannelDisplayLabel = (idx: number): string =>
-  `CH ${idx.toString().padStart(2, '0')} (${idx < 8 ? 'HX711' : 'ADS1115'}-${idx
-    .toString(16)
-    .toUpperCase()})`;
+  `CH ${idx.toString().padStart(2, '0')}`;
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -221,6 +226,10 @@ function App() {
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
+  const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
+  const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
+  const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
+  const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
 
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
@@ -297,6 +306,42 @@ function App() {
     saveVoltageConfig(voltageConfig);
     voltageConfigRef.current = voltageConfig;
   }, [voltageConfig]);
+
+  useEffect(() => {
+    saveAiFreeLabels(aiFreeLabels);
+  }, [aiFreeLabels]);
+
+  useEffect(() => {
+    saveAoFreeLabels(aoFreeLabels);
+  }, [aoFreeLabels]);
+
+  useEffect(() => {
+    saveParamFreeLabels(paramFreeLabels);
+  }, [paramFreeLabels]);
+
+  const handleAiFreeLabelChange = useCallback((idx: number, value: string) => {
+    setAiFreeLabels((prev) => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  }, []);
+
+  const handleAoFreeLabelChange = useCallback((idx: number, value: string) => {
+    setAoFreeLabels((prev) => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  }, []);
+
+  const handleParamFreeLabelChange = useCallback((idx: number, value: string) => {
+    setParamFreeLabels((prev) => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  }, []);
 
   const isSaving = !!tsvWriterRef.current;
   useEffect(() => {
@@ -413,6 +458,32 @@ function App() {
   }, [applyAoRawValues, clampAoVoltageToMilliVolt]);
 
   const scriptRunner = useScriptRunner(setAo);
+
+  // Mirror AO values into the ScriptRunner share so get_ao() can read them, in
+  // volts to match the unit set_ao() takes (AO state is held in millivolts).
+  // The share is created lazily with the worker, so this also keys on
+  // scriptRunning to seed it on the first run.
+  useEffect(() => {
+    const share = scriptRunner.aoShareRef.current;
+    if (!share) return;
+    for (let i = 0; i < share.length; i++) {
+      share[i] = (aoChannels[i]?.physical ?? 0) / 1000;
+    }
+  }, [aoChannels, scriptRunner.scriptRunning, scriptRunner.aoShareRef]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const share = scriptRunner.paramShareRef.current;
+      if (!share) return;
+      setParamValues((prev) => {
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i] !== share[i]) return Array.from(share);
+        }
+        return prev;
+      });
+    }, 200);
+    return () => window.clearInterval(intervalId);
+  }, [scriptRunner.paramShareRef]);
 
   const applyCalibrationToChannels = useCallback(
     (channels: AiChannel[], calibration: AiCalibration[]) =>
@@ -578,13 +649,15 @@ function App() {
       for (let i = 0; i < aiRaw.length; i++) {
         aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? 'unknown').value;
       }
-      writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage);
+      const paramShare = scriptRunner.paramShareRef.current;
+      const paramSnapshot = paramShare ? Array.from(paramShare) : Array(PARAM_CHANNELS).fill(0);
+      writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, paramSnapshot);
       setSavePointCount((prev) => prev + 1);
     } catch (err) {
       console.error('[App] save update failed', err);
       setStatus(`TSV write error: ${(err as Error).message}`);
     }
-  }, [setStatus]);
+  }, [setStatus, scriptRunner.paramShareRef]);
 
   const doAoWriteAsync = useCallback(async () => {
     if (aoWriteInProgressRef.current) return;
@@ -1046,7 +1119,7 @@ function App() {
 
   const handleStartSave = async () => {
     try {
-      const writer = await createTsvWriter(AI_CHANNELS, AO_CHANNELS);
+      const writer = await createTsvWriter(AI_CHANNELS, AO_CHANNELS, undefined, 3, PARAM_CHANNELS);
       const startedAt = Date.now();
 
       pendingDataPoints.current = [];
@@ -1218,8 +1291,8 @@ function App() {
 
       <div className="space-y-3 p-3">
         <section className="card">
-        <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Analog Input (16)</h2>
+        <div className="mb-0.5 flex items-center justify-between">
+          <h2 className="text-lg font-semibold leading-none">Analog Input (16)</h2>
           <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
             <p className="text-[0.65rem]">
               <em>Phy</em> = <em>a</em>&middot;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&middot;(<em>Raw</em>) + <em>c</em>
@@ -1241,31 +1314,40 @@ function App() {
             <div
               key={ch.id}
               translate="no"
-              className="flex rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="flex min-w-0 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="flex-1 p-1">
-                <div className="border-b border-slate-200 pb-px text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
-                  {formatAiChannelDisplayLabel(ch.id)}
+              <div className="min-w-0 flex-1 p-1">
+                <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
+                  <span className="whitespace-nowrap text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    {formatAiChannelDisplayLabel(ch.id)}
+                  </span>
+                  <input
+                    type="text"
+                    value={aiFreeLabels[ch.id] ?? ''}
+                    onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
+                    placeholder="Label"
+                    className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  />
                 </div>
-                <div className="space-y-0 pt-px text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-600 font-medium dark:text-slate-300">Raw</span>
-                    <span className={`text-lg font-bold tabular-nums ${aiTextColor}`}>
+                <div className="space-y-0 pt-px text-sm leading-none">
+                  <div className="flex justify-between items-center leading-none">
+                    <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
+                    <span className={`text-lg font-bold leading-none tabular-nums ${aiTextColor}`}>
                       {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700">
-                    <span className="text-slate-600 font-medium dark:text-slate-300">Phy</span>
-                    <span className={`text-lg font-bold tabular-nums ${aiTextColor}`}>
+                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
+                    <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
+                    <span className={`text-lg font-bold leading-none tabular-nums ${aiTextColor}`}>
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
                   {showVoltage && (
-                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700">
-                    <span className="text-slate-600 font-medium dark:text-slate-300">
+                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
+                    <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">
                       {display.unit}
                     </span>
-                    <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
+                    <span className="text-lg font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
                       {display.value.toFixed(3)}
                     </span>
                   </div>
@@ -1282,23 +1364,67 @@ function App() {
       </section>
 
       <section className="card">
-        <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Analog Output (8)</h2>
+        <div className="mb-0.5 flex items-center justify-between">
+          <h2 className="text-lg font-semibold leading-none">Analog Output (8)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {aoChannels.map((ch) => (
             <div
               key={ch.id}
-              className="rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="border-b border-slate-200 pb-px text-center text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
-                {ch.label}
+              <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
+                <span className="whitespace-nowrap text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  {ch.label}
+                </span>
+                <input
+                  type="text"
+                  value={aoFreeLabels[ch.id] ?? ''}
+                  onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
+                  placeholder="Label"
+                  className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                />
               </div>
-              <div className="pt-px text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-slate-600 dark:text-slate-300">V</span>
-                  <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">
+              <div className="pt-px text-sm leading-none">
+                <div className="flex items-center justify-between leading-none">
+                  <span className="font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
+                  <span className="text-lg font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
                     {(ch.physical / 1000).toFixed(3)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="mb-0.5 flex items-center justify-between">
+          <h2 className="text-lg font-semibold leading-none">Parameter (8)</h2>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+          {paramValues.map((value, idx) => (
+            <div
+              key={idx}
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
+            >
+              <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
+                <span className="whitespace-nowrap text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  {`CH ${idx}`}
+                </span>
+                <input
+                  type="text"
+                  value={paramFreeLabels[idx] ?? ''}
+                  onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
+                  placeholder="Label"
+                  className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                />
+              </div>
+              <div className="pt-px text-sm leading-none">
+                <div className="flex items-center justify-between leading-none">
+                  <span className="font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
+                  <span className="text-lg font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {value.toFixed(3)}
                   </span>
                 </div>
               </div>

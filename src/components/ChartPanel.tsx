@@ -178,7 +178,7 @@ export function ChartPanel({
         </select>
       </div>
       {isEmpty ? (
-        <div className="flex h-[300px] items-center justify-center text-sm text-slate-400">
+        <div className="flex h-[280px] items-center justify-center text-sm text-slate-400">
           No data — connect device and start polling
         </div>
       ) : (
@@ -186,7 +186,7 @@ export function ChartPanel({
           data={plotData}
           layout={plotLayout}
           config={plotConfig}
-          style={{ width: '100%', height: '300px' }}
+          style={{ width: '100%', height: '280px' }}
         />
       )}
     </section>

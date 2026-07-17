@@ -1,9 +1,12 @@
 import { AiCalibration, AiChannel, VoltageMode, DEFAULT_VOLTAGE_CONFIG, VOLTAGE_MODES } from '../types';
-import { AI_CHANNELS } from '../constants';
+import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { readJsonCookie, writeJsonCookie } from './cookies';
 
 const AI_COOKIE_KEY = 'ai_calibration_v1';
 const VOLTAGE_CONFIG_COOKIE_KEY = 'voltage_config_v1';
+const AI_FREE_LABEL_COOKIE_KEY = 'ai_free_labels_v1';
+const AO_FREE_LABEL_COOKIE_KEY = 'ao_free_labels_v1';
+const PARAM_FREE_LABEL_COOKIE_KEY = 'param_free_labels_v1';
 const INT16_MAX = 32767;
 
 const defaultAiCalibration = (): AiCalibration => ({ a: 0, b: 1, c: 0 });
@@ -29,6 +32,24 @@ export const loadVoltageConfig = (): VoltageMode[] => {
 };
 
 export const saveVoltageConfig = (config: VoltageMode[]) => writeJsonCookie(VOLTAGE_CONFIG_COOKIE_KEY, config);
+
+const loadFreeLabels = (key: string, channels: number): string[] => {
+  const raw = readJsonCookie<string[]>(key);
+  if (!Array.isArray(raw)) return Array.from({ length: channels }, () => '');
+  return Array.from({ length: channels }, (_, i) => raw[i] ?? '');
+};
+
+export const loadAiFreeLabels = (): string[] => loadFreeLabels(AI_FREE_LABEL_COOKIE_KEY, AI_CHANNELS);
+
+export const saveAiFreeLabels = (labels: string[]) => writeJsonCookie(AI_FREE_LABEL_COOKIE_KEY, labels);
+
+export const loadAoFreeLabels = (): string[] => loadFreeLabels(AO_FREE_LABEL_COOKIE_KEY, AO_CHANNELS);
+
+export const saveAoFreeLabels = (labels: string[]) => writeJsonCookie(AO_FREE_LABEL_COOKIE_KEY, labels);
+
+export const loadParamFreeLabels = (): string[] => loadFreeLabels(PARAM_FREE_LABEL_COOKIE_KEY, PARAM_CHANNELS);
+
+export const saveParamFreeLabels = (labels: string[]) => writeJsonCookie(PARAM_FREE_LABEL_COOKIE_KEY, labels);
 
 export const aiToPhysical = (raw: number, cal: AiCalibration): number =>
   cal.a * raw * raw + cal.b * raw + cal.c;
