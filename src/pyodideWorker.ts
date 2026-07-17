@@ -49,7 +49,7 @@ def _runner_stop():
 `;
 
 type WorkerIncomingMessage =
-  | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; intSab: SharedArrayBuffer; verSab: SharedArrayBuffer }
+  | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; aoSab: SharedArrayBuffer; paramSab: SharedArrayBuffer; intSab: SharedArrayBuffer; verSab: SharedArrayBuffer }
   | { type: 'run'; code: string }
   | { type: 'interrupt' };
 
@@ -58,6 +58,8 @@ let initPromise: Promise<void> | null = null;
 let running = false;
 let aiRawShare: Float32Array | null = null;
 let aiPhysicalShare: Float32Array | null = null;
+let aoShare: Float32Array | null = null;
+let paramShare: Float32Array | null = null;
 let interruptBuffer: Uint8Array | null = null;
 let versionBuffer: Int32Array | null = null;
 
@@ -84,11 +86,19 @@ const readAiAll = (buffer: Float32Array | null): number[] => {
   return Array.from(buffer);
 };
 
-const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayBuffer, intSab: SharedArrayBuffer, verSab: SharedArrayBuffer) => {
+const writeParamValue = (buffer: Float32Array | null, ch: number, data: number): void => {
+  if (!buffer) return;
+  if (!Number.isInteger(ch) || ch < 0 || ch >= buffer.length) return;
+  buffer[ch] = data;
+};
+
+const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayBuffer, aoSab: SharedArrayBuffer, paramSab: SharedArrayBuffer, intSab: SharedArrayBuffer, verSab: SharedArrayBuffer) => {
   postWorkerMessage({ type: 'status', message: 'Initializing Pyodide...' });
 
   aiRawShare = new Float32Array(rawSab);
   aiPhysicalShare = new Float32Array(phySab);
+  aoShare = new Float32Array(aoSab);
+  paramShare = new Float32Array(paramSab);
   interruptBuffer = new Uint8Array(intSab);
   versionBuffer = new Int32Array(verSab);
 
@@ -101,6 +111,12 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   pyodide.globals.set('get_ai_raw_all', () => readAiAll(aiRawShare));
   pyodide.globals.set('get_ai_phy', (ch: number) => readAiValue(aiPhysicalShare, Number(ch)));
   pyodide.globals.set('get_ai_phy_all', () => readAiAll(aiPhysicalShare));
+  // AO reads come from a share the main thread mirrors on every AO change, in
+  // volts — the same unit set_ao() takes. set_ao() is asynchronous (it posts to
+  // the main thread), so a get_ao() immediately after a set_ao() still observes
+  // the previous value until the main thread has applied and mirrored it.
+  pyodide.globals.set('get_ao', (ch: number) => readAiValue(aoShare, Number(ch)));
+  pyodide.globals.set('get_ao_all', () => readAiAll(aoShare));
   pyodide.globals.set('set_ao', (ch: number, data: number) => {
     postWorkerMessage({ type: 'set_ao', ch: Number(ch), data: Number(data) });
   });
@@ -108,6 +124,17 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
     if (!Array.isArray(data)) return;
     data.forEach((value, index) => {
       postWorkerMessage({ type: 'set_ao', ch: index, data: Number(value) });
+    });
+  });
+  pyodide.globals.set('get_param', (ch: number) => readAiValue(paramShare, Number(ch)));
+  pyodide.globals.set('get_param_all', () => readAiAll(paramShare));
+  pyodide.globals.set('set_param', (ch: number, data: number) => {
+    writeParamValue(paramShare, Number(ch), Number(data));
+  });
+  pyodide.globals.set('set_param_all', (data: unknown) => {
+    if (!Array.isArray(data)) return;
+    data.forEach((value, index) => {
+      writeParamValue(paramShare, index, Number(value));
     });
   });
 
@@ -119,7 +146,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
 
   if (message.type === 'init') {
     if (!initPromise) {
-      initPromise = initializePyodide(message.rawSab, message.phySab, message.intSab, message.verSab);
+      initPromise = initializePyodide(message.rawSab, message.phySab, message.aoSab, message.paramSab, message.intSab, message.verSab);
     }
     try {
       await initPromise;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AI_CHANNELS, AO_CHANNELS } from '../constants';
+import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
 
 const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
@@ -21,6 +21,8 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
   const interruptBufferRef = useRef<Uint8Array | null>(null);
   const aiRawShareRef = useRef<Float32Array | null>(null);
   const aiPhysicalShareRef = useRef<Float32Array | null>(null);
+  const aoShareRef = useRef<Float32Array | null>(null);
+  const paramShareRef = useRef<Float32Array | null>(null);
   const dataReadyVersionRef = useRef<Int32Array | null>(null);
 
   const ensureWorkerReady = useCallback((): Worker => {
@@ -33,11 +35,15 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
 
     const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
     const phySab = new SharedArrayBuffer(AI_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
+    const aoSab = new SharedArrayBuffer(AO_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
+    const paramSab = new SharedArrayBuffer(PARAM_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
     const intSab = new SharedArrayBuffer(1);
     const verSab = new SharedArrayBuffer(4);
 
     aiRawShareRef.current = new Float32Array(rawSab);
     aiPhysicalShareRef.current = new Float32Array(phySab);
+    aoShareRef.current = new Float32Array(aoSab);
+    paramShareRef.current = new Float32Array(paramSab);
     interruptBufferRef.current = new Uint8Array(intSab);
     dataReadyVersionRef.current = new Int32Array(verSab);
 
@@ -77,6 +83,8 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
       type: 'init',
       rawSab,
       phySab,
+      aoSab,
+      paramSab,
       intSab,
       verSab,
     });
@@ -147,6 +155,8 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     clearScriptCode,
     aiRawShareRef,
     aiPhysicalShareRef,
+    aoShareRef,
+    paramShareRef,
     dataReadyVersionRef,
   };
 }
@@ -155,6 +165,11 @@ function getDefaultScript(): string {
   return `# get_ai_raw(ch): Read raw AI value for a channel.
 # get_ai_phy(ch): Read calibrated AI value for a channel.
 # set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
+# get_ao(ch): Read back AO voltage in V. set_ao() is applied asynchronously,
+#   so get_ao() right after a set_ao() still sees the previous value.
+# get_param(ch) / set_param(ch, data): Read/write a scratch Parameter value (0-7).
+#   Parameters are always 0 at app startup and are not persisted; they exist
+#   only to pass values from the script into the Parameter display and TSV log.
 #
 # To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
 # This runner executes scripts in an async context (top-level await supported).

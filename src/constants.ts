@@ -1,5 +1,6 @@
 export const AI_CHANNELS = 16;
 export const AO_CHANNELS = 8;
+export const PARAM_CHANNELS = 8;
 
 export const AI_START_REGISTER = 0;
 export const AI_FLOAT_START_REGISTER = 5000;

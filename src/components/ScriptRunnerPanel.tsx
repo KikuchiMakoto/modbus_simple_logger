@@ -14,8 +14,14 @@ const API_DOCS = [
   { name: 'get_ai_raw_all()', desc: 'Read all raw AI values as a list of 16 floats.' },
   { name: 'get_ai_phy(ch)', desc: 'Read calibrated AI value for channel ch (0-15).' },
   { name: 'get_ai_phy_all()', desc: 'Read all calibrated AI values as a list of 16 floats.' },
-  { name: 'set_ao(ch, data)', desc: 'Write AO voltage in V (internally clamped to 0-10V).' },
+  { name: 'get_ao(ch)', desc: 'Read back AO voltage in V for channel ch (0-7).' },
+  { name: 'get_ao_all()', desc: 'Read all AO voltages as a list of 8 floats.' },
+  { name: 'set_ao(ch, data)', desc: 'Write AO voltage in V (internally clamped to 0-10V). Applied asynchronously, so get_ao() reflects it only after the main thread applies it.' },
   { name: 'set_ao_all(data)', desc: 'Write all AO channels from a list of 8 values.' },
+  { name: 'get_param(ch)', desc: 'Read scratch Parameter value for channel ch (0-7). Always 0 at app startup.' },
+  { name: 'get_param_all()', desc: 'Read all Parameter values as a list of 8 floats.' },
+  { name: 'set_param(ch, data)', desc: 'Write scratch Parameter value for channel ch (0-7). Shown in the Parameter panel and logged to TSV; not persisted.' },
+  { name: 'set_param_all(data)', desc: 'Write all Parameter channels from a list of 8 values.' },
   { name: 'await asyncio.sleep(s)', desc: 'Non-blocking sleep. Do NOT use time.sleep().' },
 ];
 
