@@ -16,7 +16,7 @@
 | **2 精度モード** | Normal（i16）/ Extended（f32）の切り替え対応 |
 | **キャリブレーション** | 各チャネルごとに `a·x² + b·x + c` の多項式キャリブレーションを編集・保存（localStorage）・JSON インポート/エクスポート |
 | **電圧表示モード** | HX711（mV/V、με）/ ADS1115（V、mV）の計測モードをチャネルごとに設定可能 |
-| **リアルタイムチャート** | Plotly.js による 2 画面チャート。X/Y 軸を任意のチャネル（Raw/Physical）に切り替え可能 |
+| **リアルタイムチャート** | Plotly.js による 2 画面チャート。X/Y 軸を任意のチャネル（Raw/Physical/Parameter `par_00`〜）に切り替え可能 |
 | **データ保存** | File System Access API による TSV ストリーミング保存。IndexedDB でセッション中のデータを FIFO 管理 |
 | **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）による Python スクリプト実行。`set_ao()` で AO 制御 |
 | **PWA** | Service Worker によるオフライン対応。COOP/COEP ヘッダー注入で SharedArrayBuffer を有効化 |

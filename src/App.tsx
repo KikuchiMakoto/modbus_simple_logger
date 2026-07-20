@@ -191,6 +191,10 @@ const axisOptions = [
     key: `phy_${idx.toString().padStart(2, '0')}`,
     label: `phy_${idx.toString().padStart(2, '0')}`
   })),
+  ...Array.from({ length: PARAM_CHANNELS }, (_, idx) => ({
+    key: `par_${idx.toString().padStart(2, '0')}`,
+    label: `par_${idx.toString().padStart(2, '0')}`
+  })),
 ];
 
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
@@ -400,6 +404,7 @@ function App() {
         timestamp: p.timestamp,
         aiRaw: Array.from(p.aiRaw),
         aiPhysical: Array.from(p.aiPhysical),
+        param: Array.from(p.param),
       }));
       dataStorage.addDataPoints(dbBatch).catch((err) => {
         console.error('Error adding data points:', err);
@@ -563,7 +568,7 @@ function App() {
     });
   }, [scriptRunner]);
 
-  const updateDataHistory = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array) => {
+  const updateDataHistory = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
     const timestamp = Date.now();
     const seq = seqCounterRef.current++;
 
@@ -575,6 +580,7 @@ function App() {
       timestamp,
       aiRaw,
       aiPhysical,
+      param,
     });
 
     const ts = recentTimestampsRef.current;
@@ -612,7 +618,7 @@ function App() {
     return timestampsRef.current.length;
   }, []);
 
-  const enqueueDisplayUpdate = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array) => {
+  const enqueueDisplayUpdate = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
         setAiChannels((prev) =>
@@ -629,7 +635,7 @@ function App() {
             };
           }),
         );
-        updateDataHistory(aiRaw, aiPhysical);
+        updateDataHistory(aiRaw, aiPhysical, param);
       })
       .catch((err) => {
         console.error('[App] display update event failed', err);
@@ -640,7 +646,7 @@ function App() {
     }
   }, [updateDataHistory]);
 
-  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array) => {
+  const enqueueSaveUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
     const writer = tsvWriterRef.current;
     if (!writer) return;
     try {
@@ -649,15 +655,13 @@ function App() {
       for (let i = 0; i < aiRaw.length; i++) {
         aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? 'unknown').value;
       }
-      const paramShare = scriptRunner.paramShareRef.current;
-      const paramSnapshot = paramShare ? Array.from(paramShare) : Array(PARAM_CHANNELS).fill(0);
-      writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, paramSnapshot);
+      writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, param);
       setSavePointCount((prev) => prev + 1);
     } catch (err) {
       console.error('[App] save update failed', err);
       setStatus(`TSV write error: ${(err as Error).message}`);
     }
-  }, [setStatus, scriptRunner.paramShareRef]);
+  }, [setStatus]);
 
   const doAoWriteAsync = useCallback(async () => {
     if (aoWriteInProgressRef.current) return;
@@ -771,9 +775,16 @@ function App() {
         aiPhysicalShare.set(aiPhysical);
       }
 
+      // Snapshot ScriptRunner Parameter values at capture time so the chart,
+      // IndexedDB, and TSV all see the same per-point values.
+      const paramShare = scriptRunner.paramShareRef.current;
+      const param = paramShare
+        ? new Float32Array(paramShare)
+        : new Float32Array(PARAM_CHANNELS);
+
       const timestamp = Date.now();
-      enqueueDisplayUpdate(aiRaw, aiPhysical);
-      enqueueSaveUpdate(timestamp, aiRaw, aiPhysical);
+      enqueueDisplayUpdate(aiRaw, aiPhysical, param);
+      enqueueSaveUpdate(timestamp, aiRaw, aiPhysical, param);
     } else if (!firstError) {
       firstError = new Error('AI read failed');
     }
@@ -791,6 +802,7 @@ function App() {
     doAoWriteAsync,
     scriptRunner.aiRawShareRef,
     scriptRunner.aiPhysicalShareRef,
+    scriptRunner.paramShareRef,
   ]);
 
   const runPollingLoop = useCallback(async () => {

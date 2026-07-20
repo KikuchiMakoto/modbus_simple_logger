@@ -31,6 +31,7 @@ export type DataPoint = {
   timestamp: number;
   aiRaw: Float32Array;
   aiPhysical: Float32Array;
+  param: Float32Array;
 };
 
 export type SerialParity = 'none' | 'odd' | 'even';

@@ -8,6 +8,7 @@ export type StoredDataPoint = {
   timestamp: number;
   aiRaw: number[];
   aiPhysical: number[];
+  param: number[];
 };
 
 class DataStorage {
