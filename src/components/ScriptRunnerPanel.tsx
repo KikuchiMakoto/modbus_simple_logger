@@ -3,47 +3,53 @@ import type { KeyboardEvent, MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { FloatingWindow } from './FloatingWindow';
 
+type ChannelLabels = {
+  ai: string[];
+  ao: string[];
+  param: string[];
+};
+
 type ScriptRunnerPanelProps = {
   open: boolean;
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
   onEditorKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  channelLabels: ChannelLabels;
 };
 
 const API_DOCS = [
   { name: 'get_ai_raw(ch)', desc: 'Read raw AI value for channel ch (0-15).' },
-  { name: 'get_ai_raw_all()', desc: 'Read all raw AI values as a list of 16 floats.' },
   { name: 'get_ai_phy(ch)', desc: 'Read calibrated AI value for channel ch (0-15).' },
-  { name: 'get_ai_phy_all()', desc: 'Read all calibrated AI values as a list of 16 floats.' },
   { name: 'get_ao(ch)', desc: 'Read back AO voltage in V for channel ch (0-7).' },
-  { name: 'get_ao_all()', desc: 'Read all AO voltages as a list of 8 floats.' },
   { name: 'set_ao(ch, data)', desc: 'Write AO voltage in V (internally clamped to 0-10V). Applied asynchronously, so get_ao() reflects it only after the main thread applies it.' },
-  { name: 'set_ao_all(data)', desc: 'Write all AO channels from a list of 8 values.' },
   { name: 'get_param(ch)', desc: 'Read scratch Parameter value for channel ch (0-7). Always 0 at app startup.' },
-  { name: 'get_param_all()', desc: 'Read all Parameter values as a list of 8 floats.' },
   { name: 'set_param(ch, data)', desc: 'Write scratch Parameter value for channel ch (0-7). Shown in the Parameter panel and logged to TSV; not persisted.' },
-  { name: 'set_param_all(data)', desc: 'Write all Parameter channels from a list of 8 values.' },
   { name: 'await asyncio.sleep(s)', desc: 'Non-blocking sleep. Do NOT use time.sleep().' },
 ];
 
-const AI_PROMPT = [
-  'Write a Python script for ModbusSimpleLogger ScriptRunner (Python 3 / Pyodide, runs inside an asyncio event loop; top-level await is allowed).',
-  '',
-  'API:',
-  ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
-  '',
-  'Absolute rules:',
-  '- Every wait MUST be `await asyncio.sleep(seconds)`. NEVER use time.sleep() — it blocks the runtime.',
-  '- Repeated processing (e.g. feedback control) MUST be an explicit `while` or `for` loop with `await asyncio.sleep()` inside each iteration. Timers, callbacks and threads are not available.',
-  '',
-  'Task: <describe the script you want here>',
-].join('\n');
+const buildAiPrompt = (channelLabels: ChannelLabels): string =>
+  [
+    'Write a Python script for ModbusSimpleLogger ScriptRunner (Python 3 / Pyodide, runs inside an asyncio event loop; top-level await is allowed).',
+    '',
+    'API:',
+    ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
+    '',
+    'Absolute rules:',
+    '- Every wait MUST be `await asyncio.sleep(seconds)`. NEVER use time.sleep() — it blocks the runtime.',
+    '- Repeated processing (e.g. feedback control) MUST be an explicit `while` or `for` loop with `await asyncio.sleep()` inside each iteration. Timers, callbacks and threads are not available.',
+    '',
+    'User-defined channel labels (JSON; array index = ch, "" = unlabeled):',
+    JSON.stringify(channelLabels),
+    '',
+    'Task: <describe the script you want here>',
+  ].join('\n');
 
 export function ScriptRunnerPanel({
   open,
   onClose,
   scriptRunner,
   onEditorKeyDown,
+  channelLabels,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
 
@@ -51,7 +57,7 @@ export function ScriptRunnerPanel({
     // Inside <summary>: keep the click from toggling the <details>.
     event.preventDefault();
     event.stopPropagation();
-    navigator.clipboard.writeText(AI_PROMPT).then(() => {
+    navigator.clipboard.writeText(buildAiPrompt(channelLabels)).then(() => {
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
     });

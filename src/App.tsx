@@ -766,12 +766,9 @@ function App() {
 
       const aiRawShare = scriptRunner.aiRawShareRef.current;
       const aiPhysicalShare = scriptRunner.aiPhysicalShareRef.current;
-      const dataReadyVersion = scriptRunner.dataReadyVersionRef.current;
-      if (aiRawShare && aiPhysicalShare && dataReadyVersion) {
-        Atomics.store(dataReadyVersion, 0, 1);
+      if (aiRawShare && aiPhysicalShare) {
         aiRawShare.set(aiRaw);
         aiPhysicalShare.set(aiPhysical);
-        Atomics.store(dataReadyVersion, 0, 0);
       }
 
       const timestamp = Date.now();
@@ -794,7 +791,6 @@ function App() {
     doAoWriteAsync,
     scriptRunner.aiRawShareRef,
     scriptRunner.aiPhysicalShareRef,
-    scriptRunner.dataReadyVersionRef,
   ]);
 
   const runPollingLoop = useCallback(async () => {
@@ -1538,6 +1534,7 @@ function App() {
         onClose={() => setScriptRunnerPanelOpen(false)}
         scriptRunner={scriptRunner}
         onEditorKeyDown={handleScriptEditorKeyDown}
+        channelLabels={{ ai: aiFreeLabels, ao: aoFreeLabels, param: paramFreeLabels }}
       />
     </div>
   );

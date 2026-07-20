@@ -23,7 +23,6 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
   const aiPhysicalShareRef = useRef<Float32Array | null>(null);
   const aoShareRef = useRef<Float32Array | null>(null);
   const paramShareRef = useRef<Float32Array | null>(null);
-  const dataReadyVersionRef = useRef<Int32Array | null>(null);
 
   const ensureWorkerReady = useCallback((): Worker => {
     if (pyWorkerRef.current) return pyWorkerRef.current;
@@ -38,14 +37,12 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     const aoSab = new SharedArrayBuffer(AO_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
     const paramSab = new SharedArrayBuffer(PARAM_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
     const intSab = new SharedArrayBuffer(1);
-    const verSab = new SharedArrayBuffer(4);
 
     aiRawShareRef.current = new Float32Array(rawSab);
     aiPhysicalShareRef.current = new Float32Array(phySab);
     aoShareRef.current = new Float32Array(aoSab);
     paramShareRef.current = new Float32Array(paramSab);
     interruptBufferRef.current = new Uint8Array(intSab);
-    dataReadyVersionRef.current = new Int32Array(verSab);
 
     const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (event: MessageEvent) => {
@@ -86,7 +83,6 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
       aoSab,
       paramSab,
       intSab,
-      verSab,
     });
 
     pyWorkerRef.current = worker;
@@ -157,7 +153,6 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     aiPhysicalShareRef,
     aoShareRef,
     paramShareRef,
-    dataReadyVersionRef,
   };
 }
 
