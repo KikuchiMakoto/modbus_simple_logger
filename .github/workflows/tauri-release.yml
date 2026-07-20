@@ -1,0 +1,91 @@
+name: Tauri Release (Windows)
+
+# Build the Windows installer (.msi + NSIS .exe) and attach it to a GitHub
+# Release. The release is created as a draft so a human can review and
+# publish it. To cut a release: push a tag like `v3.0.0` matching
+# `tauri.conf.json` (and `package.json`) version, or run this workflow
+# manually from the Actions tab.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      # tauri-action handles the Rust toolchain install, runs `tauri build`,
+      # and publishes the resulting installers as a GitHub Release. It
+      # expects `tauri.conf.json` to expose `productName`, `version`, and
+      # `identifier` — all of which are already set in this repo.
+      #
+      # `tagName: app-version` derives the release tag from
+      # `tauri.conf.json > version` so the workflow works regardless of
+      # which exact tag was pushed (or on manual runs).
+      #
+      # `releaseName: "ModbusSimpleLogger v<version>"` sets a friendly
+      # release title.
+      #
+      # `releaseBody` summarises how the installer is built (no code
+      # signing in CI by default — see optional signing block below).
+      #
+      # `includeUpdaterJson: false` because the app does not bundle the
+      # Tauri updater plugin; the auto-generated updates manifest would be
+      # dead weight.
+      - name: Build & publish Tauri release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-version
+          releaseName: 'ModbusSimpleLogger v__VERSION__'
+          releaseBody: |
+            Windows installer for ModbusSimpleLogger.
+
+            - `.msi` (WiX) — recommended for managed enterprise deployment
+            - `.exe` (NSIS) — recommended for end-user install
+
+            Both bundles include the WebView2 bootstrapper. The app runs
+            fully offline; no network access occurs at runtime.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+
+      # ----- Optional: code signing -----
+      # If signing secrets are configured, tauri-action picks them up
+      # automatically. To enable, set the following repository secrets and
+      # uncomment the `args: ...` block below.
+      #
+      #   TAURI_SIGNING_PRIVATE_KEY            (string, contents of *.p8)
+      #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   (string)
+      #   WINDOWS_CERT_FILE                    (path or base64 PFX)
+      #   WINDOWS_CERT_PASSWORD                (string)
+      #
+      # - name: Build & publish Tauri release (signed)
+      #   uses: tauri-apps/tauri-action@v0
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      #     TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      #   with:
+      #     tagName: app-version
+      #     releaseName: 'ModbusSimpleLogger v__VERSION__'
+      #     releaseDraft: true
+      #     includeUpdaterJson: false

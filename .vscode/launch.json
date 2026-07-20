@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Tauri: Dev (attach to Rust host)",
+      "request": "launch",
+      "type": "cppvsdbg",
+      "program": "${workspaceFolder}/src-tauri/target/debug/modbus_simple_logger.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}/src-tauri",
+      "console": "integratedTerminal",
+      "preLaunchTask": "Tauri: Dev"
+    }
+  ]
+}

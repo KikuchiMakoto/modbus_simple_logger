@@ -6,6 +6,14 @@ import { relative, resolve, sep } from 'path';
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
 
+// Tauri sets TAURI_ENV_PLATFORM during `tauri dev` / `tauri build` (and other
+// tauri CLI invocations). When that's the case we serve from the project root
+// (Tauri's custom protocol mounts the build output at `/`) and pin Vite to
+// port 1420 to match `tauri.conf.json > build.devUrl`. Outside Tauri we keep
+// the GitHub-Pages sub-path for `vite build` / `vite preview` and the bare
+// `/` root for local `vite dev` (avoids sub-path HMR/manifest quirks).
+const isTauri = !!process.env.TAURI_ENV_PLATFORM;
+
 // Pyodide runtime files self-hosted out of the npm package (pinned to an exact
 // version in package.json — that pin is the single source of truth for the
 // Pyodide version). Serving them from our own origin puts them under the
@@ -125,8 +133,14 @@ export default defineConfig(({ command, isPreview }) => ({
   // GitHub Pages serves this project from a sub-directory, but local `vite dev`
   // is cleaner at the root (avoids sub-path HMR/manifest quirks). The build and
   // `vite preview` (which serves the built output) keep the deploy sub-path;
-  // index.html and manifest.json use base-relative URLs so both work.
-  base: command === 'build' || isPreview ? '/modbus_simple_logger/' : '/',
+  // index.html and manifest.json use base-relative URLs so both work. Tauri
+  // serves the build output from the custom protocol root, so under Tauri the
+  // base must be `/` for both dev and build.
+  base: isTauri
+    ? '/'
+    : command === 'build' || isPreview
+      ? '/modbus_simple_logger/'
+      : '/',
   build: {
     // The app targets modern browsers only (Web Serial / SharedArrayBuffer /
     // File System Access API), so we skip down-levelling to keep output lean.
@@ -148,12 +162,21 @@ export default defineConfig(({ command, isPreview }) => ({
     // The Plotly vendor chunk is intentionally large and long-term cached.
     chunkSizeWarningLimit: 1800,
   },
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
+  server: isTauri
+    ? {
+        port: 1420,
+        strictPort: true,
+        headers: {
+          'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+        },
+      }
+    : {
+        headers: {
+          'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+        },
+      },
   preview: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',

@@ -1,14 +1,19 @@
 {
   "name": "modbus_simple_logger",
-  "version": "2.7",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "bunx vite dev",
     "build": "bunx vite build",
-    "preview": "bunx vite preview"
+    "preview": "bunx vite preview",
+    "tauri": "bunx tauri",
+    "tauri:dev": "bun run tauri dev",
+    "tauri:build": "bun run tauri build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "plotly.js": "^3.6.0",
     "pyodide": "314.0.0",
     "react": "^19.2.7",
@@ -19,6 +24,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/plotly.js": "^3.0.10",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

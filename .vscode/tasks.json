@@ -1,0 +1,86 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Web: Dev",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "dev"],
+      "group": { "kind": "build", "isDefault": false },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$ts-webpack", "$ts-eslint"]
+    },
+    {
+      "label": "Web: Build",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "build"],
+      "group": { "kind": "build", "isDefault": false },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$ts-webpack"]
+    },
+    {
+      "label": "Web: Preview",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "preview"],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Tauri: Dev",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "tauri:dev"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$ts-webpack", "$rustc"],
+      "isBackground": true
+    },
+    {
+      "label": "Tauri: Build (Debug)",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "tauri", "build", "--debug"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": { "kind": "build", "isDefault": false },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$ts-webpack", "$rustc"]
+    },
+    {
+      "label": "Tauri: Build (Release)",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "tauri:build"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$ts-webpack", "$rustc"]
+    },
+    {
+      "label": "Rust: Check (src-tauri)",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["check"],
+      "options": {
+        "cwd": "${workspaceFolder}/src-tauri"
+      },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "Tauri: Regenerate Icons",
+      "type": "shell",
+      "command": "bunx",
+      "args": ["tauri", "icon", "public/icon.svg"],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    }
+  ]
+}
