@@ -1,61 +1,21 @@
 /*
- * Web Serial API transport using modbus-serial helpers for CRC16.
+ * Web Serial API transport for Modbus RTU.
+ *
+ * Implements the raw byte I/O (read/write loop, timeouts, receive buffer
+ * flush) on top of the browser Web Serial API, sharing CRC16/frame/Mutex
+ * logic with the Tauri transport via ModbusClientBase.
+ *
  * Designed for CDC-ACM USB-Serial converters that work with OS drivers.
  */
-import { crc16 } from '../utils/crc16';
+import { ModbusClientBase } from './modbusClientBase';
 import { SerialSettings } from '../types';
 
-/**
- * Simple async mutex implementation for exclusive access control
- */
-class AsyncMutex {
-  private locked = false;
-  private waiters: Array<() => void> = [];
-
-  async acquire(): Promise<void> {
-    if (!this.locked) {
-      this.locked = true;
-      return;
-    }
-    // Wait until the mutex is released
-    await new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
-    });
-  }
-
-  release(): void {
-    if (this.waiters.length > 0) {
-      const resolve = this.waiters.shift()!;
-      resolve();
-    } else {
-      this.locked = false;
-    }
-  }
-}
-
-export class WebSerialModbusClient {
+export class WebSerialModbusClient extends ModbusClientBase {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  private slaveId: number;
-  private serialSettings: SerialSettings;
   private serialApi: Serial;
-  private transferMutex = new AsyncMutex();
-  private lastTransferTime = 0;
-  private minMessageIntervalMs: number;
-  private isExtendedPrecision = false;
-  private readonly isUsingPolyfill: boolean;
-  private readonly debugPrefix = '[WebSerialModbusClient]';
-  private readonly verboseFrameLogging: boolean;
-  private disconnecting = false;
 
-  /**
-   * @param slaveId - Modbus slave ID.
-   * @param serialSettings - Serial communication settings.
-   * @param serialApi - Web Serial API implementation (native or polyfill).
-   * @param isExtendedPrecision - True when float32 extended precision mode is used.
-   * @param verboseFrameLogging - True to include per-frame hex dumps in debug logs.
-   */
   constructor(
     slaveId = 1,
     serialSettings: SerialSettings = {
@@ -69,80 +29,92 @@ export class WebSerialModbusClient {
     isUsingPolyfillOverride?: boolean,
     verboseFrameLogging = false,
   ) {
-    this.slaveId = slaveId;
-    this.serialSettings = serialSettings;
-    this.serialApi = serialApi || navigator.serial;
-    this.isExtendedPrecision = isExtendedPrecision;
-    this.verboseFrameLogging = verboseFrameLogging;
-    this.isUsingPolyfill =
+    super(
+      slaveId,
+      serialSettings,
+      isExtendedPrecision,
       isUsingPolyfillOverride ??
-      (typeof navigator === 'undefined' || !('serial' in navigator) || !('requestPort' in navigator.serial));
-    this.minMessageIntervalMs = this.calculateMinInterval();
-    console.info(
-      `${this.debugPrefix} initialized`,
-      {
-        slaveId: this.slaveId,
-        serialSettings: this.serialSettings,
-        isExtendedPrecision: this.isExtendedPrecision,
-        isUsingPolyfill: this.isUsingPolyfill,
-        verboseFrameLogging: this.verboseFrameLogging,
-        minMessageIntervalMs: this.minMessageIntervalMs,
-      },
+        (typeof navigator === 'undefined' || !('serial' in navigator) || !('requestPort' in navigator.serial)),
+      verboseFrameLogging,
     );
+    this.serialApi = serialApi || navigator.serial;
+    this.debugPrefix = '[WebSerialModbusClient]';
   }
 
-  /**
-   * Convert byte array to space-separated lowercase hex string for debug logs.
-   * @param bytes - Target byte array.
-   * @returns Hex string like "01 03 00 00".
-   */
-  private toHexString(bytes: Uint8Array): string {
-    return Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join(' ');
+  protected ensureReady(): void {
+    if (!this.port || !this.reader || !this.writer) {
+      throw new Error('Device not connected');
+    }
   }
 
-  /**
-   * Calculate minimum message interval based on Modbus RTU specification
-   * and precision mode.
-   *
-   * Modbus RTU requires 3.5 character times of silent interval.
-   * For stability, we use 5 character times.
-   *
-   * Normal mode: minimum 10ms after each message.
-   * Extended mode: minimum 1ms after each message.
-   *
-   * @returns Minimum interval in milliseconds
-   */
-  private calculateMinInterval(): number {
-    // Base interval depends on precision mode
-    const baseIntervalMs = this.isExtendedPrecision ? 1 : 10;
+  protected async rawTransfer(
+    frame: Uint8Array,
+    expectedLength: number,
+    timeoutMs: number,
+  ): Promise<Uint8Array> {
+    const writer = this.writer!;
+    const reader = this.reader!;
+    const startTime = Date.now();
 
-    // Calculate 5 character times based on serial settings
-    // 1 character = 1 start bit + data bits + parity bit (if any) + stop bits
-    const bitsPerChar = 1 +
-                        this.serialSettings.dataBits +
-                        (this.serialSettings.parity !== 'none' ? 1 : 0) +
-                        this.serialSettings.stopBits;
+    console.debug(`${this.debugPrefix} rawTransfer() write start`);
+    await writer.write(frame);
+    console.debug(`${this.debugPrefix} rawTransfer() write complete`);
 
-    // 5 characters worth of time in milliseconds
-    const silentIntervalMs = (bitsPerChar * 5 * 1000) / this.serialSettings.baudRate;
+    const buffer: number[] = [];
+    while (buffer.length < expectedLength) {
+      const elapsedMs = Date.now() - startTime;
+      if (elapsedMs >= timeoutMs) {
+        throw new Error('Timeout waiting for response');
+      }
+      const remainingMs = timeoutMs - elapsedMs;
+      const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('Timeout waiting for response'));
+        }, remainingMs);
+        reader.read().then(
+          (result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            resolve(result);
+          },
+          (readError) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            reject(readError);
+          },
+        );
+      });
 
-    // Use the larger of the two
-    return Math.max(baseIntervalMs, silentIntervalMs);
-  }
+      const { value, done } = readResult;
+      if (done) {
+        throw new Error('Stream closed unexpectedly');
+      }
+      if (value) {
+        for (let i = 0; i < value.length; i++) buffer.push(value[i]);
+        if (this.verboseFrameLogging) {
+          console.debug(`${this.debugPrefix} rawTransfer() read chunk`, {
+            chunkLength: value.length,
+            totalBuffered: buffer.length,
+            chunkHex: this.toHexString(value),
+          });
+        }
+      }
+    }
 
-  /**
-   * Update precision mode and recalculate minimum interval
-   */
-  setPrecisionMode(isExtended: boolean): void {
-    console.info(`${this.debugPrefix} setPrecisionMode`, {
-      from: this.isExtendedPrecision,
-      to: isExtended,
-    });
-    this.isExtendedPrecision = isExtended;
-    this.minMessageIntervalMs = this.calculateMinInterval();
-    console.info(`${this.debugPrefix} minMessageIntervalMs updated`, this.minMessageIntervalMs);
+    const responseArray = new Uint8Array(buffer);
+    if (responseArray.length > expectedLength) {
+      console.warn(`${this.debugPrefix} rawTransfer() excess bytes discarded`, {
+        expected: expectedLength,
+        received: responseArray.length,
+        excess: responseArray.length - expectedLength,
+      });
+    }
+    return responseArray.slice(0, expectedLength);
   }
 
   async connect(): Promise<boolean> {
@@ -155,12 +127,10 @@ export class WebSerialModbusClient {
       throw new Error('Web Serial API is not supported in this browser');
     }
 
-    // Clean up existing connection if any
     if (this.port) {
       await this.disconnect();
     }
 
-    // Request port from user
     this.port = await this.serialApi.requestPort();
     const portInfo = this.port.getInfo?.();
     const portInfoReason = portInfo === undefined ? 'no info from getInfo()' : undefined;
@@ -169,7 +139,6 @@ export class WebSerialModbusClient {
       reason: portInfoReason,
     });
 
-    // Open with serial settings
     console.info(`${this.debugPrefix} opening port`, this.serialSettings);
     await this.port.open({
       baudRate: this.serialSettings.baudRate,
@@ -179,7 +148,6 @@ export class WebSerialModbusClient {
     });
     console.info(`${this.debugPrefix} port opened`);
 
-    // Get readable and writable streams
     if (!this.port.readable || !this.port.writable) {
       throw new Error('Port streams are not available');
     }
@@ -223,33 +191,11 @@ export class WebSerialModbusClient {
     return this.port;
   }
 
-  private ensureReady() {
-    if (!this.port || !this.reader || !this.writer) {
-      throw new Error('Device not connected');
-    }
-  }
-
-  private buildFrame(functionCode: number, payload: number[]): Uint8Array {
-    const frame = [this.slaveId, functionCode, ...payload];
-    const crc = crc16(frame);
-    frame.push(crc & 0xff, (crc >> 8) & 0xff);
-    const rawFrame = new Uint8Array(frame);
-    const logData: Record<string, unknown> = {
-      functionCode,
-      payload,
-    };
-    if (this.verboseFrameLogging) {
-      logData.frameHex = this.toHexString(rawFrame);
-    }
-    console.debug(`${this.debugPrefix} buildFrame`, logData);
-    return rawFrame;
-  }
-
   /**
    * Drain and discard stale bytes from receive buffer.
    * Uses a short read window to avoid blocking regular polling.
    */
-  private async flushReceiveBuffer(maxFlushMs?: number): Promise<void> {
+  protected async flushReceiveBuffer(maxFlushMs?: number): Promise<void> {
     if (!this.reader || !this.port?.readable) {
       return;
     }
@@ -277,7 +223,6 @@ export class WebSerialModbusClient {
       }
 
       if (readResult === null) {
-        // Timed out waiting for additional bytes: cancel pending read and recreate reader lock.
         try {
           await reader.cancel();
         } catch (cancelError) {
@@ -316,392 +261,5 @@ export class WebSerialModbusClient {
     if (discardedBytes > 0) {
       console.warn(`${this.debugPrefix} flushed stale RX bytes`, { discardedBytes });
     }
-  }
-
-  private async transfer(frame: Uint8Array, expectedLength: number, timeout = 1000): Promise<DataView> {
-    this.ensureReady();
-    console.debug(`${this.debugPrefix} transfer() queued`, {
-      expectedLength,
-      timeout,
-      txLength: frame.length,
-      ...(this.verboseFrameLogging ? { txHex: this.toHexString(frame) } : {}),
-    });
-
-    // Acquire mutex to ensure only one transfer at a time
-    await this.transferMutex.acquire();
-    console.debug(`${this.debugPrefix} transfer() mutex acquired`);
-
-    const startTime = Date.now();
-    try {
-      const writer = this.writer!;
-      const reader = this.reader!;
-
-      // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)
-      const now = Date.now();
-      const timeSinceLastTransfer = now - this.lastTransferTime;
-      if (timeSinceLastTransfer < this.minMessageIntervalMs) {
-        const waitTime = this.minMessageIntervalMs - timeSinceLastTransfer;
-        console.debug(`${this.debugPrefix} transfer() waiting interval`, {
-          waitTime,
-          minMessageIntervalMs: this.minMessageIntervalMs,
-        });
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-
-      // Write frame
-      console.debug(`${this.debugPrefix} transfer() write start`);
-      await writer.write(frame);
-      console.debug(`${this.debugPrefix} transfer() write complete`);
-
-      // Read response with timeout
-      const buffer: number[] = [];
-
-      while (buffer.length < expectedLength) {
-        const elapsedMs = Date.now() - startTime;
-        if (elapsedMs >= timeout) {
-          throw new Error('Timeout waiting for response');
-        }
-        const remainingMs = timeout - elapsedMs;
-        const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
-          let settled = false;
-          const timeoutId = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            reject(new Error('Timeout waiting for response'));
-          }, remainingMs);
-          reader.read().then(
-            (result) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeoutId);
-              resolve(result);
-            },
-            (readError) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeoutId);
-              reject(readError);
-            },
-          );
-        });
-
-        const { value, done } = readResult;
-        if (done) {
-          throw new Error('Stream closed unexpectedly');
-        }
-        if (value) {
-          for (let i = 0; i < value.length; i++) buffer.push(value[i]);
-          if (this.verboseFrameLogging) {
-            console.debug(`${this.debugPrefix} transfer() read chunk`, {
-              chunkLength: value.length,
-              totalBuffered: buffer.length,
-              chunkHex: this.toHexString(value),
-            });
-          }
-        }
-
-        // Check if we have enough data
-        if (buffer.length >= expectedLength) {
-          break;
-        }
-      }
-
-      // Convert to DataView
-      const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
-      if (buffer.length > expectedLength) {
-        console.warn(`${this.debugPrefix} transfer() excess bytes discarded`, {
-          expected: expectedLength,
-          received: buffer.length,
-          excess: buffer.length - expectedLength,
-        });
-      }
-      console.debug(`${this.debugPrefix} transfer() response assembled`, {
-        responseLength: responseArray.length,
-        ...(this.verboseFrameLogging ? { rxHex: this.toHexString(responseArray) } : {}),
-      });
-
-      // Validate CRC16 of received data
-      if (responseArray.length < 3) {
-        throw new Error('Response too short for CRC validation');
-      }
-
-      const dataWithoutCrc = responseArray.slice(0, -2);
-      const receivedCrc = responseArray[responseArray.length - 2] | (responseArray[responseArray.length - 1] << 8);
-      const calculatedCrc = crc16(dataWithoutCrc);
-
-      if (receivedCrc !== calculatedCrc) {
-        console.error(`${this.debugPrefix} transfer() CRC mismatch`, {
-          expected: `0x${calculatedCrc.toString(16)}`,
-          received: `0x${receivedCrc.toString(16)}`,
-          rxHex: this.toHexString(responseArray),
-        });
-        throw new Error(`CRC mismatch: expected 0x${calculatedCrc.toString(16)}, got 0x${receivedCrc.toString(16)}`);
-      }
-
-      // Update last transfer time
-      this.lastTransferTime = Date.now();
-      console.debug(`${this.debugPrefix} transfer() success`, {
-        elapsedMs: this.lastTransferTime - startTime,
-      });
-
-      return new DataView(responseArray.buffer);
-    } catch (err) {
-      console.error(`${this.debugPrefix} transfer() failed`, {
-        expectedLength,
-        timeout,
-        txLength: frame.length,
-        elapsedMs: Date.now() - startTime,
-        error: err,
-      });
-      try {
-        await this.flushReceiveBuffer();
-      } catch (flushErr) {
-        console.warn(`${this.debugPrefix} transfer() flush after error failed`, flushErr);
-        if (this.reader && this.port?.readable) {
-          try { await this.reader.cancel(); } catch { /* ignore */ }
-          try { this.reader.releaseLock(); } catch { /* ignore */ }
-          try {
-            this.reader = this.port.readable.getReader();
-          } catch {
-            this.reader = null;
-            await this.disconnect();
-          }
-        }
-      }
-      throw err;
-    } finally {
-      // Always release the mutex
-      this.transferMutex.release();
-      console.debug(`${this.debugPrefix} transfer() mutex released`);
-    }
-  }
-
-  /**
-   * Read Coils (Function Code 1)
-   * @param start - Starting coil address
-   * @param count - Number of coils to read (1-2000)
-   * @returns Array of boolean values (true = ON, false = OFF)
-   */
-  async readCoils(start: number, count: number): Promise<boolean[]> {
-    console.debug(`${this.debugPrefix} readCoils()`, { start, count });
-    if (count < 1 || count > 2000) {
-      throw new Error('Count must be between 1 and 2000');
-    }
-    const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
-    const frame = this.buildFrame(1, payload);
-    const byteCount = Math.ceil(count / 8);
-    const expected = 3 + byteCount + 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected);
-
-    const values: boolean[] = [];
-    const responseByteCount = view.getUint8(2);
-
-    for (let i = 0; i < count; i += 1) {
-      const byteIndex = Math.floor(i / 8);
-      const bitIndex = i % 8;
-      const byte = view.getUint8(3 + byteIndex);
-      values.push((byte & (1 << bitIndex)) !== 0);
-    }
-
-    console.debug(`${this.debugPrefix} readCoils() done`, { responseByteCount, valuesLength: values.length });
-    return values;
-  }
-
-  /**
-   * Read Holding Registers (Function Code 3)
-   * @param start - Starting register address
-   * @param count - Number of registers to read
-   * @returns Array of signed 16-bit register values
-   */
-  async readHoldingRegisters(start: number, count: number): Promise<number[]> {
-    console.debug(`${this.debugPrefix} readHoldingRegisters()`, { start, count });
-    const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
-    const frame = this.buildFrame(3, payload);
-    const expected = 5 + count * 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected);
-    const values: number[] = [];
-    const byteCount = view.getUint8(2);
-    for (let i = 0; i < byteCount / 2; i += 1) {
-      values.push(view.getInt16(3 + i * 2, false));
-    }
-    console.debug(`${this.debugPrefix} readHoldingRegisters() done`, {
-      byteCount,
-      valuesLength: values.length,
-      preview: values.slice(0, 10),
-    });
-    return values;
-  }
-
-  /**
-   * Read Input Registers (Function Code 4)
-   * @param start - Starting register address
-   * @param count - Number of registers to read
-   * @returns Array of signed 16-bit register values
-   */
-  async readInputRegisters(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
-    console.debug(`${this.debugPrefix} readInputRegisters()`, { start, count, timeoutMs });
-    const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
-    const frame = this.buildFrame(4, payload);
-    const expected = 5 + count * 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected, timeoutMs);
-    const values: number[] = [];
-    const byteCount = view.getUint8(2);
-    for (let i = 0; i < byteCount / 2; i += 1) {
-      values.push(view.getInt16(3 + i * 2, false));
-    }
-    console.debug(`${this.debugPrefix} readInputRegisters() done`, {
-      byteCount,
-      valuesLength: values.length,
-      preview: values.slice(0, 10),
-    });
-    return values;
-  }
-
-  /**
-   * Read Input Registers as Float32 values with ABCD byte order
-   * Each float32 value is stored in 2 consecutive registers (4 bytes)
-   * ABCD byte order: [Register N: AB] [Register N+1: CD]
-   * @param start - Starting register address (e.g., 5000)
-   * @param count - Number of float32 values to read (will read count*2 registers)
-   * @returns Array of float32 values
-   */
-  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
-    console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd()`, { start, count, timeoutMs });
-    // Read twice as many registers since each float32 needs 2 registers
-    const registerCount = count * 2;
-    const payload = [start >> 8, start & 0xff, registerCount >> 8, registerCount & 0xff];
-    const frame = this.buildFrame(4, payload);
-    const expected = 5 + registerCount * 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected, timeoutMs);
-
-    const values: number[] = [];
-    const byteCount = view.getUint8(2);
-
-    // Process pairs of registers as float32 (ABCD byte order = big-endian)
-    for (let i = 0; i < byteCount; i += 4) {
-      const float32Value = view.getFloat32(3 + i, false); // false = big-endian (ABCD)
-      values.push(float32Value);
-    }
-
-    console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd() done`, {
-      byteCount,
-      valuesLength: values.length,
-      preview: values.slice(0, 10),
-    });
-    return values;
-  }
-
-  /**
-   * Write Single Coil (Function Code 5)
-   * @param address - Coil address
-   * @param value - Coil state (true = ON, false = OFF)
-   */
-  async writeSingleCoil(address: number, value: boolean): Promise<void> {
-    console.debug(`${this.debugPrefix} writeSingleCoil()`, { address, value });
-    const coilValue = value ? 0xff00 : 0x0000;
-    const payload = [address >> 8, address & 0xff, coilValue >> 8, coilValue & 0xff];
-    const frame = this.buildFrame(5, payload);
-    await this.transfer(frame, 8); // addr + fc + address + value + crc
-    console.debug(`${this.debugPrefix} writeSingleCoil() done`);
-  }
-
-  /**
-   * Write Single Register (Function Code 6)
-   * @param address - Register address
-   * @param value - 16-bit value to write
-   */
-  async writeSingleRegister(address: number, value: number): Promise<void> {
-    console.debug(`${this.debugPrefix} writeSingleRegister()`, { address, value });
-    const payload = [address >> 8, address & 0xff, value >> 8, value & 0xff];
-    const frame = this.buildFrame(6, payload);
-    await this.transfer(frame, 8);
-    console.debug(`${this.debugPrefix} writeSingleRegister() done`);
-  }
-
-  /**
-   * Write Multiple Coils (Function Code 15)
-   * @param start - Starting coil address
-   * @param values - Array of boolean values to write (max 1968 coils per Modbus spec)
-   */
-  async writeMultipleCoils(start: number, values: boolean[]): Promise<void> {
-    console.debug(`${this.debugPrefix} writeMultipleCoils()`, { start, valuesLength: values.length });
-    if (values.length === 0) {
-      throw new Error('No values provided to write');
-    }
-    if (values.length > 1968) {
-      throw new Error('Cannot write more than 1968 coils in a single request');
-    }
-
-    const count = values.length;
-    const byteCount = Math.ceil(count / 8);
-
-    // Build payload: start address (2 bytes) + count (2 bytes) + byte count (1 byte) + data
-    const payload: number[] = [
-      start >> 8,
-      start & 0xff,
-      count >> 8,
-      count & 0xff,
-      byteCount,
-    ];
-
-    // Pack boolean values into bytes (LSB first)
-    for (let i = 0; i < byteCount; i += 1) {
-      let byte = 0;
-      for (let bit = 0; bit < 8; bit += 1) {
-        const index = i * 8 + bit;
-        if (index < values.length && values[index]) {
-          byte |= 1 << bit;
-        }
-      }
-      payload.push(byte);
-    }
-
-    const frame = this.buildFrame(15, payload);
-    const expected = 8; // addr + fc + start address + count + crc
-    await this.transfer(frame, expected);
-    console.debug(`${this.debugPrefix} writeMultipleCoils() done`);
-  }
-
-  /**
-   * Write Multiple Holding Registers (Function Code 16)
-   * Writes an array of uint16 values to consecutive Holding Registers
-   * @param start - Starting register address
-   * @param values - Array of uint16 values to write (max 123 registers per Modbus spec)
-   */
-  async writeMultipleHoldingRegisters(start: number, values: number[]): Promise<void> {
-    console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters()`, {
-      start,
-      valuesLength: values.length,
-      preview: values.slice(0, 10),
-    });
-    if (values.length === 0) {
-      throw new Error('No values provided to write');
-    }
-    if (values.length > 123) {
-      throw new Error('Cannot write more than 123 registers in a single request');
-    }
-
-    const count = values.length;
-    const byteCount = count * 2;
-
-    // Build payload: start address (2 bytes) + count (2 bytes) + byte count (1 byte) + data
-    const payload: number[] = [
-      start >> 8,
-      start & 0xff,
-      count >> 8,
-      count & 0xff,
-      byteCount,
-    ];
-
-    // Add register values (each as 2 bytes, big-endian)
-    for (const value of values) {
-      const unsigned = value & 0xffff; // Ensure uint16
-      payload.push(unsigned >> 8, unsigned & 0xff);
-    }
-
-    const frame = this.buildFrame(16, payload);
-    const expected = 8; // addr + fc + start address + count + crc
-    await this.transfer(frame, expected);
-    console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters() done`);
   }
 }

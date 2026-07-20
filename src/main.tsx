@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import { isTauri } from './tauri/runtime';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -58,8 +59,11 @@ if (rootElement) {
   );
 }
 
-// Service Worker registration (PWA)
-if ('serviceWorker' in navigator) {
+// Service Worker registration (PWA). Skipped in the Tauri host — assets are
+// served from the bundled `frontendDist` via the custom protocol, so there is
+// no remote origin to cache and `registration.update()` would only emit
+// meaningless network probes.
+if ('serviceWorker' in navigator && !isTauri()) {
   const currentVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
 
   // Ask a (waiting) Service Worker which app version it was built from.

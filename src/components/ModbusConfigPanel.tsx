@@ -1,6 +1,8 @@
 import { ModbusPrecision, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
+export type ModbusPortOption = { name: string; kind: string };
+
 type ModbusConfigPanelProps = {
   open: boolean;
   onClose: () => void;
@@ -19,6 +21,12 @@ type ModbusConfigPanelProps = {
   parityOptions: SerialSettings['parity'][];
   precisionOptions: { label: string; value: ModbusPrecision }[];
   connected: boolean;
+  isTauri: boolean;
+  availablePorts: ModbusPortOption[];
+  selectedPort: string;
+  onSelectedPortChange: (name: string) => void;
+  onRefreshPorts: () => void;
+  portListLoading: boolean;
 };
 
 export function ModbusConfigPanel({
@@ -39,10 +47,47 @@ export function ModbusConfigPanel({
   parityOptions,
   precisionOptions,
   connected,
+  isTauri,
+  availablePorts,
+  selectedPort,
+  onSelectedPortChange,
+  onRefreshPorts,
+  portListLoading,
 }: ModbusConfigPanelProps) {
   return (
     <FloatingWindow open={open} onClose={onClose} title="Modbus Config" defaultWidth={360} defaultHeight={600}>
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        {isTauri && (
+          <div>
+            <label className="block text-sm text-slate-600 dark:text-slate-400">Serial Port</label>
+            <div className="flex gap-2">
+              <select
+                value={selectedPort}
+                onChange={(e) => onSelectedPortChange(e.target.value)}
+                className="flex-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                disabled={connected}
+              >
+                {availablePorts.length === 0 ? (
+                  <option value="">{portListLoading ? 'Scanning…' : 'No ports detected'}</option>
+                ) : (
+                  availablePorts.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} ({p.kind})
+                    </option>
+                  ))
+                )}
+              </select>
+              <button
+                type="button"
+                onClick={onRefreshPorts}
+                disabled={connected || portListLoading}
+                className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+              >
+                {portListLoading ? '…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+        )}
         <div>
           <label className="block text-sm text-slate-600 dark:text-slate-400">Slave ID</label>
           <input

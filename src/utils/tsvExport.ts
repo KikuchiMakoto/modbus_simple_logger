@@ -2,12 +2,24 @@
  * TSV (Tab-Separated Values) export utilities
  * Provides functions for formatting and exporting sensor data to TSV format
  */
+import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
+import { isTauri } from '../tauri/runtime';
+
+/**
+ * Minimal streaming sink the TsvWriter writes to. The browser path uses
+ * FileSystemWritableFileStream directly; the Tauri path forwards to
+ * `tsv_append` (Rust `OpenOptions::append`) so the file is updated in place
+ * and remains valid even if the app is force-quit between flushes.
+ */
+export interface TsvWritableSink {
+  write(data: string): Promise<void>;
+  close(): Promise<void>;
+}
 
 /**
  * Format a timestamp as a human-readable string
  * Format: YYYY/MM/DD HH:mm:ss.fff
- * @param timestamp - Unix timestamp in milliseconds
- * @returns Formatted timestamp string
  */
 export function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -21,14 +33,6 @@ export function formatTimestamp(timestamp: number): string {
   return `${yyyy}/${mm}/${dd} ${hh}:${min}:${ss}.${fff}`;
 }
 
-/**
- * Create TSV header row for AI/AO/Parameter channel data
- * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tao_raw_00\t...\tai_vlt_00\t...\tparam_00\t...
- * @param aiChannels - Number of AI channels
- * @param aoChannels - Number of AO channels
- * @param paramChannels - Number of Parameter channels (default: 0)
- * @returns TSV header string with newline
- */
 export function createTsvHeader(aiChannels: number, aoChannels: number, paramChannels: number = 0): string {
   const ch = (prefix: string, n: number) =>
     Array.from({ length: n }, (_, i) => `${prefix}${i.toString().padStart(2, '0')}`);
@@ -42,8 +46,6 @@ export function createTsvHeader(aiChannels: number, aoChannels: number, paramCha
   ].join('\t') + '\n';
 }
 
-/** Append each element of `data` to `out` formatted by `fmt` (no intermediate
- * array — works for both Float32Array and number[]). */
 function appendFormatted(
   out: string[],
   data: Float32Array | number[],
@@ -52,17 +54,6 @@ function appendFormatted(
   for (let i = 0; i < data.length; i++) out.push(fmt(data[i]));
 }
 
-/**
- * Format a single data row as TSV
- * @param timestamp - Unix timestamp in milliseconds
- * @param aiRaw - Array of raw AI channel values
- * @param aiPhysical - Array of physical AI channel values
- * @param aoRaw - Array of raw AO channel values (millivolts)
- * @param aiVoltage - Array of AI voltage display values
- * @param paramValues - Array of Parameter values (default: [])
- * @param physicalPrecision - Number of decimal places for physical/voltage/Parameter values (default: 3)
- * @returns TSV data row string with newline
- */
 export function formatTsvRow(
   timestamp: number,
   aiRaw: Float32Array | number[],
@@ -74,7 +65,6 @@ export function formatTsvRow(
 ): string {
   const toStr = (v: number) => v.toString();
   const fmt = (v: number) => v.toFixed(physicalPrecision);
-  // Single preallocated parts array, filled by index — no per-column copies.
   const parts: string[] = [formatTimestamp(timestamp)];
   appendFormatted(parts, aiRaw, toStr);
   appendFormatted(parts, aiPhysical, fmt);
@@ -85,11 +75,12 @@ export function formatTsvRow(
 }
 
 /**
- * TSV Writer class for streaming TSV data to a file
- * Manages FileSystemWritableFileStream and provides convenient methods
+ * TSV Writer class. Accepts any sink that exposes the minimal write/close
+ * surface — the browser File System Access API stream satisfies it natively
+ * and the Tauri host forwards writes to a Rust `tsv_append` command.
  */
 export class TsvWriter {
-  private stream: FileSystemWritableFileStream;
+  private stream: TsvWritableSink;
   private aiChannels: number;
   private aoChannels: number;
   private paramChannels: number;
@@ -98,7 +89,7 @@ export class TsvWriter {
   private writeBuffer: string[] = [];
 
   constructor(
-    stream: FileSystemWritableFileStream,
+    stream: TsvWritableSink,
     aiChannels: number,
     aoChannels: number,
     physicalPrecision: number = 3,
@@ -125,15 +116,6 @@ export class TsvWriter {
     await this.stream.write(data);
   }
 
-  /**
-   * Queue a single data row for writing (flushed later via flush()).
-   * @param timestamp - Unix timestamp in milliseconds
-   * @param aiRaw - Array of raw AI channel values
-   * @param aiPhysical - Array of physical AI channel values
-   * @param aoRaw - Array of raw AO channel values (millivolts)
-   * @param aiVoltage - Array of AI voltage display values
-   * @param paramValues - Array of Parameter values (default: [])
-   */
   writeRow(
     timestamp: number,
     aiRaw: Float32Array | number[],
@@ -171,14 +153,27 @@ export class TsvWriter {
 }
 
 /**
- * Create a TSV file picker and initialize a TsvWriter
- * @param aiChannels - Number of AI channels
- * @param aoChannels - Number of AO channels
- * @param suggestedName - Suggested filename (default: auto-generated with timestamp)
- * @param physicalPrecision - Decimal places for physical values (default: 3)
- * @param paramChannels - Number of Parameter channels (default: 0)
- * @returns TsvWriter instance
- * @throws Error if File System Access API is not supported
+ * Tauri sink: every flush hits the disk through a single append, so the
+ * rolling TSV is always a valid file even if the app crashes mid-session.
+ */
+class TauriTsvSink implements TsvWritableSink {
+  private closed = false;
+  constructor(private readonly path: string) {}
+
+  async write(data: string): Promise<void> {
+    if (this.closed) throw new Error('TSV stream is closed');
+    await invoke<void>('tsv_append', { path: this.path, data });
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+  }
+}
+
+/**
+ * Create a TSV file picker and initialize a TsvWriter.
+ * Browser: File System Access API (`showSaveFilePicker`).
+ * Tauri: native save dialog + `tsv_create_file` + `tsv_append` commands.
  */
 export async function createTsvWriter(
   aiChannels: number,
@@ -187,13 +182,28 @@ export async function createTsvWriter(
   physicalPrecision: number = 3,
   paramChannels: number = 0
 ): Promise<TsvWriter> {
-  if (!('showSaveFilePicker' in window)) {
-    throw new Error('File System Access API not supported in this browser');
-  }
-
   const now = new Date();
   const defaultName = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}.tsv`;
   const filename = suggestedName ?? defaultName;
+
+  if (isTauri()) {
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: 'TSV Files', extensions: ['tsv'] }],
+    });
+    if (path === null) {
+      throw new DOMException('Save dialog cancelled', 'AbortError');
+    }
+    await invoke<void>('tsv_create_file', { path });
+    const stream = new TauriTsvSink(path);
+    const writer = new TsvWriter(stream, aiChannels, aoChannels, physicalPrecision, path, paramChannels);
+    await writer.writeHeader();
+    return writer;
+  }
+
+  if (!('showSaveFilePicker' in window)) {
+    throw new Error('File System Access API not supported in this browser');
+  }
 
   const fileHandle = await window.showSaveFilePicker({
     suggestedName: filename,
@@ -207,8 +217,6 @@ export async function createTsvWriter(
 
   const stream = await fileHandle.createWritable();
   const writer = new TsvWriter(stream, aiChannels, aoChannels, physicalPrecision, fileHandle.name, paramChannels);
-
   await writer.writeHeader();
-
   return writer;
 }

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
+import { ModbusClientBase } from './modbus/modbusClientBase';
+import { TauriModbusClient, listTauriSerialPorts, type TauriPortInfo } from './modbus/tauriModbusClient';
+import { isTauri } from './tauri/runtime';
 import {
   AiCalibration,
   AiChannel,
@@ -59,7 +62,7 @@ import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
-import { ModbusConfigPanel } from './components/ModbusConfigPanel';
+import { ModbusConfigPanel, type ModbusPortOption } from './components/ModbusConfigPanel';
 import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
@@ -78,9 +81,10 @@ function isMobileDevice(): boolean {
   return isMobileUA || (isTouchDevice && isSmallScreen);
 }
 
-const shouldUsePolyfill = isMobileDevice() || !('serial' in navigator);
-const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial : navigator.serial;
-const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
+const tauriMode = isTauri();
+const shouldUsePolyfill = !tauriMode && (isMobileDevice() || !('serial' in navigator));
+const serial: Serial | null = tauriMode ? null : (shouldUsePolyfill ? serialPolyfill as unknown as Serial : navigator.serial);
+const serialTransportLabel = tauriMode ? 'Tauri Serial' : (shouldUsePolyfill ? 'WebUSB' : 'WebSerial');
 
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '50 ms', valueMs: 50 },
@@ -235,7 +239,37 @@ function App() {
   const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
 
-  const clientRef = useRef<WebSerialModbusClient | null>(null);
+  // Tauri-only: port selection. The web path uses the browser's Web Serial /
+  // WebUSB picker and does not need any of this state.
+  const [availablePorts, setAvailablePorts] = useState<ModbusPortOption[]>([]);
+  const [selectedPort, setSelectedPort] = useState<string>('');
+  const [portListLoading, setPortListLoading] = useState(false);
+
+  const refreshAvailablePorts = useCallback(async () => {
+    if (!tauriMode) return;
+    setPortListLoading(true);
+    try {
+      const ports: TauriPortInfo[] = await listTauriSerialPorts();
+      setAvailablePorts(ports);
+      setSelectedPort((prev) => {
+        if (prev && ports.some((p) => p.name === prev)) return prev;
+        return ports[0]?.name ?? '';
+      });
+    } catch (err) {
+      console.warn('[App] list_serial_ports failed', err);
+      setAvailablePorts([]);
+      setSelectedPort('');
+    } finally {
+      setPortListLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tauriMode) return;
+    void refreshAvailablePorts();
+  }, [refreshAvailablePorts]);
+
+  const clientRef = useRef<ModbusClientBase | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
   const pollTimer = useRef<number | undefined>(undefined);
@@ -914,12 +948,13 @@ function App() {
     if (connectInProgressRef.current || disconnectInProgressRef.current) return;
     connectInProgressRef.current = true;
     console.info('[App] handleConnect start', {
+      transport: serialTransportLabel,
       slaveId,
       serialSettings,
       modbusPrecision,
       connected,
     });
-    let pendingClient: WebSerialModbusClient | null = null;
+    let pendingClient: ModbusClientBase | null = null;
     try {
       if (clientRef.current) {
         await clientRef.current.disconnect();
@@ -932,13 +967,20 @@ function App() {
       dataBufferRef.current = [];
       setDisplayRevision((v) => v + 1);
 
-      const client = new WebSerialModbusClient(
-        slaveId,
-        serialSettings,
-        serial,
-        modbusPrecision === 'extended',
-        shouldUsePolyfill,
-      );
+      const client = tauriMode
+        ? new TauriModbusClient(
+            selectedPort,
+            slaveId,
+            serialSettings,
+            modbusPrecision === 'extended',
+          )
+        : new WebSerialModbusClient(
+            slaveId,
+            serialSettings,
+            serial!,
+            modbusPrecision === 'extended',
+            shouldUsePolyfill,
+          );
       pendingClient = client;
       await client.connect();
       console.info('[App] Modbus connect success');
@@ -1043,7 +1085,8 @@ function App() {
   }, [releaseWakeLock, stopPolling, scriptRunner, setStatus]);
 
   useEffect(() => {
-    if (typeof serial.addEventListener !== 'function') return;
+    if (tauriMode) return;
+    if (typeof serial?.addEventListener !== 'function') return;
     const onSerialDisconnect = (event: Event) => {
       const disconnectedPort = (event as { port?: SerialPort }).port;
       const connectedPort = clientRef.current?.getPort();
@@ -1052,9 +1095,9 @@ function App() {
       console.warn('[App] USB disconnect event received for active port');
       void handleDisconnect();
     };
-    serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
+    serial?.addEventListener('disconnect', onSerialDisconnect as EventListener);
     return () => {
-      serial.removeEventListener('disconnect', onSerialDisconnect as EventListener);
+      serial?.removeEventListener('disconnect', onSerialDisconnect as EventListener);
     };
   }, [handleDisconnect]);
 
@@ -1513,6 +1556,12 @@ function App() {
         onPollingRateChange={setPollingRate}
         pollingOptions={POLLING_OPTIONS}
         connected={connected}
+        isTauri={tauriMode}
+        availablePorts={availablePorts}
+        selectedPort={selectedPort}
+        onSelectedPortChange={setSelectedPort}
+        onRefreshPorts={refreshAvailablePorts}
+        portListLoading={portListLoading}
       />
 
       <CalibrationPanel
