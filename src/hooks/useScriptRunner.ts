@@ -157,21 +157,16 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
 }
 
 function getDefaultScript(): string {
-  return `# get_ai_raw(ch): Read raw AI value for a channel.
-# get_ai_phy(ch): Read calibrated AI value for a channel.
-# set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
-# get_ao(ch): Read back AO voltage in V. set_ao() is applied asynchronously,
-#   so get_ao() right after a set_ao() still sees the previous value.
-# get_param(ch) / set_param(ch, data): Read/write a scratch Parameter value (0-7).
-#   Parameters are always 0 at app startup and are not persisted; they exist
-#   only to pass values from the script into the Parameter display and TSV log.
+  return `# get_ai_raw(ch) / get_ai_phy(ch): AI value. ch: 0-15.
+# get_ao(ch) / set_ao(ch, v): AO voltage [V], clamped to 0-10, applied async. ch: 0-7.
+# get_param(ch) / set_param(ch, v): scratch value, shown in Parameter panel + TSV. ch: 0-7.
 #
-# To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
-# This runner executes scripts in an async context (top-level await supported).
-# Use asyncio instead:
-# import asyncio
-# await asyncio.sleep(1)
-#
-# Press Stop to halt execution at any time. Plain async while/for loops are
-# stopped immediately - no special stop checks are needed in your script.`;
+# Wait ONLY with \`await asyncio.sleep(s)\` - NEVER time.sleep() (freezes the browser).
+# Loop with a plain while/for. Press Stop to halt at any time.
+
+import asyncio
+
+while True:
+    set_param(0, get_ai_phy(0))  # example: mirror AI ch0 into Parameter ch0
+    await asyncio.sleep(1)`;
 }
