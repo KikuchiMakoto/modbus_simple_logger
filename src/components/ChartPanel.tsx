@@ -34,12 +34,14 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 type AxisDescriptor =
   | { kind: 'time' }
   | { kind: 'raw'; index: number }
-  | { kind: 'phy'; index: number };
+  | { kind: 'phy'; index: number }
+  | { kind: 'par'; index: number };
 
 function parseAxisKey(key: string): AxisDescriptor {
   if (key === 'time') return { kind: 'time' };
   if (key.startsWith('raw_')) return { kind: 'raw', index: Number(key.slice(4)) };
   if (key.startsWith('phy_')) return { kind: 'phy', index: Number(key.slice(4)) };
+  if (key.startsWith('par_')) return { kind: 'par', index: Number(key.slice(4)) };
   return { kind: 'time' };
 }
 
@@ -48,6 +50,7 @@ function resolveAxisValue(point: DataPoint, desc: AxisDescriptor): number {
     case 'time': return point.timestamp;
     case 'raw': return point.aiRaw[desc.index];
     case 'phy': return point.aiPhysical[desc.index];
+    case 'par': return point.param[desc.index];
   }
 }
 
