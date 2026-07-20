@@ -23,7 +23,6 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
   const aiPhysicalShareRef = useRef<Float32Array | null>(null);
   const aoShareRef = useRef<Float32Array | null>(null);
   const paramShareRef = useRef<Float32Array | null>(null);
-  const dataReadyVersionRef = useRef<Int32Array | null>(null);
 
   const ensureWorkerReady = useCallback((): Worker => {
     if (pyWorkerRef.current) return pyWorkerRef.current;
@@ -38,14 +37,12 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     const aoSab = new SharedArrayBuffer(AO_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
     const paramSab = new SharedArrayBuffer(PARAM_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
     const intSab = new SharedArrayBuffer(1);
-    const verSab = new SharedArrayBuffer(4);
 
     aiRawShareRef.current = new Float32Array(rawSab);
     aiPhysicalShareRef.current = new Float32Array(phySab);
     aoShareRef.current = new Float32Array(aoSab);
     paramShareRef.current = new Float32Array(paramSab);
     interruptBufferRef.current = new Uint8Array(intSab);
-    dataReadyVersionRef.current = new Int32Array(verSab);
 
     const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (event: MessageEvent) => {
@@ -86,7 +83,6 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
       aoSab,
       paramSab,
       intSab,
-      verSab,
     });
 
     pyWorkerRef.current = worker;
@@ -157,26 +153,23 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     aiPhysicalShareRef,
     aoShareRef,
     paramShareRef,
-    dataReadyVersionRef,
   };
 }
 
 function getDefaultScript(): string {
-  return `# get_ai_raw(ch): Read raw AI value for a channel.
-# get_ai_phy(ch): Read calibrated AI value for a channel.
-# set_ao(ch, data): Write AO voltage in V (internally clamped to 0-10V).
-# get_ao(ch): Read back AO voltage in V. set_ao() is applied asynchronously,
-#   so get_ao() right after a set_ao() still sees the previous value.
-# get_param(ch) / set_param(ch, data): Read/write a scratch Parameter value (0-7).
-#   Parameters are always 0 at app startup and are not persisted; they exist
-#   only to pass values from the script into the Parameter display and TSV log.
+  return `# get_ai_raw(ch) / get_ai_phy(ch): AI value. ch: 0-15.
+# get_ao(ch) / set_ao(ch, v): AO voltage [V], clamped to 0-10, applied async. ch: 0-7.
+# get_param(ch) / set_param(ch, v): scratch value, shown in Parameter panel + TSV. ch: 0-7.
 #
-# To use wait/sleep, do NOT use time.sleep() as it freezes the browser.
-# This runner executes scripts in an async context (top-level await supported).
-# Use asyncio instead:
-# import asyncio
-# await asyncio.sleep(1)
-#
-# Press Stop to halt execution at any time. Plain async while/for loops are
-# stopped immediately - no special stop checks are needed in your script.`;
+# Wait ONLY with \`await asyncio.sleep(s)\` - NEVER time.sleep() (freezes the browser).
+# Loop with a plain while/for. Press Stop to halt at any time.
+
+import asyncio
+import math
+
+t = 0.0
+while True:
+    set_param(0, math.sin(t))  # example: slow sine wave on Parameter ch0
+    t += 0.1
+    await asyncio.sleep(1)`;
 }

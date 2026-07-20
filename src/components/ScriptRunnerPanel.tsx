@@ -1,36 +1,68 @@
-import type { KeyboardEvent } from 'react';
+import { useState } from 'react';
+import type { KeyboardEvent, MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { FloatingWindow } from './FloatingWindow';
+
+type ChannelLabels = {
+  ai: string[];
+  ao: string[];
+  param: string[];
+};
 
 type ScriptRunnerPanelProps = {
   open: boolean;
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
   onEditorKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  channelLabels: ChannelLabels;
 };
 
 const API_DOCS = [
-  { name: 'get_ai_raw(ch)', desc: 'Read raw AI value for channel ch (0-15).' },
-  { name: 'get_ai_raw_all()', desc: 'Read all raw AI values as a list of 16 floats.' },
-  { name: 'get_ai_phy(ch)', desc: 'Read calibrated AI value for channel ch (0-15).' },
-  { name: 'get_ai_phy_all()', desc: 'Read all calibrated AI values as a list of 16 floats.' },
-  { name: 'get_ao(ch)', desc: 'Read back AO voltage in V for channel ch (0-7).' },
-  { name: 'get_ao_all()', desc: 'Read all AO voltages as a list of 8 floats.' },
-  { name: 'set_ao(ch, data)', desc: 'Write AO voltage in V (internally clamped to 0-10V). Applied asynchronously, so get_ao() reflects it only after the main thread applies it.' },
-  { name: 'set_ao_all(data)', desc: 'Write all AO channels from a list of 8 values.' },
-  { name: 'get_param(ch)', desc: 'Read scratch Parameter value for channel ch (0-7). Always 0 at app startup.' },
-  { name: 'get_param_all()', desc: 'Read all Parameter values as a list of 8 floats.' },
-  { name: 'set_param(ch, data)', desc: 'Write scratch Parameter value for channel ch (0-7). Shown in the Parameter panel and logged to TSV; not persisted.' },
-  { name: 'set_param_all(data)', desc: 'Write all Parameter channels from a list of 8 values.' },
-  { name: 'await asyncio.sleep(s)', desc: 'Non-blocking sleep. Do NOT use time.sleep().' },
+  { name: 'get_ai_raw(ch)', desc: 'Raw AI value. ch: 0-15.' },
+  { name: 'get_ai_phy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
+  { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
+  { name: 'set_ao(ch, v)', desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.' },
+  { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-7. Starts at 0.' },
+  { name: 'set_param(ch, v)', desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.' },
+  { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait. NEVER time.sleep().' },
 ];
+
+const buildAiPrompt = (channelLabels: ChannelLabels): string =>
+  [
+    'Write a Python script for ModbusSimpleLogger ScriptRunner (Pyodide; async context, top-level await OK).',
+    '',
+    'API:',
+    ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
+    '',
+    'Absolute rules:',
+    '- Wait only with `await asyncio.sleep(s)`. NEVER time.sleep().',
+    '- Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
+    '',
+    'Channel labels (JSON; index = ch, "" = unlabeled):',
+    JSON.stringify(channelLabels),
+    '',
+    'Task: <your request here>',
+  ].join('\n');
 
 export function ScriptRunnerPanel({
   open,
   onClose,
   scriptRunner,
   onEditorKeyDown,
+  channelLabels,
 }: ScriptRunnerPanelProps) {
+  const [promptCopied, setPromptCopied] = useState(false);
+
+  const copyAiPrompt = (event: MouseEvent<HTMLButtonElement>) => {
+    // Inside <summary>: keep the click from toggling the <details>.
+    event.preventDefault();
+    event.stopPropagation();
+    navigator.clipboard.writeText(buildAiPrompt(channelLabels)).then(() => {
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 1500);
+    });
+  };
+
   return (
     <FloatingWindow
       open={open}
@@ -73,8 +105,16 @@ export function ScriptRunnerPanel({
           spellCheck={false}
         />
         <details className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
-          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+          <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             API Reference
+            <button
+              type="button"
+              className="button-secondary py-0.5 text-xs"
+              onClick={copyAiPrompt}
+              title="Copy an AI-ready prompt of this API reference to the clipboard"
+            >
+              {promptCopied ? 'Copied!' : 'Copy for AI'}
+            </button>
           </summary>
           <ul className="space-y-2 px-3 pb-3 text-xs text-slate-600 dark:text-slate-400">
             {API_DOCS.map((api) => (
