@@ -3,6 +3,11 @@
 // manifest (see the `precache-manifest` plugin in vite.config.ts), so every
 // deploy gets a fresh cache. Stays 'dev' for unbuilt `vite dev`.
 const CACHE_VERSION = 'dev';
+// APP_VERSION is replaced at build time with the version from package.json
+// (by the same `precache-manifest` plugin in vite.config.ts), so the update
+// prompt can tell the user which version they would switch to. Stays empty
+// for unbuilt `vite dev`.
+const APP_VERSION = '';
 const CACHE_NAME = `modbus-logger-${CACHE_VERSION}`;
 const BASE_PATH = '/modbus_simple_logger/';
 const ISOLATION_HEADERS = {
@@ -50,9 +55,10 @@ const PRECACHE_URLS = [
 // Deliberately NO skipWaiting() here: after install the new SW parks in
 // `waiting` and the previous version keeps serving with its cache intact.
 // Activation (which deletes the old cache and claims clients) only happens
-// when the page posts SKIP_WAITING — silently at startup, or after the user
-// confirms mid-session (see main.tsx). This pins the running version until
-// the user consents and prevents an update from breaking a live session.
+// when the page posts SKIP_WAITING after the user confirms the update
+// prompt — at startup and mid-session alike (see main.tsx). This pins the
+// running version until the user consents and prevents an update from
+// breaking a live session.
 self.addEventListener('install', (event) => {
   console.log('[SW] Install event');
   event.waitUntil(
@@ -169,5 +175,11 @@ async function respond(request, isNavigation) {
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+  // Version query from the update prompt in main.tsx. Replies on the
+  // transferred MessageChannel port so the page can match the response to
+  // its request.
+  if (event.data && event.data.type === 'GET_VERSION' && event.ports.length > 0) {
+    event.ports[0].postMessage({ appVersion: APP_VERSION, cacheVersion: CACHE_VERSION });
   }
 });

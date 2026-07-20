@@ -60,7 +60,43 @@ if (rootElement) {
 
 // Service Worker registration (PWA)
 if ('serviceWorker' in navigator) {
-  const startedAt = Date.now();
+  const currentVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
+
+  // Ask a (waiting) Service Worker which app version it was built from.
+  // sw.js answers GET_VERSION on the transferred MessageChannel port; SWs
+  // built before that handler existed never reply, so time out and fall
+  // back to a version-less prompt rather than hanging.
+  const queryWorkerVersion = (worker: ServiceWorker): Promise<string | null> =>
+    new Promise((resolve) => {
+      const timer = window.setTimeout(() => resolve(null), 500);
+      const channel = new MessageChannel();
+      channel.port1.onmessage = (event) => {
+        window.clearTimeout(timer);
+        resolve(typeof event.data?.appVersion === 'string' ? event.data.appVersion : null);
+      };
+      worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    });
+
+  // Every version switch requires explicit user consent — including updates
+  // detected right at startup. sw.js deliberately does NOT call
+  // skipWaiting() during install, so a new version parks in `waiting` while
+  // the current version keeps serving with its cache intact; activation
+  // (old cache deleted + clients claimed) only happens once we post
+  // SKIP_WAITING here. Declining leaves the worker waiting: this session
+  // keeps running the current version in full, and the prompt reappears on
+  // the next launch via the `registration.waiting` branch below.
+  const promptAndActivate = async (worker: ServiceWorker) => {
+    const newVersion = await queryWorkerVersion(worker);
+    const versionInfo =
+      newVersion && currentVersion ? ` (v${currentVersion} → v${newVersion})` : '';
+    const shouldActivate = window.confirm(
+      `A new version of the app is available${versionInfo}. Update and reload now?\n\n` +
+      'Warning: Reloading will stop any active measurement.'
+    );
+    if (shouldActivate) {
+      worker.postMessage({ type: 'SKIP_WAITING' });
+    }
+  };
 
   window.addEventListener('load', () => {
     const swUrl = `${import.meta.env.BASE_URL}sw.js`;
@@ -69,38 +105,31 @@ if ('serviceWorker' in navigator) {
       .then((registration) => {
         console.log('SW registered:', registration);
 
-        // A new version left waiting by a previous session (update declined,
-        // or the tab was closed): apply it now — we are at startup, so no
-        // measurement can be interrupted.
-        if (registration.waiting) {
-          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        // Prompt once per worker: the `waiting` branch below and the
+        // `updatefound` statechange can both fire for the same worker.
+        let promptedWorker: ServiceWorker | null = null;
+        const promptOnce = (worker: ServiceWorker) => {
+          if (promptedWorker === worker) return;
+          promptedWorker = worker;
+          void promptAndActivate(worker);
+        };
+
+        // A new version left waiting by a previous session (update
+        // declined): ask again now. Only relevant when this page is
+        // SW-controlled — with no controller the waiting worker activates
+        // on its own (first-install path, nothing to lose).
+        if (registration.waiting && navigator.serviceWorker.controller) {
+          promptOnce(registration.waiting);
         }
 
-        // Listen for new SW installations. sw.js does NOT call skipWaiting()
-        // during install, so a freshly downloaded version parks in `waiting`
-        // while the current version keeps serving with its cache intact. The
-        // version switch (activate = old cache deleted + clients claimed)
-        // only happens once we post SKIP_WAITING below.
+        // Listen for new SW installations (found by the update checks
+        // below). The version switch only happens via promptOnce above.
         registration.addEventListener('updatefound', () => {
           const newWorker = registration.installing;
           if (!newWorker) return;
           newWorker.addEventListener('statechange', () => {
             if (newWorker.state !== 'installed' || !navigator.serviceWorker.controller) return;
-            // Right after launch no measurement can be running yet, and a
-            // blocking confirm() can sit on a still-blank window, so apply
-            // silently. Later, ask first: declining leaves the new version
-            // waiting (this session keeps running the current version in
-            // full, including all cached assets) and it is applied on the
-            // next launch via the `registration.waiting` branch above.
-            const shouldActivate =
-              Date.now() - startedAt < 10_000 ||
-              window.confirm(
-                'A new version of the app is available. Update and reload now?\n\n' +
-                'Warning: Reloading will stop any active measurement.'
-              );
-            if (shouldActivate) {
-              newWorker.postMessage({ type: 'SKIP_WAITING' });
-            }
+            promptOnce(newWorker);
           });
         });
 
@@ -125,10 +154,11 @@ if ('serviceWorker' in navigator) {
   });
 
   // Reload the page when a new SW takes over. Activation is consent-gated
-  // above (or happens silently at startup / on the very first install), so
-  // by the time controllerchange fires the reload has already been approved
-  // — never prompt here: the old cache is gone at this point, and declining
-  // would leave the page running a half-broken version.
+  // above (or happens on the very first install, where nothing can be
+  // interrupted), so by the time controllerchange fires the reload has
+  // already been approved — never prompt here: the old cache is gone at
+  // this point, and declining would leave the page running a half-broken
+  // version.
   let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;

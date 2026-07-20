@@ -99,6 +99,7 @@ function precacheManifest(): Plugin {
 
       const sw = readFileSync(swPath, 'utf-8')
         .replace("const CACHE_VERSION = 'dev';", `const CACHE_VERSION = '${version}';`)
+        .replace("const APP_VERSION = '';", `const APP_VERSION = '${pkg.version}';`)
         .replace('const PRECACHE_MANIFEST = [];', `const PRECACHE_MANIFEST = ${JSON.stringify(manifest)};`);
       writeFileSync(swPath, sw);
     },
