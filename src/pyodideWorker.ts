@@ -127,18 +127,24 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
   }
 
   if (message.type === 'interrupt') {
-    // Raise KeyboardInterrupt for synchronous loops (checked while bytecode
-    // runs, even when the worker thread is blocked in a busy loop)...
-    if (interruptBuffer) interruptBuffer[0] = 2;
-    // ...and cancel the running asyncio Task so loops parked in `await`
-    // (e.g. asyncio.sleep) stop immediately instead of waiting for the await
-    // to resolve. Safe to call while the worker is idle between awaits.
+    // The main thread already armed the interrupt buffer (SharedArrayBuffer),
+    // which raises KeyboardInterrupt inside synchronous loops even while this
+    // event loop is blocked. If this handler runs, Python is idle or parked at
+    // an `await`, so cancel the asyncio Task instead. The pending interrupt
+    // must be cleared BEFORE calling _runner_stop(): otherwise the
+    // KeyboardInterrupt fires inside _runner_stop() itself, is swallowed by
+    // the catch below, and the user's async loop keeps running after Stop.
     if (pyodide && running) {
+      if (interruptBuffer) interruptBuffer[0] = 0;
       try {
         pyodide.runPython('_runner_stop()');
       } catch {
         // Ignore: the task may have already finished.
       }
+    } else if (interruptBuffer) {
+      // No script executing yet (e.g. Stop pressed while Pyodide is still
+      // initializing): keep the stop request armed so a pending run aborts.
+      interruptBuffer[0] = 2;
     }
     return;
   }
@@ -158,7 +164,12 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
       if (!pyodide) {
         throw new Error('Pyodide is not available');
       }
-      if (interruptBuffer) interruptBuffer[0] = 0;
+      if (interruptBuffer && interruptBuffer[0] === 2) {
+        // Stop was pressed while initialization was still in progress: abort
+        // instead of clearing the request and starting anyway.
+        postWorkerMessage({ type: 'interrupted', message: 'Stopped' });
+        return;
+      }
 
       running = true;
       postWorkerMessage({ type: 'status', message: 'Running' });
