@@ -69,7 +69,7 @@ export function LiveChart({
 
 	const layout = {
 		title: {
-			text: `CH ${currentRaw.toFixed(0)} | F ${currentFiltered.toFixed(0)} | ${currentMvPerV.toFixed(3)} mV/V | ${currentPhysical.toFixed(3)} ${isStable ? "●" : "○"}`,
+			text: `<span style="color:#94a3b8">CH ${currentRaw.toFixed(1)}</span> | <span style="color:#10b981">F ${currentFiltered.toFixed(1)}</span> | ${currentMvPerV.toFixed(3)} mV/V | ${currentPhysical.toFixed(3)} ${isStable ? "●" : "○"}`,
 			font: { size: 11 },
 		},
 		margin: { l: 40, r: 10, t: 28, b: 24 },
