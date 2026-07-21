@@ -1,4 +1,5 @@
 export const AI_CHANNELS = 16;
+export const HX711_CHANNELS = 8;
 export const AO_CHANNELS = 8;
 export const PARAM_CHANNELS = 8;
 

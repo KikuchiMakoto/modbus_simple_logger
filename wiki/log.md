@@ -92,7 +92,49 @@ Vitest 導入を決定（regression.ts の単体テスト用）。
 - Lint/Format: **Biome** 導入（ESLint/Prettier 不使用）
 - Vitest カバレッジ目標 **80%**
 
-## 2026-07-21 | design | UI 全面見直し + 自動再計算 + 単位切替
+## 2026-07-22 | design | Phase 5a — types + hooks
+
+- `src/types.ts`: 既存型を維持 + 検定アプリ固有型を追記（`CalibrationPoint`, `CalibrationResult`, `CalibrationMode`, `ChannelLiveState`, `XUnit`, `AppSettings`, `ReferenceSensorCoeffs`）
+- `src/hooks/useCalibration.ts`: 検定状態管理（degree/points/result）、自動再計算（points/degree変更時にfitRegression自動実行）、localStorage自動保存（`modbus_calibrator_workbench_v1`）、discriminated union エラーハンドリング
+- `src/hooks/useHx711Live.ts`: ポーリング（setInterval + readInputRegisters）、チャネルごとに `SettlingDetector` インスタンス保持、ring buffer history（raw/filtered Float32Array）、Wake Lock 取得、2-port 時は refCH の physical を refCoeffs で換算
+
+## 2026-07-22 | design | Phase 5b — 全 8 UI コンポーネント
+
+- `src/components/AppHeader.tsx`: タイトル + Connect/Disconnect + Menu ボタン
+- `src/components/ModeSelector.tsx`: 1-port / 2-port タブ切替
+- `src/components/ChannelSelector.tsx`: CH 00-07 ドロップダウン
+- `src/components/LiveChart.tsx`: Plotly scattergl（raw + filtered 2系列、凡例に現在値）
+- `src/components/RegressionPlot.tsx`: Plotly scattergl（散布図 + 回帰線、R²表示）
+- `src/components/CalibrationRow.tsx`: 1行表示（番号・x・y編集・削除ボタン）
+- `src/components/CalibrationWorkbench.tsx`: 右カラム本体（Add Point / Export / Clear / Degree選択 / XUnit切替 / テーブル / RegressionResultPanel）
+- `src/components/RegressionResultPanel.tsx`: 係数a,b,c + R² + RMSE + n 表示
+- ついでに `src/constants.ts` に `HX711_CHANNELS = 8` を追加
+- `src/plotly.ts` の `<Plot>` 型を `ComponentType<any>` に修正（JSX 非互換のため）
+- typecheck ✅ lint ✅ test 15/15 ✅
+
+## 2026-07-22 | ingest | Phase 4 — regression / settling / csvExport / jsonExport
+
+- `src/utils/regression.ts`: 線形・2次最小二乗 + R² + RMSE、discriminated union エラー、Cramer's rule
+- `src/utils/regression.test.ts`: 9 tests（完全一致・ノイズ耐性・エラーケース）
+- `src/utils/settling.ts`: `SettlingDetector` クラス（1次IIR LPF + 移動窓 range, consecutiveStable 制御）
+- `src/utils/settling.test.ts`: 6 tests（定常・振動・収束後安定・reset）
+- `src/utils/csvExport.ts`: `calibrationToCsv()` + `downloadCsv()` (# コメントヘッダー)
+- `src/utils/jsonExport.ts`: `calibrationToJson()` + `downloadJson()`（app/version/metadata）
+- 全 15 tests pass ✅
+
+## 2026-07-22 | lint | Biome エラー修正（全 20+ 件対応）
+
+Phase 0-3 までに残っていた Biome lint エラーを修正:
+- `ModbusConfigPanel.tsx`: 全 label に `htmlFor` 追加（a11y, 7件）
+- `FloatingWindow.tsx`: `role="dialog"` に biome-ignore（react-rnd 非互換）+ SVG title 追加
+- `modules.d.ts`: `any` → `Record<string, unknown>`
+- `sw.js`: `forEach` → `for...of`
+- `webserialClient.ts`: 3箇所の noNonNullAssertion を `as` キャストに変更
+- `App.tsx`: noNonNullAssertion, noUnsafeFinally, useSemanticElements, SVG titles 修正
+- `vite.config.ts`, `main.tsx`, `sw.js`: unsafe 自動修正（node: protocol, template literal）
+- 未対応: `noArrayIndexKey` 1件（App.tsx paramValues, App.tsx 書き換え時に解消予定）
+
+## 2026-07-22 | design | UI 全面見直し + 自動再計算 + 単位切替
 
 ユーザーの UI 指摘を反映し大幅改修:
 
