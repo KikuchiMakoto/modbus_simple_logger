@@ -674,10 +674,26 @@ pnpm preview          # → http://localhost:4173/modbus_strain_calibrator/
     - 一定値入力 → 即座に stable
     - 変動入力 → stable にならない
     - 変動後一定入力 → windowSamples 後に stable
+  - `hooks/useCalibration.ts`: 状態管理・自動再計算ロジック（React Hooks Testing Library）
 - **手動 E2E**: 実機 HX711 + 既知負荷で 1-port / 2-port 両モード
 - **モダンブラウザ互換**: Chrome / Edge 最新版で動作確認
 
-`pnpm add -D vitest` で導入、`pnpm test` で実行。カバレッジ目標 **80%**（`regression.ts`, `settling.ts` 等のコアロジックは特に徹底）。
+`pnpm add -D vitest` で導入、`pnpm test` で実行。カバレッジ目標 **80%**。
+
+### カバレッジ方針（v1.0）
+
+| 範囲 | カバレッジ対象 | 備考 |
+|------|--------------|------|
+| ✅ 対象 | `utils/regression.ts`, `utils/settling.ts` | 純粋関数、テスト容易 |
+| ✅ 対象 | `utils/calibration.ts`（HX711換算部分） | 同上 |
+| ✅ 対象 | `utils/csvExport.ts`, `utils/jsonExport.ts` | Blob 生成ロジック |
+| ✅ 対象 | `utils/crc16.ts` | 既存流用だが念のため |
+| ✅ 対象 | `hooks/useCalibration.ts` | React Hooks Testing Library |
+| ❌ 対象外 | `modbus/webserialClient.ts` | Web Serial API + 実機依存、テストコスト大 |
+| ❌ 対象外 | `components/*` | 現時点では対象外。長期的にはテストしやすい粒度に切り分けて追加予定 |
+| ❌ 対象外 | `App.tsx`, `main.tsx` | 統合コンポーネント、E2E でカバー |
+| ❌ 対象外 | `hooks/useHx711Live.ts`, `hooks/useTheme.ts` | Modbus + setInterval 複合でモック量大 |
+| ❌ 対象外 | `utils/cookies.ts` | 単なる localStorage ラッパー |
 
 ---
 
