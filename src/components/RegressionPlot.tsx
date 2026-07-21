@@ -17,7 +17,7 @@ export function RegressionPlot({
 		{
 			x: points.map((p) => p.x),
 			y: points.map((p) => p.y),
-			type: "scattergl",
+			type: "scatter",
 			mode: "markers",
 			name: "Points",
 			marker: { color: "#10b981", size: 8 },
@@ -42,7 +42,7 @@ export function RegressionPlot({
 		traces.push({
 			x: xFit,
 			y: yFit,
-			type: "scattergl",
+			type: "scatter",
 			mode: "lines",
 			name: `Fit (R²=${result.r2.toFixed(4)})`,
 			line: { color: "#f59e0b", width: 2, dash: "dot" },
@@ -77,7 +77,7 @@ export function RegressionPlot({
 	};
 
 	return (
-		<div className="h-64 w-full">
+		<div className="h-full w-full">
 			<Plot data={traces} layout={layout} config={config} />
 		</div>
 	);

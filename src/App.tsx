@@ -272,7 +272,7 @@ export default function App() {
 				<label className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
 					Settling:
 					<select
-						value={`${settings.settling.tolerance}_${settings.settling.windowSeconds}_${settings.settling.cutoffFrequency}`}
+						value={`${settings.settling.tolerance}_${settings.settling.windowSeconds.toFixed(1)}_${settings.settling.cutoffFrequency.toFixed(1)}`}
 						onChange={(e) => {
 							const [t, w, c] = e.target.value.split("_");
 							setSettings((s) => ({
@@ -296,7 +296,7 @@ export default function App() {
 			{connected && live.isPolling && (
 				<div className="grid flex-1 grid-cols-1 gap-2 overflow-hidden p-2 lg:grid-cols-[1fr_380px]">
 					<div className="flex flex-col gap-2 overflow-hidden">
-						<div className="card">
+						<div className="card overflow-hidden">
 							<LiveChart
 								rawHistory={
 									live.history[settings.targetCh]?.raw ?? new Float32Array(0)
@@ -313,7 +313,7 @@ export default function App() {
 								isDark={isDarkMode}
 							/>
 						</div>
-						<div className="card flex-1">
+						<div className="card flex-1 overflow-hidden">
 							<RegressionPlot
 								points={cal.points}
 								result={cal.result}

@@ -14,11 +14,6 @@ declare module "plotly.js/lib/core" {
 	export default Plotly;
 }
 
-declare module "plotly.js/lib/scattergl" {
-	const trace: unknown;
-	export default trace;
-}
-
 declare module "react-plotly.js/factory" {
 	const createPlotlyComponent: (
 		plotly: unknown,

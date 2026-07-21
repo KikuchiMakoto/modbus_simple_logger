@@ -1,5 +1,4 @@
 import PlotlyCoreImport from "plotly.js/lib/core";
-import scatterglImport from "plotly.js/lib/scattergl";
 import type { ComponentType } from "react";
 import factoryImport from "react-plotly.js/factory";
 
@@ -17,14 +16,9 @@ function interopDefault<T>(mod: T): T {
 }
 
 const Plotly = interopDefault(PlotlyCoreImport);
-const scattergl = interopDefault(scatterglImport);
 const createPlotlyComponent = interopDefault(factoryImport);
 
-// ChartPanel renders exclusively with the WebGL `scattergl` trace, so we build a
-// custom Plotly bundle from `plotly.js/lib/core` plus only that trace instead of
-// importing the full `plotly.js` (every trace type, 3D, maps and finance
-// charts). This trims several MB from the production bundle.
-Plotly.register([scattergl]);
-
+// `plotly.js/lib/core` includes the `scatter` trace type. We use only
+// `scatter` (SVG) for all charts — no WebGL `scattergl` needed.
 // biome-ignore lint/suspicious/noExplicitAny: react-plotly.js factory type is unsound
 export const Plot: ComponentType<any> = createPlotlyComponent(Plotly);
