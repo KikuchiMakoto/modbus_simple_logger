@@ -134,6 +134,31 @@ Phase 0-3 までに残っていた Biome lint エラーを修正:
 - `vite.config.ts`, `main.tsx`, `sw.js`: unsafe 自動修正（node: protocol, template literal）
 - 未対応: `noArrayIndexKey` 1件（App.tsx paramValues, App.tsx 書き換え時に解消予定）
 
+## 2026-07-22 | design | Phase 6 — App.tsx 書き換え + 全統合
+
+- App.tsx を 3000+ 行から 280 行に完全書き換え
+- 接続/切断フロー、settings（localStorage永続化）、1-port/2-port モード切替、ref係数インライン編集
+- useHx711Live + useCalibration を統合、2カラムレイアウト
+- エクスポート（CSV/JSON）コールバック
+- main.tsx は既存のまま（ErrorBoundary + SW登録）
+
+## 2026-07-22 | refactor | Phase 7 — デッドコード一掃 + README + ビルド検証
+
+**デッドコード削除**:
+- constants.ts: AO_CHANNELS, PARAM_CHANNELS, MAX_POINTS_IN_MEMORY 等 17 定数を削除
+- types.ts: AiCalibration, AiChannel, AoChannel, DataPoint, VoltageMode,
+  VOLTAGE_MODES, DEFAULT_VOLTAGE_CONFIG, FileSystemAccessAPI 型 全削除
+- calibration.ts: hx711RawToMicroStrain, getLevelColor 削除（1関数のみに）
+- cookies.ts: removeJsonStorage, ONE_YEAR_SECONDS 削除
+- index.css: .button-stop-save-pulse, .input-compact, .input-raw 削除
+
+**その他**:
+- README.md: ModbusSimpleLogger → ModbusStrainCalibrator に全面書き換え
+- `pnpm build`: ✅ 成功（JS ~1.7 MB, Pyodide 14 MB 削減）
+- `pnpm test`: ✅ 15/15
+- `pnpm typecheck`: ✅
+- `pnpm lint`: ✅
+
 ## 2026-07-22 | design | UI 全面見直し + 自動再計算 + 単位切替
 
 ユーザーの UI 指摘を反映し大幅改修:
