@@ -20,10 +20,11 @@ type ScriptRunnerPanelProps = {
 const API_DOCS = [
   { name: 'get_ai_raw(ch)', desc: 'Raw AI value. ch: 0-15.' },
   { name: 'get_ai_phy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
+  { name: 'set_ai_tare(ch)', desc: 'Tare AI ch: set offset c so the current phy reads 0 (a, b kept). Applied async.' },
   { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
-  { name: 'set_ao(ch, v)', desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.' },
+  { name: 'set_ao(ch, vlt)', desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.' },
   { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
-  { name: 'set_param(ch, v)', desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.' },
+  { name: 'set_param(ch, val)', desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.' },
   { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait. NEVER time.sleep().' },
 ];
 

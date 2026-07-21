@@ -4,7 +4,10 @@ import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
 
 const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
 
-export function useScriptRunner(setAo: (ch: number, data: number) => void) {
+export function useScriptRunner(
+  setAo: (ch: number, data: number) => void,
+  onAiCalibTare: (ch: number) => void,
+) {
   const scriptRunnerSupported = typeof SharedArrayBuffer !== 'undefined' && window.crossOriginIsolated;
   const [scriptCode, setScriptCode] = useState(() => {
     const stored = readJsonStorage<string>(SCRIPT_RUNNER_STORAGE_KEY);
@@ -48,12 +51,15 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
     worker.onmessage = (event: MessageEvent) => {
       const message = event.data as
         | { type: 'set_ao'; ch: number; data: number }
+        | { type: 'set_ai_tare'; ch: number }
         | { type: 'status'; message: string }
         | { type: 'done'; message?: string }
         | { type: 'interrupted'; message?: string }
         | { type: 'error'; message: string };
       if (message.type === 'set_ao') {
         setAo(message.ch, message.data);
+      } else if (message.type === 'set_ai_tare') {
+        onAiCalibTare(message.ch);
       } else if (message.type === 'status') {
         setScriptRunnerStatus(message.message);
       } else if (message.type === 'done') {
@@ -87,7 +93,7 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
 
     pyWorkerRef.current = worker;
     return worker;
-  }, [scriptRunnerSupported, setAo]);
+  }, [scriptRunnerSupported, setAo, onAiCalibTare]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
     if (interruptBufferRef.current) {
@@ -158,8 +164,9 @@ export function useScriptRunner(setAo: (ch: number, data: number) => void) {
 
 function getDefaultScript(): string {
   return `# get_ai_raw(ch) / get_ai_phy(ch): AI value. ch: 0-15.
-# get_ao(ch) / set_ao(ch, v): AO voltage [V], clamped to 0-10, applied async. ch: 0-7.
-# get_param(ch) / set_param(ch, v): scratch value, shown in Parameter panel + TSV. ch: 0-7.
+# set_ai_tare(ch): tare AI ch so current phy reads 0 (offset c only). ch: 0-15.
+# get_ao(ch) / set_ao(ch, vlt): AO voltage [V], clamped to 0-10, applied async. ch: 0-7.
+# get_param(ch) / set_param(ch, val): scratch value, shown in Parameter panel + TSV. ch: 0-7.
 #
 # Wait ONLY with \`await asyncio.sleep(s)\` - NEVER time.sleep() (freezes the browser).
 # Loop with a plain while/for. Press Stop to halt at any time.

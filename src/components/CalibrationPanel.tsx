@@ -51,6 +51,7 @@ type CalibrationPanelProps = {
   onClose: () => void;
   aiCalibration: AiCalibration[];
   onUpdateCalibration: (idx: number, key: keyof AiCalibration, value: number) => void;
+  onTareCalibration: (idx: number) => void;
   onSaveCalibration: () => void;
   onLoadCalibration: (file: File) => void;
 };
@@ -60,6 +61,7 @@ export function CalibrationPanel({
   onClose,
   aiCalibration,
   onUpdateCalibration,
+  onTareCalibration,
   onSaveCalibration,
   onLoadCalibration,
 }: CalibrationPanelProps) {
@@ -70,7 +72,7 @@ export function CalibrationPanel({
       onClose={onClose}
       title="Input Calibration"
       subtitle="a·(Raw)²+b·(Raw)+c = Phy"
-      defaultWidth={420}
+      defaultWidth={480}
       defaultHeight={560}
       headerActions={
         <>
@@ -134,6 +136,14 @@ export function CalibrationPanel({
                     onChange={(v) => onUpdateCalibration(idx, 'c', v)}
                   />
                 </div>
+                <button
+                  type="button"
+                  onClick={() => onTareCalibration(idx)}
+                  title="Set offset c so the current physical value reads 0 (a and b unchanged)"
+                  className="shrink-0 rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
+                >
+                  Tare
+                </button>
               </div>
             </div>
           ))}

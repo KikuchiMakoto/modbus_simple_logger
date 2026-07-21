@@ -462,7 +462,35 @@ function App() {
     applyAoRawValues(nextRaw);
   }, [applyAoRawValues, clampAoVoltageToMilliVolt]);
 
-  const scriptRunner = useScriptRunner(setAo);
+  const applyCalibrationToChannels = useCallback(
+    (channels: AiChannel[], calibration: AiCalibration[]) =>
+      channels.map((ch, idx) => {
+        const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
+        const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
+        const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+        return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
+      }),
+    [],
+  );
+
+  // Tare: adjust only offset c so the channel's physical value reads 0 at the
+  // current raw reading, keeping a and b unchanged.
+  //   Phy = a·raw² + b·raw + c  ⇒  c = -(a·raw² + b·raw)
+  const handleTareCalibration = useCallback((idx: number) => {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= AI_CHANNELS) return;
+    setAiCalibration((prev) => {
+      const cal = prev[idx];
+      if (!cal) return prev;
+      const raw = aiRawSourceRef.current[idx] ?? 0;
+      const newC = -(cal.a * raw * raw + cal.b * raw);
+      const next = [...prev];
+      next[idx] = { ...cal, c: newC };
+      setAiChannels((chs) => applyCalibrationToChannels(chs, next));
+      return next;
+    });
+  }, [applyCalibrationToChannels]);
+
+  const scriptRunner = useScriptRunner(setAo, handleTareCalibration);
 
   // Mirror AO values into the ScriptRunner share so get_ao() can read them, in
   // volts to match the unit set_ao() takes (AO state is held in millivolts).
@@ -489,17 +517,6 @@ function App() {
     }, 200);
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
-
-  const applyCalibrationToChannels = useCallback(
-    (channels: AiChannel[], calibration: AiCalibration[]) =>
-      channels.map((ch, idx) => {
-        const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
-        const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
-        const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-        return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
-      }),
-    [],
-  );
 
   const handleScriptEditorKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Tab') return;
@@ -1520,6 +1537,7 @@ function App() {
         onClose={() => setCalibrationPanelOpen(false)}
         aiCalibration={aiCalibration}
         onUpdateCalibration={updateAiCalibration}
+        onTareCalibration={handleTareCalibration}
         onSaveCalibration={handleDownloadCalibration}
         onLoadCalibration={handleLoadCalibrationFile}
       />
