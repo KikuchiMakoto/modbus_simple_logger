@@ -79,7 +79,7 @@ export function LiveChart({
 			type: "scattergl",
 			mode: "lines",
 			name: "Raw",
-			line: { width: 1, color: "#34d399" },
+			line: { width: 1, color: "rgba(16,185,129,0.5)" },
 		},
 		{
 			x: timeAxis,
@@ -98,7 +98,7 @@ export function LiveChart({
 						mode: "lines" as const,
 						name: "Ref Raw",
 						yaxis: "y2" as const,
-						line: { width: 1, color: "#fb7185" },
+						line: { width: 1, color: "rgba(244,63,94,0.5)" },
 					},
 					{
 						x: timeAxis,
@@ -116,8 +116,8 @@ export function LiveChart({
 	const showRef = refRawHistory.length > 0;
 
 	const titleText = showRef
-		? `<span style="color:#34d399">CH ${currentRaw.toFixed(4)}</span> <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}<br>${currentRefPhysical.toFixed(4)} <span style="color:#fb7185">Ref ${currentRefRaw.toFixed(4)}</span> <span style="color:#f43f5e">F ${currentRefFiltered.toFixed(4)}</span>`
-		: `<span style="color:#34d399">CH ${currentRaw.toFixed(4)}</span> | <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}`;
+		? `<span style="color:#10b981">CH ${currentRaw.toFixed(4)} F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}<br><span style="color:#f43f5e">${currentRefPhysical.toFixed(4)} Ref ${currentRefRaw.toFixed(4)} F ${currentRefFiltered.toFixed(4)}</span>`
+		: `<span style="color:#10b981">CH ${currentRaw.toFixed(4)} F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}`;
 
 	const layout = {
 		title: {
