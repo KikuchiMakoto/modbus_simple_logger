@@ -341,6 +341,7 @@ function useCalibration(): {
 ```
 
 - **自動再計算**: points または degree が変更されるたびに、自動で回帰計算を実行し `result` を更新する
+- **y は編集可能**: 既存のポイントの y も後から自由に書き換えられる（入力ミスの訂正用）。編集のたびに自動再計算
   - `fitRegression()` が `{ ok: false }` を返した場合 → `result` を `null` に、`validationError` にエラーメッセージをセット
   - ユーザーが [Calculate] を押す操作は**不要**
 - points / degree の変更は自動で localStorage（`modbus_calibrator_workbench_v1`）に保存
