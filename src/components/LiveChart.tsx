@@ -11,6 +11,11 @@ interface LiveChartProps {
 	currentPhysical: number;
 	isStable: boolean;
 	isDark: boolean;
+	refRawHistory?: Float32Array;
+	refFilteredHistory?: Float32Array;
+	currentRefRaw?: number;
+	currentRefFiltered?: number;
+	currentRefPhysical?: number;
 }
 
 export function LiveChart({
@@ -23,6 +28,11 @@ export function LiveChart({
 	currentPhysical,
 	isStable,
 	isDark,
+	refRawHistory = new Float32Array(0),
+	refFilteredHistory = new Float32Array(0),
+	currentRefRaw = 0,
+	currentRefFiltered = 0,
+	currentRefPhysical = 0,
 }: LiveChartProps) {
 	const timeAxis = useMemo(() => {
 		const n = rawHistory.length;
@@ -47,6 +57,20 @@ export function LiveChart({
 		return [min - pad, max + pad] as [number, number];
 	}, [rawHistory, filteredHistory]);
 
+	const refYRange = useMemo(() => {
+		const values: number[] = [];
+		for (let i = 0; i < refRawHistory.length; i++) {
+			if (refRawHistory[i] !== 0) values.push(refRawHistory[i]);
+			if (refFilteredHistory[i] !== 0) values.push(refFilteredHistory[i]);
+		}
+		if (values.length === 0) return [0, 1] as [number, number];
+		const min = Math.min(...values);
+		const max = Math.max(...values);
+		if (min === max) return [min - 10, max + 10] as [number, number];
+		const pad = (max - min) * 0.15;
+		return [min - pad, max + pad] as [number, number];
+	}, [refRawHistory, refFilteredHistory]);
+
 	// biome-ignore lint/suspicious/noExplicitAny: Plotly trace shapes
 	const data: any[] = [
 		{
@@ -65,14 +89,42 @@ export function LiveChart({
 			name: "Filtered",
 			line: { width: 2, color: "#10b981" },
 		},
+		...(refRawHistory.length > 0
+			? [
+					{
+						x: timeAxis,
+						y: refRawHistory,
+						type: "scattergl" as const,
+						mode: "lines" as const,
+						name: "Ref Raw",
+						yaxis: "y2" as const,
+						line: { width: 1, color: "#f59e0b" },
+					},
+					{
+						x: timeAxis,
+						y: refFilteredHistory,
+						type: "scattergl" as const,
+						mode: "lines" as const,
+						name: "Ref Filtered",
+						yaxis: "y2" as const,
+						line: { width: 2, color: "#3b82f6" },
+					},
+				]
+			: []),
 	];
+
+	const showRef = refRawHistory.length > 0;
+
+	const titleText = showRef
+		? `<span style="color:#94a3b8">CH ${currentRaw.toFixed(4)}</span> <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"} | ${currentRefPhysical.toFixed(4)} <span style="color:#f59e0b">Ref ${currentRefRaw.toFixed(4)}</span> <span style="color:#3b82f6">F ${currentRefFiltered.toFixed(4)}</span>`
+		: `<span style="color:#94a3b8">CH ${currentRaw.toFixed(4)}</span> | <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}`;
 
 	const layout = {
 		title: {
-			text: `<span style="color:#94a3b8">CH ${currentRaw.toFixed(4)}</span> | <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}`,
+			text: titleText,
 			font: { size: 11 },
 		},
-		margin: { l: 40, r: 10, t: 28, b: 24 },
+		margin: { l: 40, r: showRef ? 50 : 10, t: 28, b: 24 },
 		paper_bgcolor: isDark ? "#1e293b" : "#ffffff",
 		plot_bgcolor: isDark ? "#1e293b" : "#ffffff",
 		font: { color: isDark ? "#e2e8f0" : "#334155", size: 10 },
@@ -89,6 +141,17 @@ export function LiveChart({
 			zerolinecolor: isDark ? "#475569" : "#cbd5e1",
 			gridcolor: isDark ? "#334155" : "#e2e8f0",
 		},
+		...(showRef && {
+			yaxis2: {
+				title: { text: "Ref" },
+				overlaying: "y",
+				side: "right",
+				range: refYRange,
+				autorange: false,
+				zeroline: false,
+				gridcolor: isDark ? "#334155" : "#e2e8f0",
+			},
+		}),
 		showlegend: false,
 		autosize: true,
 	};

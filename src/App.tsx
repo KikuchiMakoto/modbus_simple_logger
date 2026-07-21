@@ -424,6 +424,15 @@ export default function App() {
 								isStable={targetState?.stable ?? false}
 								isDark={isDarkMode}
 								historyWindowSeconds={chartWindowSeconds}
+								refRawHistory={
+									live.history[settings.refCh]?.raw ?? new Float32Array(0)
+								}
+								refFilteredHistory={
+									live.history[settings.refCh]?.filtered ?? new Float32Array(0)
+								}
+								currentRefRaw={refState?.raw ?? 0}
+								currentRefFiltered={refState?.filtered ?? 0}
+								currentRefPhysical={currentRefPhysical}
 							/>
 						</div>
 						<div className="card flex-1">
