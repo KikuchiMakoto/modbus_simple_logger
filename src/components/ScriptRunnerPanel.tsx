@@ -22,7 +22,7 @@ const API_DOCS = [
   { name: 'get_ai_phy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
   { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
   { name: 'set_ao(ch, v)', desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.' },
-  { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-7. Starts at 0.' },
+  { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
   { name: 'set_param(ch, v)', desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.' },
   { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait. NEVER time.sleep().' },
 ];

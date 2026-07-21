@@ -1408,7 +1408,7 @@ function App() {
 
       <section className="card">
         <div className="mb-0.5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold leading-none">Parameter (8)</h2>
+          <h2 className="text-lg font-semibold leading-none">Parameter (16)</h2>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {paramValues.map((value, idx) => (
@@ -1418,7 +1418,7 @@ function App() {
             >
               <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
                 <span className="whitespace-nowrap text-sm font-semibold text-slate-700 dark:text-slate-200">
-                  {`CH ${idx}`}
+                  {`CH ${idx.toString().padStart(2, '0')}`}
                 </span>
                 <input
                   type="text"
