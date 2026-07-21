@@ -5,7 +5,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 const isBrowser = typeof window !== 'undefined';
 
 function getKey(key: string): string {
-  return `modbus_logger_${key}`;
+  return `modbus_calibrator_${key}`;
 }
 
 export const readJsonStorage = <T extends JsonValue>(key: string): T | null => {
