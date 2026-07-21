@@ -191,6 +191,8 @@ export default function App() {
 
 	const targetState = live.channels[settings.targetCh];
 	const currentFilteredRaw = targetState?.filtered ?? 0;
+	const refState = live.channels[settings.refCh];
+	const currentRefPhysical = refState?.physical ?? 0;
 
 	const handleConnect = useCallback(async () => {
 		setConnectionError(null);
@@ -442,6 +444,8 @@ export default function App() {
 							currentFilteredRaw={currentFilteredRaw}
 							addPointEnabled={live.allStable}
 							xUnit={xUnit}
+							mode={cal.mode}
+							currentRefPhysical={currentRefPhysical}
 							onAddPoint={cal.addPoint}
 							onRemovePoint={cal.removePoint}
 							onUpdatePointY={cal.updatePointY}

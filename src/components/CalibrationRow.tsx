@@ -1,7 +1,10 @@
+import type { CalibrationMode } from "../types";
+
 interface CalibrationRowProps {
 	index: number;
 	xDisplay: string;
 	y: number;
+	mode: CalibrationMode;
 	onUpdateY: (index: number, y: number) => void;
 	onRemove: (index: number) => void;
 }
@@ -10,6 +13,7 @@ export function CalibrationRow({
 	index,
 	xDisplay,
 	y,
+	mode,
 	onUpdateY,
 	onRemove,
 }: CalibrationRowProps) {
@@ -19,13 +23,19 @@ export function CalibrationRow({
 			<span className="flex-1 text-right font-mono text-slate-900 dark:text-slate-100">
 				{xDisplay}
 			</span>
-			<input
-				type="number"
-				step="any"
-				value={y}
-				onChange={(e) => onUpdateY(index, Number(e.target.value))}
-				className="w-24 rounded border border-slate-300 bg-white px-2 py-0.5 text-right font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-			/>
+			{mode === "2port" ? (
+				<span className="w-24 text-right font-mono text-slate-900 dark:text-slate-100">
+					{y.toFixed(4)}
+				</span>
+			) : (
+				<input
+					type="number"
+					step="any"
+					value={y}
+					onChange={(e) => onUpdateY(index, Number(e.target.value))}
+					className="w-24 rounded border border-slate-300 bg-white px-2 py-0.5 text-right font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+				/>
+			)}
 			<button
 				type="button"
 				onClick={() => onRemove(index)}

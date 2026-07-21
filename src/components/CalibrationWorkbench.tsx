@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type {
 	CalibrationDegree,
+	CalibrationMode,
 	CalibrationPoint,
 	CalibrationResult,
 	XUnit,
@@ -17,6 +18,8 @@ interface CalibrationWorkbenchProps {
 	currentFilteredRaw: number;
 	addPointEnabled: boolean;
 	xUnit: XUnit;
+	mode: CalibrationMode;
+	currentRefPhysical: number;
 	onAddPoint: (x: number, y: number) => void;
 	onRemovePoint: (index: number) => void;
 	onUpdatePointY: (index: number, y: number) => void;
@@ -55,6 +58,8 @@ export function CalibrationWorkbench({
 	currentFilteredRaw,
 	addPointEnabled,
 	xUnit,
+	mode,
+	currentRefPhysical,
 	onAddPoint,
 	onRemovePoint,
 	onUpdatePointY,
@@ -67,9 +72,13 @@ export function CalibrationWorkbench({
 	const [yInput, setYInput] = useState("0");
 
 	const handleAddPoint = () => {
-		const y = Number(yInput);
-		if (Number.isNaN(y)) return;
-		onAddPoint(currentFilteredRaw, y);
+		if (mode === "2port") {
+			onAddPoint(currentFilteredRaw, currentRefPhysical);
+		} else {
+			const y = Number(yInput);
+			if (Number.isNaN(y)) return;
+			onAddPoint(currentFilteredRaw, y);
+		}
 	};
 
 	const currentFilteredDisplay = formatX(currentFilteredRaw, xUnit);
@@ -77,14 +86,20 @@ export function CalibrationWorkbench({
 	return (
 		<div className="flex h-full flex-col gap-2">
 			<div className="flex flex-wrap items-center gap-2">
-				<input
-					type="number"
-					step="any"
-					value={yInput}
-					onChange={(e) => setYInput(e.target.value)}
-					placeholder="y applied"
-					className="w-24 rounded border border-slate-300 bg-white px-2 py-1 text-right font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-				/>
+				{mode === "2port" ? (
+					<span className="w-24 text-right font-mono text-sm text-slate-900 dark:text-slate-100">
+						{currentRefPhysical.toFixed(4)}
+					</span>
+				) : (
+					<input
+						type="number"
+						step="any"
+						value={yInput}
+						onChange={(e) => setYInput(e.target.value)}
+						placeholder="y applied"
+						className="w-24 rounded border border-slate-300 bg-white px-2 py-1 text-right font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+					/>
+				)}
 				<button
 					type="button"
 					className="button-primary text-sm"
@@ -157,6 +172,7 @@ export function CalibrationWorkbench({
 						index={i}
 						xDisplay={formatX(p.x, xUnit)}
 						y={p.y}
+						mode={mode}
 						onUpdateY={onUpdatePointY}
 						onRemove={onRemovePoint}
 					/>

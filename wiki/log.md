@@ -195,6 +195,13 @@ Phase 0-3 までに残っていた Biome lint エラーを修正:
 
 ## 2026-07-22 | refactor | グラフ横軸をサンプル数から時間（秒）に変更
 
+## 2026-07-22 | refactor | 2-port モードで y を ref ch の physical 値で自動入力
+
+- `CalibrationWorkbench.tsx`: mode と currentRefPhysical を props に追加。2-port では y テキストボックスの代わりに read-only 表示、Add Point 時に currentRefPhysical を y として自動投入
+- `CalibrationRow.tsx`: mode を props に追加。2-port では y 列を read-only 表示に変更
+- `App.tsx`: refState から currentRefPhysical を取得し CalibrationWorkbench に渡す
+- typecheck ✅ lint ✅
+
 - `useHx711Live.ts`: `HISTORY_SECONDS` 固定値（10）を削除し、`historyWindowSeconds` をパラメータ化
 - `LiveChart.tsx`: x 軸をサンプルインデックス → 相対時間（秒、負値で過去を表す）に変更、x 軸を表示するよう変更
 - `App.tsx`: `chartWindowSeconds` 状態を追加（localStorage 永続化）、ツールバーに Chart 時間選択 dropdown（5s〜10min）を追加
