@@ -57,58 +57,40 @@
 ## 2. UI 構造
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│ Header                                                        │
-│  [ModbusStrainCalibrator]  [●Connected @ 38400bps 8N1]       │
-│                              [Connect/Disconnect] [Menu]      │
-├───────────────────────────────────────────────────────────────┤
-│ Mode Selector                                                 │
-│  ( ) 1-port  (●) 2-port                                       │
-├───────────────────────────────────────────────────────────────┤
-│ Channel Selectors (mode に応じて変化)                          │
-│  [1-port]  Target CH: [CH 00 ▼]                               │
-│  [2-port]  Reference CH: [CH 00 ▼]  Target CH: [CH 01 ▼]     │
-│                                                                  │
-│  [2-port mode のみ]  Ref Coeffs:  a=[0.0001234] b=[0.9876] c=[0.0] │
-├───────────────────────────────────────────────────────────────┤
-│ Live Readings (リアルタイム)                                   │
-│  ┌────────── CH 00 ──────────┐  ┌──── CH 01 ────┐            │
-│  │ Raw      12345   ● Stable │  │ Raw    23456  │            │
-│  │ Filtered 12347            │  │ mV/V   0.234  │            │
-│  │ mV/V     0.123            │  │               │            │
-│  │ Phy(*)   1.234            │  └───────────────┘            │
-│  │ [level meter]             │                                │
-│  │ ┌──────────────────────┐  │                                │
-│  │ │  mini-chart (raw +   │  │                                │
-│  │ │  filtered overlay)   │  │                                │
-│  │ └──────────────────────┘  │                                │
-│  └───────────────────────────┘                                │
-│  Settling Settings:  Tolerance [5 cnts] Window [1.0 s]  Cutoff [1.0 Hz] │
-├───────────────────────────────────────────────────────────────┤
-│ Calibration Workbench (検定テーブル)                           │
-│  [+ Add Point (disabled when unstable)] [Calculate] [Export] [Clear] │
-│  ┌─ # ─┬── x (raw) ──┬── y (input) ──┬── time ─────────┐  [x]│
-│  │  1  │    12345    │   0.000 (kg)  │ 12:34:56.789   │     │
-│  │  2  │    23456    │   1.000 (kg)  │ 12:35:01.234   │     │
-│  │ ... │             │               │                 │     │
-│  └─────┴─────────────┴───────────────┴─────────────────┴─────┘│
-│  Degree: [1 (linear) ▼]                                       │
-│  Result:                                                      │
-│    a = 0.0001234  b = 0.9876  c = 0.0000                     │
-│    R² = 0.9998  RMSE = 0.0023                                │
-├───────────────────────────────────────────────────────────────┤
-│ Regression Plot (Plotly scattergl)                            │
-│  ・散布点 (x=raw, y=applied)                                   │
-│  ・回帰直線 / 曲線 (overlay)                                   │
-│  ・残差プロット (任意トグル)                                    │
-├───────────────────────────────────────────────────────────────┤
-│ Modbus Config Panel (FloatingWindow, toggle from [Menu])      │
-└───────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────┬────────────────────────────────┐
+│ Header                          │                                │
+│ [ModbusStrainCalibrator]        │ [●Connected] [Menu]            │
+├─────────────────────────────────┴────────────────────────────────┤
+│ Mode: (●)1-port  ( )2-port    Target CH: [CH 00 ▼]              │
+│ [2-port] Ref CH: [CH 00 ▼]  Ref Coeffs: a=[0.0001] b=[0.9876] c=[0.0] │
+├─────────────────────────────────┬────────────────────────────────┤
+│ ┌───── Live Chart ──────────┐  │ Calibration Workbench           │
+│ │  raw + filtered overlay   │  │ [+ Add Point] [Export] [Clear] │
+│ │  (legend: current values) │  │ x unit: [raw counts ▼]         │
+│ │                           │  │ ──── x_filtered ────┬── y_in ─┐│
+│ │  Raw:     12345 ● Stable  │  │       12345         │  0.000  ││
+│ │  Filtered: 12347          │  │       23456         │  1.000  ││
+│ │  mV/V:     0.123          │  │       ...           │  ...    ││
+│ │  Phy:      1.234 kg       │  │ ────────────────────┴─────────┘│
+│ └───────────────────────────┘  │ Degree: [1 (linear) ▼]         │
+│ ┌─── Regression Plot ───────┐  │ Coefficients (x raw counts):   │
+│ │ scatter + regression line │  │ a=0.0001234  R²=0.9998        │
+│ │ (auto-update, interactive)│  │ b=0.9876     RMSE=0.0023      │
+│ │ 残差プロット(任意トグル)  │  │ c=0                          │
+│ └───────────────────────────┘  │                                │
+├─────────────────────────────────┴────────────────────────────────┤
+│ Settling: Tolerance [5 cnts]  Window [1.0 s]  Cutoff [1.0 Hz]   │
+├──────────────────────────────────────────────────────────────────┤
+│ Modbus Config Panel (FloatingWindow, toggle from [Menu])         │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-- 1画面完結の縦スクロール。タブやページ遷移なし。
-- 設定変更（チャネル切替・モード切替・degree 切替・安定判定パラメータ）は即時反映。
-- [+ Add Point] はセンサー値が安定していない間は disabled になる。
+- **2カラムレイアウト**: 左に live chart + regression plot、右に calibration workbench
+- **live readings カードは廃止**: 現在値は live chart の legend 部に表示（Raw / Filtered / mV/V / Phy）
+- **live chart**: raw（生）と filtered（LPF 後）の2系列を time-series overlay。凡例に最新値を表示
+- **regression plot**: 点の追加/削除/編集ごとに**自動再計算**・再描画（Calculate ボタン不要）
+- **[+ Add Point]**: `allStable` の間のみ有効。値が再変動したら即座に disabled に戻る
+- **x の単位切替**: workbench の x 列表示と係数 a,b,c を、選択された単位（raw counts / mV/V / με）に換算表示
 
 ---
 
@@ -118,11 +100,14 @@
 
 ```ts
 type CalibrationPoint = {
-  index: number;        // 1-based 連番
-  x: number;            // HX711 raw（または target_raw）
-  y: number;            // applied (1-port) / ref_phy from ref coeffs (2-port、自動計算、上書き不可)
+  index: number;        // 1-based 連番（画面表示には使わない、内部管理用）
+  x: number;            // HX711 filtered raw（LPF 適用後の値）
+  y: number;            // applied (1-port) / ref_phy from ref coeffs (2-port)
   timestamp: number;    // Date.now()
 };
+
+- `x` は常に **filtered raw counts** で保存する（回帰計算は raw counts ベース）
+- 画面表示時の単位切替（mV/V / με）は表示換算のみ。保存値は raw counts のまま
 ```
 
 ### 検定結果
@@ -208,11 +193,11 @@ src/
 │   ├── useCalibration.ts              # 検定点・degree・計算の状態管理
 │   └── useHx711Live.ts                # 1〜2ch ポーリング + 生値保持
 ├── components/
-│   ├── Hx711LiveCard.tsx              # 1ch 分の生値・mV/V・レベルメーター + mini-chart
-│   ├── CalibrationWorkbench.tsx       # 検定テーブル + Add/Calculate/Export/Clear + Degree 選択
+│   ├── LiveChart.tsx                  # 左上: raw+filtered time-series + 凡例に現在値
+│   ├── RegressionPlot.tsx             # 左下: 散布図 + 回帰線（auto-update, interactive）
+│   ├── CalibrationWorkbench.tsx       # 右: 検定テーブル + Add/Export/Clear + Degree 選択 + 単位切替
 │   ├── CalibrationRow.tsx             # 1行編集（x, y, time, delete）
-│   ├── RegressionResultPanel.tsx      # 係数・R²・RMSE 表示
-│   ├── RegressionChart.tsx            # Plotly scatter 散布図 + 回帰線
+│   ├── RegressionResultPanel.tsx      # 係数・R²・RMSE 表示（Workbench 下部）
 │   ├── ModeSelector.tsx               # 1-port / 2-port 切替
 │   ├── ChannelSelector.tsx            # HX711 ch 0-7 ドロップダウン
 │   ├── ModbusConfigPanel.tsx          # 既存をそのまま流用（FloatingWindow）
@@ -343,28 +328,25 @@ function useHx711Live(opts: {
 ### `useCalibration`
 
 ```ts
-type CalculateResult =
-  | { ok: true; value: CalibrationResult }
-  | { ok: false; error: string };
-
 function useCalibration(): {
   result: CalibrationResult | null;
   points: CalibrationPoint[];
   degree: 1 | 2;
-  validationError: string | null;     // 常に最新のバリデーション状態（ボタン押下不要）
+  validationError: string | null;
   setDegree: (d: 1 | 2) => void;
   addPoint: (x: number, y: number) => void;
   removePoint: (index: number) => void;
   clearPoints: () => void;
-  calculate: () => CalculateResult;   // points から最小二乗、throw はしない
 };
 ```
 
-- points / degree の変更は自動で localStorage（`modbus_calibrator_workbench_v1`）に保存（ページ再読込時の復元用）
+- **自動再計算**: points または degree が変更されるたびに、自動で回帰計算を実行し `result` を更新する
+  - `fitRegression()` が `{ ok: false }` を返した場合 → `result` を `null` に、`validationError` にエラーメッセージをセット
+  - ユーザーが [Calculate] を押す操作は**不要**
+- points / degree の変更は自動で localStorage（`modbus_calibrator_workbench_v1`）に保存
 - `validationError` は points と degree から常に導出（`points.length < degree + 1` ならエラーメッセージ）
-- `calculate()` は `validationError` が null の場合のみ呼び出し可能
-- CSV/JSON エクスポートは util 関数（`csvExport.ts` / `jsonExport.ts`）として独立
-- **[Add Point] ボタンの disabled 制御**: hook の責務ではなく、親コンポーネントで `useHx711Live.allStable` を参照して制御
+- CSV/JSON エクスポートは util 関数
+- **[Add Point] ボタンの disabled 制御**: 親コンポーネントで `useHx711Live.allStable` を参照
 
 ### 親コンポーネント
 
@@ -388,37 +370,52 @@ function useCalibration(): {
 
 ```
 1. ユーザーがデバイスに既知の負荷を印加（例: 0 kg）
-2. 画面の Live カードで HX711 raw の安定を待つ
-   → allStable になると [+ Add Point] が有効になる
-3. 入力欄「y (input)」に 0.000 を入力
+2. Live Chart で raw + filtered の収束を確認
+   → allStable になると [+ Add Point] が有効になる（凡例に ● Stable 表示）
+3. 入力欄「y」に 0.000 を入力
 4. [+ Add Point] クリック
-   → { x: currentRaw (filtered 値ではない), y: 0.000, timestamp: now } が追加される
+   → { x: currentFilteredRaw, y: 0.000, timestamp: now } が追加される
+   → 回帰が自動再計算され、Regression Plot が更新される
 5. 負荷を変更 (例: 1 kg)
    → 値が変動し allStable = false → [+ Add Point] が disabled に
-6. 再び allStable になるのを待って ↑ を繰り返す
-7. [Calculate] クリック → 最小二乗計算 → 散布図に回帰線 overlay
-8. [Export CSV / Export JSON] で外部に保存
+   → 再び allStable になるのを待って ↑ を繰り返す
+6. 3点以上追加 → Regression Plot に回帰線が自動表示
+7. [Export CSV / Export JSON] で外部に保存
 ```
 
 ### 7.2 2-port モード
 
 ```
 1. 参照センサー（既校正）と検定対象センサーを 2 ch に接続
-2. 2-port モードに切り替えると、画面上部の参照センサー係数入力欄（a, b, c のテキストボックス）が表示
+2. 2-port モードに切り替えると、ヘッダー直下に参照センサー係数入力欄（a, b, c）が表示
    → 前回の値があれば自動復元、なければ手入力
-3. Live カードに両 ch の raw / filtered / 安定状態を表示
-4. [+ Add Point] クリック時（両 ch が allStable になったときのみ有効）:
-   - target CH の生値 → x
-   - ref CH の生値を ref 係数で物理値に換算 → y（自動計算、上書き不可）
-5. 以下 1-port と同じ
+3. [+ Add Point] クリック時（両 ch が allStable になったときのみ有効）:
+   - target CH の filtered raw → x
+   - ref CH の filtered raw を ref 係数で物理値に換算 → y（自動計算）
+4. 以下 1-port と同じ
 ```
 
 ### 7.3 リアルタイム可視化
 
-- Live カードに各 ch の **過去 N 秒の raw + filtered グラフ**（小型 Plotly chart、2系列 overlay）。フィルタリングの効果を視覚的に確認できる
-- 検定テーブルの下に **散布図 + 回帰線**を大きい Plotly chart で表示
-- Live カードに安定状態（● Stable / ○ Unstable）を表示
+- **Live Chart**（左上）: raw + filtered の time-series overlay。凡例に現在値（Raw, Filtered, mV/V, Phy）と安定状態を表示
+- **Regression Plot**（左下）: 散布図 + 回帰線。点追加/削除ごとに自動再描画。インタラクティブ操作（拡大/縮小/ホバー）
 - ダークモード対応（既存パレット）
+
+### 7.4 x の単位切替
+
+Calibration Workbench 内の `x unit` セレクトボックスで、x 列の表示単位を切り替えられる。
+
+| 単位 | 換算 | 説明 |
+|------|------|------|
+| raw counts | `x_display = x` | デフォルト。filtered raw counts |
+| mV/V | `x_display = hx711RawToMvPerV(x)` | センサー出力電圧比 |
+| με | `x_display = hx711RawToMvPerV(x) * 2000` | マイクロストレイン（ゲージ率2.0仮定） |
+
+**回帰計算は常に raw counts で行い**、表示だけを換算する。単位切替時には係数 a, b, c もそれに応じて換算表示する:
+
+- raw → mV/V: `a' = a * factor`, `b' = b`, `c' = c / factor`（1次式の場合）
+  - ただし `factor` は raw→mV/V の線形変換係数（`1 / 32768 / 128 * 2 * 1000`）
+- 詳細な換算式は `utils/calibration.ts` の既存関数を流用
 
 ---
 
@@ -489,9 +486,9 @@ function fitQuadratic(points: RegressionInput): RegressionResult { /* 同 */ }
 # r2=0.9998
 # rmse=0.0023
 # updated_at=2026-01-15T12:34:56.789Z
-index,timestamp_ms,iso8601,x_raw,y_applied
-1,1737015296789,2026-01-15T12:34:56.789Z,12345,0.000
-2,1737015301234,2026-01-15T12:35:01.234Z,23456,1.000
+timestamp_ms,x_filtered_raw,y_applied
+1737015296789,12345,0.000
+1737015301234,23456,1.000
 ...
 ```
 
@@ -511,8 +508,8 @@ index,timestamp_ms,iso8601,x_raw,y_applied
   "coefficients": { "a": 0.0001234, "b": 0.9876, "c": 0 },
   "metrics": { "r2": 0.9998, "rmse": 0.0023 },
   "points": [
-    { "index": 1, "timestamp": 1737015296789, "x": 12345, "y": 0.000 },
-    { "index": 2, "timestamp": 1737015301234, "x": 23456, "y": 1.000 }
+    { "timestamp": 1737015296789, "x": 12345, "y": 0.000 },
+    { "timestamp": 1737015301234, "x": 23456, "y": 1.000 }
   ]
 }
 ```
@@ -578,11 +575,11 @@ modbus-strain-calibrator/
 │   │   ├── AppHeader.tsx         # 新規（タイトル・接続・設定ボタン）
 │   │   ├── ModeSelector.tsx      # 新規
 │   │   ├── ChannelSelector.tsx   # 新規
-│   │   ├── Hx711LiveCard.tsx     # 新規（生値 + レベルメーター + mini-chart）
-│   │   ├── CalibrationWorkbench.tsx  # 新規（Degree 選択含む）
-│   │   ├── CalibrationRow.tsx    # 新規
-│   │   ├── RegressionResultPanel.tsx # 新規
-│   │   ├── RegressionChart.tsx   # 新規（Plotly scatter）
+│   │   ├── LiveChart.tsx         # 新規: raw+filtered time-series + 凡例に現在値
+│   │   ├── RegressionPlot.tsx    # 新規（Plotly scatter + 回帰線, auto-update）
+│   │   ├── CalibrationWorkbench.tsx  # 新規（Degree 選択 + 単位切替 + Add/Export/Clear）
+│   │   ├── CalibrationRow.tsx    # 新規（x 単位切替対応）
+│   │   ├── RegressionResultPanel.tsx # 新規（係数・R²・RMSE 表示）
 │   │   └── ModbusConfigPanel.tsx # 既存をそのまま流用（FloatingWindow）
 │   └── utils/
 │       ├── crc16.ts              # 既存流用

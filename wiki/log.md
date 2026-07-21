@@ -31,7 +31,7 @@
   - 削除: `pyodide`, ScriptRunner / AO / Parameter / HamburgerMenu / SlidePanel / AppInfoPanel / VoltageConfigPanel / ChartPanel / ManualPanel / CalibrationPanel / tsvExport / dataStorage / useChartAxes
   - 維持: `react-rnd`（FloatingWindow + ModbusConfigPanel は現状維持。後日撤回）
   - 維持・流用: `webserialClient.ts`, `crc16.ts`, `useTheme`, `calibration.ts`（HX711部分）
-  - 追加: `useHx711Live`, `useCalibration`, `regression.ts`, `csvExport.ts`, `jsonExport.ts`, `CalibrationWorkbench`, `RegressionChart` 等
+  - 追加: `useHx711Live`, `useCalibration`, `regression.ts`, `settling.ts`, `csvExport.ts`, `jsonExport.ts`, `CalibrationWorkbench`, `LiveChart`, `RegressionPlot` 等
 - 詳細は `wiki/design-strain-calibrator.md` を参照。
 
 ## 2026-07-21 | refactor | AGENTS.md と llm-wiki.md の再構成
@@ -81,3 +81,16 @@ Vitest 導入を決定（regression.ts の単体テスト用）。
 - mini-chart は raw + filtered の2系列 overlay 表示
 - 設計書 §5 として新規セクション追加、全セクション番号を振り直し
 - `utils/settling.ts` を新規追加
+
+## 2026-07-21 | design | UI 全面見直し + 自動再計算 + 単位切替
+
+ユーザーの UI 指摘を反映し大幅改修:
+
+- **レイアウト**: 縦1カラム → **2カラム**（左: live chart + regression plot / 右: workbench）
+- **live readings 廃止**: 現在値は live chart の凡例に表示（Raw / Filtered / mV/V / Phy）
+- **Calculate ボタン削除**: points 変更時に回帰を**自動再計算**・再描画
+- **x = filtered value**: Add Point 時の x は filtered raw を採用
+- **安定判定再変動対応**: allStable 後も値が変動したら即座に Add Point を disabled
+- **x の単位切替**: raw counts / mV/V / με を選択可能。係数 a,b,c も換算表示
+- **エクスポート簡略化**: CSV/JSON から index, iso8601 を削除
+- **コンポーネント**: Hx711LiveCard → LiveChart, RegressionChart → RegressionPlot に置き換え
