@@ -102,8 +102,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 	refCh: 1,
 	degree: 1,
 	settling: {
-		tolerance: 5,
-		windowSeconds: 1.0,
+		tolerance: 1,
+		windowSeconds: 1,
 		cutoffFrequency: 1.0,
 	},
 	serial: DEFAULT_SERIAL,
@@ -323,11 +323,7 @@ export default function App() {
 					<span>Settling:</span>
 					<label className="flex items-center gap-1">
 						Tol:
-						<input
-							type="number"
-							min={1}
-							max={50}
-							step={1}
+						<select
 							value={settings.settling.tolerance}
 							onChange={(e) =>
 								setSettings((s) => ({
@@ -338,16 +334,24 @@ export default function App() {
 									},
 								}))
 							}
-							className="w-14 rounded border border-slate-300 bg-white px-1 py-0.5 text-right font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-						/>
+							className="w-16 rounded border border-slate-300 bg-white px-1 py-0.5 font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+						>
+							<option value={0.0001}>0.0001</option>
+							<option value={0.001}>0.001</option>
+							<option value={0.01}>0.01</option>
+							<option value={0.1}>0.1</option>
+							<option value={1}>1</option>
+							<option value={10}>10</option>
+							<option value={100}>100</option>
+						</select>
 					</label>
 					<label className="flex items-center gap-1">
 						Win(s):
 						<input
 							type="number"
-							min={0.2}
-							max={4}
-							step={0.1}
+							min={1}
+							max={60}
+							step={1}
 							value={settings.settling.windowSeconds}
 							onChange={(e) =>
 								setSettings((s) => ({
