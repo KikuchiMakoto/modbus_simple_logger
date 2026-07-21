@@ -57,54 +57,58 @@
 ## 2. UI 構造
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│ Header                                                     │
-│  [ModbusStrainCalibrator]  [●Connected @ 38400bps 8N1]    │
-│                              [Connect/Disconnect] [Menu]   │
-├────────────────────────────────────────────────────────────┤
-│ Mode Selector                                              │
-│  ( ) 1-port  (●) 2-port                                    │
-├────────────────────────────────────────────────────────────┤
-│ Channel Selectors (mode に応じて変化)                       │
-│  [1-port]  Target CH: [CH 00 ▼]                            │
-│  [2-port]  Reference CH: [CH 00 ▼]  Target CH: [CH 01 ▼]  │
-├────────────────────────────────────────────────────────────┤
-│ Live Readings (リアルタイム)                                │
-│  ┌──── CH 00 ────┐  ┌──── CH 01 ────┐                     │
-│  │ Raw    12345  │  │ Raw    23456  │                     │
-│  │ mV/V   0.123  │  │ mV/V   0.234  │                     │
-│  │ Phy(*)  1.234 │  │ Phy(*)  2.345 │                     │
-│  │ [level meter] │  │ [level meter] │                     │
-│  └───────────────┘  └───────────────┘                     │
-├────────────────────────────────────────────────────────────┤
-│ Calibration Workbench (検定テーブル)                        │
-│  [+ Add Point]  [Calculate]  [Save]  [Export]  [Clear]    │
-│  ┌─ # ─┬── x (raw) ──┬── y (input) ──┬── time ─────────┐  │
-│  │  1  │    12345    │   0.000 (kg)  │ 12:34:56.789   │ [x]│
-│  │  2  │    23456    │   1.000 (kg)  │ 12:35:01.234   │ [x]│
-│  │ ... │             │               │                 │   │
-│  └─────┴─────────────┴───────────────┴─────────────────┴───┘│
-│                                                            │
-│  Regression: [Degree ▼: 1 (linear) / 2 (quadratic)]       │
-│  Result:                                                  │
-│    a = 0.0001234                                          │
-│    b = 0.9876                                             │
-│    c = 0.0000     (degree=2 only)                         │
-│    R²  = 0.9998                                           │
-│    RMSE = 0.0023                                          │
-├────────────────────────────────────────────────────────────┤
-│ Regression Plot (Plotly scattergl)                         │
-│  ・散布点 (x=raw, y=applied)                                │
-│  ・回帰直線 / 曲線 (overlay)                                │
-│  ・残差プロット (任意トグル)                                 │
-├────────────────────────────────────────────────────────────┤
-│ Modbus Config Panel (FloatingWindow)                       │
-│  Slave ID, Baud, Parity, etc.                              │
-└────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ Header                                                        │
+│  [ModbusStrainCalibrator]  [●Connected @ 38400bps 8N1]       │
+│                              [Connect/Disconnect] [Menu]      │
+├───────────────────────────────────────────────────────────────┤
+│ Mode Selector                                                 │
+│  ( ) 1-port  (●) 2-port                                       │
+├───────────────────────────────────────────────────────────────┤
+│ Channel Selectors (mode に応じて変化)                          │
+│  [1-port]  Target CH: [CH 00 ▼]                               │
+│  [2-port]  Reference CH: [CH 00 ▼]  Target CH: [CH 01 ▼]     │
+│                                                                  │
+│  [2-port mode のみ]  Ref Coeffs:  a=[0.0001234] b=[0.9876] c=[0.0] │
+├───────────────────────────────────────────────────────────────┤
+│ Live Readings (リアルタイム)                                   │
+│  ┌────────── CH 00 ──────────┐  ┌──── CH 01 ────┐            │
+│  │ Raw      12345   ● Stable │  │ Raw    23456  │            │
+│  │ Filtered 12347            │  │ mV/V   0.234  │            │
+│  │ mV/V     0.123            │  │               │            │
+│  │ Phy(*)   1.234            │  └───────────────┘            │
+│  │ [level meter]             │                                │
+│  │ ┌──────────────────────┐  │                                │
+│  │ │  mini-chart (raw +   │  │                                │
+│  │ │  filtered overlay)   │  │                                │
+│  │ └──────────────────────┘  │                                │
+│  └───────────────────────────┘                                │
+│  Settling Settings:  Tolerance [5 cnts] Window [1.0 s]  Cutoff [1.0 Hz] │
+├───────────────────────────────────────────────────────────────┤
+│ Calibration Workbench (検定テーブル)                           │
+│  [+ Add Point (disabled when unstable)] [Calculate] [Export] [Clear] │
+│  ┌─ # ─┬── x (raw) ──┬── y (input) ──┬── time ─────────┐  [x]│
+│  │  1  │    12345    │   0.000 (kg)  │ 12:34:56.789   │     │
+│  │  2  │    23456    │   1.000 (kg)  │ 12:35:01.234   │     │
+│  │ ... │             │               │                 │     │
+│  └─────┴─────────────┴───────────────┴─────────────────┴─────┘│
+│  Degree: [1 (linear) ▼]                                       │
+│  Result:                                                      │
+│    a = 0.0001234  b = 0.9876  c = 0.0000                     │
+│    R² = 0.9998  RMSE = 0.0023                                │
+├───────────────────────────────────────────────────────────────┤
+│ Regression Plot (Plotly scattergl)                            │
+│  ・散布点 (x=raw, y=applied)                                   │
+│  ・回帰直線 / 曲線 (overlay)                                   │
+│  ・残差プロット (任意トグル)                                    │
+├───────────────────────────────────────────────────────────────┤
+│ Modbus Config Panel (FloatingWindow, toggle from [Menu])      │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 - 1画面完結の縦スクロール。タブやページ遷移なし。
-- 設定変更（チャネル切替・モード切替・degree 切替）は即時反映。
+- 設定変更（チャネル切替・モード切替・degree 切替・安定判定パラメータ）は即時反映。
+- [+ Add Point] はセンサー値が安定していない間は disabled になる。
 
 ---
 
@@ -160,6 +164,16 @@ type ReferenceSensorCoeffs = {
 };
 ```
 
+### 安定判定設定
+
+```ts
+type SettlingConfig = {
+  tolerance: number;        // HX711 raw counts 単位の許容最大レンジ（LPF 後）, default: 5
+  windowSeconds: number;    // 安定判定窓の長さ（秒）, default: 1.0
+  cutoffFrequency: number;  // 1次IIR LPF のカットオフ周波数（Hz）, default: 1.0
+};
+```
+
 ### 設定
 
 ```ts
@@ -168,6 +182,7 @@ type AppSettings = {
   targetCh: number;                 // 0-7
   refCh: number;                    // 0-7 (2-port のみ)
   degree: 1 | 2;
+  settling: SettlingConfig;
   serial: SerialSettings;
   slaveId: number;
   modbusPrecision: 'normal' | 'extended';
@@ -206,6 +221,7 @@ src/
     ├── crc16.ts                       # 既存を流用
     ├── cookies.ts                     # 既存を流用（キー prefix 変更）
     ├── regression.ts                  # 最小二乗（線形・2次） + R² + RMSE
+    ├── settling.ts                    # 1次IIR LPF + 移動窓 range 安定判定
     ├── csvExport.ts                   # CSV ダウンロード (Blob + a[download])
     ├── jsonExport.ts                  # JSON ダウンロード
     └── calibration.ts                 # hx711RawToMvPerV, レベルメーター色
@@ -231,27 +247,98 @@ src/
 
 ---
 
-## 5. 状態管理
+## 5. 安定判定
+
+### 5.1 概要
+
+ユーザーが負荷を加えた後、センサー値が安定するまで [+ Add Point] ボタンを disabled にするための自動安定判定機構。
+判定アルゴリズムは **1次IIR LPF + 移動窓 range** の 2段構え。
+
+```
+raw ──→ 1st-order IIR LPF ──→ リングバッファ ──→ max-min ≦ tolerance ──→ stable flag
+```
+
+### 5.2 アルゴリズム
+
+**1次IIR LPF**:
+```
+α = 1 - exp(-2π · cutoffFrequency · samplingInterval)
+filtered[n] = α · raw[n] + (1 - α) · filtered[n-1]
+```
+
+- `samplingInterval = 0.2` (200ms)
+- `cutoffFrequency = 1.0 Hz` (default) → `α ≈ 0.714`
+- 実装: `utils/settling.ts` の `SettlingDetector` クラス
+
+**移動窓 range 判定**:
+- リングバッファに LPF 後の値 `windowSamples` 個を保持
+- 窓内の max - min を計算
+- `range <= tolerance` が `windowSamples` 回連続 → `stable = true`
+- 1回でも超えたら即座に `stable = false`（リセット）
+
+**windowSamples** はユーザーの `windowSeconds` から計算:
+```
+windowSamples = Math.ceil(windowSeconds / 0.2)
+```
+例: `windowSeconds = 1.0` → `windowSamples = 5`
+
+### 5.3 パラメータ
+
+| パラメータ | ユーザー指定 | デフォルト | 範囲 | 内部変換 |
+|-----------|------------|-----------|------|---------|
+| `tolerance` | HX711 raw counts | 5 | 1-50 | そのまま `max-min ≤ tolerance` |
+| `windowSeconds` | 秒 | 1.0 | 0.2-4.0 | → `windowSamples` |
+| `cutoffFrequency` | Hz | 1.0 | 0.1-5.0 | → IIR α |
+
+### 5.4 状態管理との統合
+
+- `useHx711Live` が内部でチャネルごとに `SettlingDetector` インスタンスを保持
+- 200ms ポーリングループ内で `SettlingDetector.update(raw)` を呼ぶ
+- 結果（`stable`, `filtered`, `range`）は `ChannelLiveState` として親コンポーネントに公開
+- 全チャネルが `stable` になったとき `allStable = true`
+- 負荷変更後はユーザーが明示的にリセットする必要はなく、自然に unstable になり stable に遷移する
+
+### 5.5 mini-chart との連携
+
+Live カード内の mini-chart には **raw 値（生）と filtered 値（LPF 後）** の 2 系列をオーバーレイ表示する。
+両系列とも `useHx711Live` の `history`（Float32Array リングバッファ）から取得。
+
+---
+
+## 6. 状態管理
 
 ### `useHx711Live`
 
 ```ts
+type ChannelLiveState = {
+  raw: number;
+  filtered: number;          // 1次IIR LPF 適用後
+  voltage: number;           // mV/V
+  physical: number;          // 物理量（換算後、2-port では参照係数使用）
+  stable: boolean;           // 安定判定結果
+  range: number;             // 現在の窓内 range
+};
+
 function useHx711Live(opts: {
   client: WebSerialModbusClient | null;
   channels: number[];          // 1個（1-port）または2個（2-port）
-  pollingMs: number;           // 200ms 固定推奨
+  pollingMs: number;           // 200ms 固定
   precision: 'normal' | 'extended';
+  settling: SettlingConfig;
+  refCoeffs?: ReferenceSensorCoeffs;  // 2-port のみ
 }): {
-  raws: Record<number, number>;    // ch → 最新生値
-  voltages: Record<number, number>; // ch → mV/V
+  channels: Record<number, ChannelLiveState>;
+  allStable: boolean;          // 全チャネルが安定
   timestamp: number;
   isPolling: boolean;
+  history: Record<number, { raw: Float32Array; filtered: Float32Array }>;  // mini-chart 用
 };
 ```
 
-- `setInterval(pollingMs)` で `readInputRegisters(0, channels.length)` を呼ぶ
-- IndexedDB / TSV には**書かない**（検定アプリではライブ表示のみ）
-- 200ms ポーリングで**1秒あたり 5回**の読取り → ユーザーが「Add Point」を押した瞬間の値で記録
+- 内部でチャネルごとに `SettlingDetector`（`utils/settling.ts`）を保持
+- 200ms ポーリングごとに `SettlingDetector.update(raw)` → stable 判定を更新
+- `history` は直近 N 秒分の raw/filtered 配列（mini-chart 描画用、リングバッファ）
+- 2-port 時は `refCoeffs` を使って target ch の y 値を自動計算（`physical`）
 
 ### `useCalibration`
 
@@ -277,62 +364,65 @@ function useCalibration(): {
 - `validationError` は points と degree から常に導出（`points.length < degree + 1` ならエラーメッセージ）
 - `calculate()` は `validationError` が null の場合のみ呼び出し可能
 - CSV/JSON エクスポートは util 関数（`csvExport.ts` / `jsonExport.ts`）として独立
+- **[Add Point] ボタンの disabled 制御**: hook の責務ではなく、親コンポーネントで `useHx711Live.allStable` を参照して制御
 
 ### 親コンポーネント
 
 `App.tsx` で:
 1. 接続状態（`connected`, `client`）
-2. モード（`mode`）
-3. 対象/参照 CH
-4. live 生値（`raws`）
-5. 検定結果（`result`）
-6. 表示
+2. モード（`mode`）とモードに応じたチャネル・係数設定
+3. 安定判定設定（`settling`）
+4. live 生値・安定状態（`useHx711Live`）
+5. 検定テーブル（`useCalibration`）
+6. レイアウト
 
-これらを縦並びで配置。Modal/Dialog は使用しない（2-port の参照係数はインラインのテキストボックス）。ModbusConfigPanel のみ FloatingWindow（既存 react-rnd 流用）。
+これらを縦並びで配置。Modal/Dialog は使用しない。ModbusConfigPanel のみ FloatingWindow（既存 react-rnd 流用）。
+
+**[Add Point] は `allStable` が false の間 disabled**。ただしワークベンチ上の y 入力（1-port）は常時有効。
 
 ---
 
-## 6. 検定ワークフロー詳細
+## 7. 検定ワークフロー詳細
 
-### 6.1 1-port モード
+### 7.1 1-port モード
 
 ```
 1. ユーザーがデバイスに既知の負荷を印加（例: 0 kg）
-2. 画面の Live カードで HX711 raw が安定するのを確認
+2. 画面の Live カードで HX711 raw の安定を待つ
+   → allStable になると [+ Add Point] が有効になる
 3. 入力欄「y (input)」に 0.000 を入力
 4. [+ Add Point] クリック
-    → { x: currentRaw, y: 0.000, timestamp: now } が追加される
-5. 負荷を変更 (例: 1 kg)、同様に追加
-6. 3点以上（degree=1）または 4点以上（degree=2）追加
-7. [Calculate] クリック
-    → 最小二乗で a, b, c, R², RMSE を計算
-    → 散布図に回帰線を overlay
+   → { x: currentRaw (filtered 値ではない), y: 0.000, timestamp: now } が追加される
+5. 負荷を変更 (例: 1 kg)
+   → 値が変動し allStable = false → [+ Add Point] が disabled に
+6. 再び allStable になるのを待って ↑ を繰り返す
+7. [Calculate] クリック → 最小二乗計算 → 散布図に回帰線 overlay
 8. [Export CSV / Export JSON] で外部に保存
 ```
 
-### 6.2 2-port モード
+### 7.2 2-port モード
 
 ```
 1. 参照センサー（既校正）と検定対象センサーを 2 ch に接続
-2. 2-port モードに切り替えると、画面上部の参照センサー係数入力欄（a, b, c のテキストボックス）が表示される
+2. 2-port モードに切り替えると、画面上部の参照センサー係数入力欄（a, b, c のテキストボックス）が表示
    → 前回の値があれば自動復元、なければ手入力
-3. 通常の負荷印加ワークフロー（両 ch の raw 値が Live 表示）
-4. [+ Add Point] クリック時:
+3. Live カードに両 ch の raw / filtered / 安定状態を表示
+4. [+ Add Point] クリック時（両 ch が allStable になったときのみ有効）:
    - target CH の生値 → x
    - ref CH の生値を ref 係数で物理値に換算 → y（自動計算、上書き不可）
-5. 3点以上追加 → [Calculate]
-6. 結果表示 → [Export]
+5. 以下 1-port と同じ
 ```
 
-### 6.3 リアルタイム可視化
+### 7.3 リアルタイム可視化
 
-- Live カードに各 ch の **過去 N 秒の生値グラフ**（小型 Plotly chart）をオプション表示
+- Live カードに各 ch の **過去 N 秒の raw + filtered グラフ**（小型 Plotly chart、2系列 overlay）。フィルタリングの効果を視覚的に確認できる
 - 検定テーブルの下に **散布図 + 回帰線**を大きい Plotly chart で表示
+- Live カードに安定状態（● Stable / ○ Unstable）を表示
 - ダークモード対応（既存パレット）
 
 ---
 
-## 7. 最小二乗実装
+## 8. 最小二乗実装
 
 `src/utils/regression.ts`:
 
@@ -369,7 +459,7 @@ function fitQuadratic(points: RegressionInput): RegressionResult { /* 同 */ }
 
 ---
 
-## 8. 永続化
+## 9. 永続化
 
 ### localStorage キー
 
@@ -442,7 +532,7 @@ export function downloadJson<T>(filename: string, data: T): void;
 
 ---
 
-## 9. PWA / Service Worker
+## 10. PWA / Service Worker
 
 既存 `public/sw.js` を維持。`BASE_PATH` を `/modbus_strain_calibrator/` に変更。
 
@@ -456,7 +546,7 @@ const CACHE_NAME = `modbus-calibrator-${CACHE_VERSION}`;
 
 ---
 
-## 10. ディレクトリ構造（最終形）
+## 11. ディレクトリ構造（最終形）
 
 ```
 modbus-strain-calibrator/
@@ -498,7 +588,8 @@ modbus-strain-calibrator/
 │       ├── crc16.ts              # 既存流用
 │       ├── cookies.ts            # 既存流用（プレフィックス変更）
 │       ├── calibration.ts        # 既存（HX711部分）を流用、ADS1115 削除
-│       ├── regression.ts         # 新規
+│       ├── regression.ts         # 新規（最小二乗）
+│       ├── settling.ts           # 新規（1次IIR + range 安定判定）
 │       ├── csvExport.ts          # 新規
 │       └── jsonExport.ts         # 新規
 └── wiki/                         # 設計ドキュメント
@@ -517,7 +608,7 @@ modbus-strain-calibrator/
 
 ---
 
-## 11. 開発フロー
+## 12. 開発フロー
 
 ```bash
 # 初回
@@ -561,7 +652,7 @@ pnpm preview
 
 ---
 
-## 12. マイグレーション手順
+## 13. マイグレーション手順
 
 1. `package.json` を pnpm 用に書換、削除する依存を抜く
 2. `src/pyodideWorker.ts`, `src/hooks/useScriptRunner.ts`, 関連コンポーネントを削除
@@ -570,20 +661,26 @@ pnpm preview
 5. `public/manifest.json` の name/description 変更
 6. `index.html` の title 変更
 7. `src/utils/regression.ts` 新規
-8. `src/utils/csvExport.ts` / `jsonExport.ts` 新規
-9. `src/hooks/useHx711Live.ts` / `useCalibration.ts` 新規
-10. 各種コンポーネントを新規実装
-11. `src/App.tsx` を新レイアウトに置換
+8. `src/utils/settling.ts` 新規
+9. `src/utils/csvExport.ts` / `jsonExport.ts` 新規
+10. `src/hooks/useHx711Live.ts` / `useCalibration.ts` 新規
+11. 各種コンポーネントを新規実装
+12. `src/App.tsx` を新レイアウトに置換
 
 ---
 
-## 13. テスト方針
+## 14. テスト方針
 
-- **ユニットテスト**（Vitest）: `regression.ts` の線形/2次フィットに対して既知データで検証
-  - 傾き 2.0, 切片 1.0 の完全直線データ → `{ ok: true, value.r2 = 1.0 }`
-  - ノイズを含むデータ → R² が想定範囲内
-  - 同次 x データ → `{ ok: false, error: 'All x values are identical' }`
-  - データ点数不足 → `{ ok: false, error: 'At least N points are required' }`
+- **ユニットテスト**（Vitest）:
+  - `regression.ts`: 線形/2次フィットに対して既知データで検証
+    - 傾き 2.0, 切片 1.0 の完全直線データ → `{ ok: true, value.r2 = 1.0 }`
+    - ノイズを含むデータ → R² が想定範囲内
+    - 同次 x データ → `{ ok: false, error: 'All x values are identical' }`
+    - データ点数不足 → `{ ok: false, error: 'At least N points are required' }`
+  - `settling.ts`: `SettlingDetector` の安定判定ロジック
+    - 一定値入力 → 即座に stable
+    - 変動入力 → stable にならない
+    - 変動後一定入力 → windowSamples 後に stable
 - **手動 E2E**: 実機 HX711 + 既知負荷で 1-port / 2-port 両モード
 - **モダンブラウザ互換**: Chrome / Edge 最新版で動作確認
 
@@ -591,12 +688,13 @@ pnpm preview
 
 ---
 
-## 14. リスクと対策
+## 15. リスクと対策
 
 | リスク | 影響 | 対策 |
 |--------|------|------|
 | 最小二乗の数値不安定性 | 係数が発散 | データ点数 N 制限、特異点（x_i すべて同じ）は discriminated union でエラー通知 |
-| HX711 raw のドリフト | 検定中の生値ずれ | ユーザーが安定を確認してから Add Point |
+| HX711 raw のドリフト | 検定中の生値ずれ | 自動安定判定により安定検出後のみ Add Point 可能 |
+| 安定判定が敏感すぎ/鈍感すぎ | ユーザーを待たせる or 不安定な状態で記録 | tolerance / windowSeconds / cutoffFrequency をユーザー設定可能に |
 | 2-port で参照係数の入力ミス | 検定対象係数全体が狂う | 参照係数入力時にライブ値 + 換算値プレビュー |
 | USB 切断で検定中断 | 作業中の points 消失 | localStorage に作業中データを毎変更で保存 |
 | ブラウザ非対応 (Safari / Firefox) | Web Serial 不可 | README で Chrome/Edge のみサポートと明記 |
@@ -605,7 +703,7 @@ pnpm preview
 
 ---
 
-## 15. ロードマップ（将来）
+## 16. ロードマップ（将来）
 
 1. **v1.0**: 1-port / 2-port 検定、線形/2次回帰、CSV/JSON エクスポート
 2. **v1.1**: 多項式回帰 (3次・4次)、残差プロット、Bland-Altman
