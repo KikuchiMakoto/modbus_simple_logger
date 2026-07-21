@@ -102,6 +102,13 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   pyodide.globals.set('set_ao', (ch: number, data: number) => {
     postWorkerMessage({ type: 'set_ao', ch: Number(ch), data: Number(data) });
   });
+  // Tare AI channel `ch`: the main thread adjusts offset c so the current
+  // physical reading becomes 0 (a and b unchanged). Applied asynchronously,
+  // like set_ao — get_ai_phy() reflects it once the main thread has updated
+  // the calibration and the next poll refreshes the share.
+  pyodide.globals.set('set_ai_tare', (ch: number) => {
+    postWorkerMessage({ type: 'set_ai_tare', ch: Number(ch) });
+  });
   pyodide.globals.set('get_param', (ch: number) => readAiValue(paramShare, Number(ch)));
   pyodide.globals.set('set_param', (ch: number, data: number) => {
     writeParamValue(paramShare, Number(ch), Number(data));
