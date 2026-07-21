@@ -1,4 +1,4 @@
-// Service Worker for Modbus WebUSB Logger PWA
+// Service Worker for ModbusStrainCalibrator PWA
 // CACHE_VERSION is replaced at build time with a content hash of the precache
 // manifest (see the `precache-manifest` plugin in vite.config.ts), so every
 // deploy gets a fresh cache. Stays 'dev' for unbuilt `vite dev`.
@@ -8,8 +8,8 @@ const CACHE_VERSION = 'dev';
 // prompt can tell the user which version they would switch to. Stays empty
 // for unbuilt `vite dev`.
 const APP_VERSION = '';
-const CACHE_NAME = `modbus-logger-${CACHE_VERSION}`;
-const BASE_PATH = '/modbus_simple_logger/';
+const CACHE_NAME = `modbus-calibrator-${CACHE_VERSION}`;
+const BASE_PATH = '/modbus_strain_calibrator/';
 const ISOLATION_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',

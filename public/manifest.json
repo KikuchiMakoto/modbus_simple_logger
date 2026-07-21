@@ -1,7 +1,7 @@
 {
-  "name": "ModbusSimpleLogger",
-  "short_name": "MSL",
-  "description": "ModbusRTU WebUSB data logger and visualization tool",
+  "name": "ModbusStrainCalibrator",
+  "short_name": "StrainCal",
+  "description": "HX711 strain gauge sensor calibration tool",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
