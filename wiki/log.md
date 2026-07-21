@@ -172,6 +172,12 @@ Phase 0-3 までに残っていた Biome lint エラーを修正:
 - **エクスポート簡略化**: CSV/JSON から index, iso8601 を削除
 - **コンポーネント**: Hx711LiveCard → LiveChart, RegressionChart → RegressionPlot に置き換え
 
+## 2026-07-22 | refactor | ポーリング間隔選択肢・設定UI 拡張
+
+- **Polling rate**: fork 元と同じ 13 選択肢（50ms〜5min）を追加、ユーザー選択を localStorage に永続化
+- **Settling 設定**: プリセット（Normal/Slow/Fast）の dropdown を廃止し、tolerance / windowSeconds / cutoffFrequency の 3 つの数値入力に置き換え
+- 変更範囲: `src/App.tsx`, `wiki/polling.md`, `wiki/design-strain-calibrator.md`
+
 ## 2026-07-22 | refactor | PostCSS 除去 + Tailwind standalone CLI 移行
 
 - `postcss`, `@tailwindcss/postcss`, `autoprefixer` を削除

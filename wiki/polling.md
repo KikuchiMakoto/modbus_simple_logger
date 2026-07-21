@@ -81,8 +81,8 @@ useEffect(() => {
 - AO 8ch 書込み → **完全削除**。`doAoWriteAsync` / `setAo` 等のロジック削除。
 - Parameter 8ch → **削除**（ScriptRunner と一緒に削除）。
 - IndexedDB / TSV は使わない → `pendingDataPoints` 周りの `flushPendingDataPoints` 関数を**ライブ表示用のリングバッファ**に簡略化。
-- ポーリング間隔は **200ms 固定で十分**（検定用 UI なので、選択肢 UI は出さない）。ユーザーが画面を見たとき「現在の値」がすぐ分かるレスポンスがあれば良い。
-- `idealScheduleRef` ベースの精密スケジューリングは **過剰**なので、`setInterval(200)` で十分。
+- ポーリング間隔は **fork 元と同じ選択肢（50ms〜5min）からユーザー選択可能**。デフォルトは 200ms。
+- `idealScheduleRef` ベースの精密スケジューリングは **過剰**なので、`setInterval` で十分。
 - Wake Lock は残す。
 - visibilitychange / pageshow 復帰処理は残す（ユーザーが別タブで資料を見ながら戻るシーンを想定）。
 - USB 切断イベント処理は残す。

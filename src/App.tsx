@@ -7,7 +7,6 @@ import { LiveChart } from "./components/LiveChart";
 import { ModbusConfigPanel } from "./components/ModbusConfigPanel";
 import { ModeSelector } from "./components/ModeSelector";
 import { RegressionPlot } from "./components/RegressionPlot";
-import { POLLING_INTERVAL_MS } from "./constants";
 import { useCalibration } from "./hooks/useCalibration";
 import { useHx711Live } from "./hooks/useHx711Live";
 import { useTheme } from "./hooks/useTheme";
@@ -17,6 +16,7 @@ import type {
 	CalibrationDegree,
 	CalibrationMode,
 	ModbusPrecision,
+	PollingRateOption,
 	ReferenceSensorCoeffs,
 	SerialSettings,
 	XUnit,
@@ -58,7 +58,21 @@ const PRECISION_OPTIONS = [
 	{ label: "Normal (i16)", value: "normal" as ModbusPrecision },
 	{ label: "Extended (f32)", value: "extended" as ModbusPrecision },
 ];
-const POLLING_OPTIONS = [{ label: "200 ms", valueMs: POLLING_INTERVAL_MS }];
+const POLLING_OPTIONS: PollingRateOption[] = [
+	{ label: "50 ms", valueMs: 50 },
+	{ label: "100 ms", valueMs: 100 },
+	{ label: "200 ms", valueMs: 200 },
+	{ label: "500 ms", valueMs: 500 },
+	{ label: "1 s", valueMs: 1000 },
+	{ label: "2 s", valueMs: 2000 },
+	{ label: "5 s", valueMs: 5000 },
+	{ label: "10 s", valueMs: 10000 },
+	{ label: "20 s", valueMs: 20000 },
+	{ label: "30 s", valueMs: 30000 },
+	{ label: "1 min", valueMs: 60000 },
+	{ label: "2 min", valueMs: 120000 },
+	{ label: "5 min", valueMs: 300000 },
+];
 
 const DEFAULT_SERIAL: SerialSettings = {
 	baudRate: 38400,
@@ -69,6 +83,7 @@ const DEFAULT_SERIAL: SerialSettings = {
 
 const SETTINGS_KEY = "settings_v1";
 const REF_COEFFS_KEY = "reference_sensors_v1";
+const POLLING_RATE_KEY = "pollingRate_v1";
 
 const DEFAULT_SETTINGS: AppSettings = {
 	mode: "1port",
@@ -127,6 +142,18 @@ export default function App() {
 		writeJsonStorage(REF_COEFFS_KEY, refCoeffs);
 	}, [refCoeffs]);
 
+	const [pollingRate, setPollingRate] = useState<PollingRateOption>(() => {
+		const saved = readJsonStorage<{ valueMs: number }>(POLLING_RATE_KEY);
+		return (
+			POLLING_OPTIONS.find((p) => p.valueMs === saved?.valueMs) ??
+			POLLING_OPTIONS[2]
+		);
+	});
+
+	useEffect(() => {
+		writeJsonStorage(POLLING_RATE_KEY, { valueMs: pollingRate.valueMs });
+	}, [pollingRate]);
+
 	const liveChannels = useMemo(() => {
 		if (cal.mode === "2port") return [settings.targetCh, settings.refCh];
 		return [settings.targetCh];
@@ -135,7 +162,7 @@ export default function App() {
 	const live = useHx711Live({
 		client,
 		channels: liveChannels,
-		pollingMs: POLLING_INTERVAL_MS,
+		pollingMs: pollingRate.valueMs,
 		precision: settings.modbusPrecision,
 		settling: settings.settling,
 		refCoeffs: cal.mode === "2port" ? refCoeffs : undefined,
@@ -269,28 +296,69 @@ export default function App() {
 						))}
 					</>
 				)}
-				<label className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-					Settling:
-					<select
-						value={`${settings.settling.tolerance}_${settings.settling.windowSeconds.toFixed(1)}_${settings.settling.cutoffFrequency.toFixed(1)}`}
-						onChange={(e) => {
-							const [t, w, c] = e.target.value.split("_");
-							setSettings((s) => ({
-								...s,
-								settling: {
-									tolerance: Number(t),
-									windowSeconds: Number(w),
-									cutoffFrequency: Number(c),
-								},
-							}));
-						}}
-						className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-					>
-						<option value="5_1.0_1.0">Normal</option>
-						<option value="10_2.0_0.5">Slow</option>
-						<option value="2_0.4_2.0">Fast</option>
-					</select>
-				</label>
+				<div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+					<span>Settling:</span>
+					<label className="flex items-center gap-1">
+						Tol:
+						<input
+							type="number"
+							min={1}
+							max={50}
+							step={1}
+							value={settings.settling.tolerance}
+							onChange={(e) =>
+								setSettings((s) => ({
+									...s,
+									settling: {
+										...s.settling,
+										tolerance: Number(e.target.value),
+									},
+								}))
+							}
+							className="w-14 rounded border border-slate-300 bg-white px-1 py-0.5 text-right font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+						/>
+					</label>
+					<label className="flex items-center gap-1">
+						Win(s):
+						<input
+							type="number"
+							min={0.2}
+							max={4}
+							step={0.1}
+							value={settings.settling.windowSeconds}
+							onChange={(e) =>
+								setSettings((s) => ({
+									...s,
+									settling: {
+										...s.settling,
+										windowSeconds: Number(e.target.value),
+									},
+								}))
+							}
+							className="w-14 rounded border border-slate-300 bg-white px-1 py-0.5 text-right font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+						/>
+					</label>
+					<label className="flex items-center gap-1">
+						Fc(Hz):
+						<input
+							type="number"
+							min={0.1}
+							max={5}
+							step={0.1}
+							value={settings.settling.cutoffFrequency}
+							onChange={(e) =>
+								setSettings((s) => ({
+									...s,
+									settling: {
+										...s.settling,
+										cutoffFrequency: Number(e.target.value),
+									},
+								}))
+							}
+							className="w-14 rounded border border-slate-300 bg-white px-1 py-0.5 text-right font-mono text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+						/>
+					</label>
+				</div>
 			</div>
 
 			{connected && live.isPolling && (
@@ -368,8 +436,8 @@ export default function App() {
 				onModbusPrecisionChange={(v) =>
 					setSettings((s) => ({ ...s, modbusPrecision: v }))
 				}
-				pollingRate={POLLING_OPTIONS[0]}
-				onPollingRateChange={() => {}}
+				pollingRate={pollingRate}
+				onPollingRateChange={setPollingRate}
 				pollingOptions={POLLING_OPTIONS}
 				baudOptions={BAUD_OPTIONS}
 				dataBitsOptions={DATA_BITS_OPTIONS}

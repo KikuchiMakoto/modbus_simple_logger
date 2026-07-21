@@ -251,8 +251,8 @@ raw ──→ 1st-order IIR LPF ──→ リングバッファ ──→ max-mi
 filtered[n] = α · raw[n] + (1 - α) · filtered[n-1]
 ```
 
-- `samplingInterval = 0.2` (200ms)
-- `cutoffFrequency = 1.0 Hz` (default) → `α ≈ 0.714`
+- `samplingInterval = pollingMs / 1000` (デフォルト 200ms → 0.2s)
+- `cutoffFrequency = 1.0 Hz` (default) → `α ≈ 0.714`（200ms 時）
 - 実装: `utils/settling.ts` の `SettlingDetector` クラス
 
 **移動窓 range 判定**:
@@ -263,7 +263,7 @@ filtered[n] = α · raw[n] + (1 - α) · filtered[n-1]
 
 **windowSamples** はユーザーの `windowSeconds` から計算:
 ```
-windowSamples = Math.ceil(windowSeconds / 0.2)
+windowSamples = Math.ceil(windowSeconds / (pollingMs / 1000))
 ```
 例: `windowSeconds = 1.0` → `windowSamples = 5`
 
@@ -278,7 +278,7 @@ windowSamples = Math.ceil(windowSeconds / 0.2)
 ### 5.4 状態管理との統合
 
 - `useHx711Live` が内部でチャネルごとに `SettlingDetector` インスタンスを保持
-- 200ms ポーリングループ内で `SettlingDetector.update(raw)` を呼ぶ
+- ポーリングループ内で `SettlingDetector.update(raw)` を呼ぶ（間隔はユーザー設定値）
 - 結果（`stable`, `filtered`, `range`）は `ChannelLiveState` として親コンポーネントに公開
 - 全チャネルが `stable` になったとき `allStable = true`
 - 負荷変更後はユーザーが明示的にリセットする必要はなく、自然に unstable になり stable に遷移する
@@ -307,7 +307,7 @@ type ChannelLiveState = {
 function useHx711Live(opts: {
   client: WebSerialModbusClient | null;
   channels: number[];          // 1個（1-port）または2個（2-port）
-  pollingMs: number;           // 200ms 固定
+  pollingMs: number;           // ユーザー選択値（50ms〜5min, デフォルト200ms）
   precision: 'normal' | 'extended';
   settling: SettlingConfig;
   refCoeffs?: ReferenceSensorCoeffs;  // 2-port のみ
@@ -321,7 +321,7 @@ function useHx711Live(opts: {
 ```
 
 - 内部でチャネルごとに `SettlingDetector`（`utils/settling.ts`）を保持
-- 200ms ポーリングごとに `SettlingDetector.update(raw)` → stable 判定を更新
+- ポーリングごとに `SettlingDetector.update(raw)` → stable 判定を更新（間隔は `pollingMs`）
 - `history` は直近 N 秒分の raw/filtered 配列（mini-chart 描画用、リングバッファ）
 - 2-port 時は `refCoeffs` を使って target ch の y 値を自動計算（`physical`）
 
@@ -466,6 +466,7 @@ function fitQuadratic(points: RegressionInput): RegressionResult { /* 同 */ }
 | `modbus_calibrator_settings_v1` | `AppSettings` | UI 状態・接続設定・テーマ |
 | `modbus_calibrator_workbench_v1` | `{ mode, points, degree }` | 作業中の検定（中断復元用）、変更のたびに自動保存 |
 | `modbus_calibrator_reference_sensors_v1` | `{ a, b, c, degree }` | 2-port 参照センサー係数（直前の値のみ、次回起動時に復元） |
+| `modbus_calibrator_pollingRate_v1` | `{ valueMs: number }` | ポーリング間隔（50ms〜5min から選択） |
 
 ※ 検定結果（`CalibrationResult`）は localStorage に保存しない。CSV/JSON エクスポートのみ。
 
