@@ -60,6 +60,7 @@ export function useCalibration() {
 				c: outcome.value.c,
 				r2: outcome.value.r2,
 				rmse: outcome.value.rmse,
+				n: outcome.value.n,
 				points: [...points],
 				updatedAt: Date.now(),
 			});

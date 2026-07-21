@@ -131,6 +131,7 @@ export type CalibrationResult = {
 	c: number;
 	r2: number;
 	rmse: number;
+	n: number;
 	points: CalibrationPoint[];
 	refCh?: number;
 	refCoeffs?: ReferenceSensorCoeffs;

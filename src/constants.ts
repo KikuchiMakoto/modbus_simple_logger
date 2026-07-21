@@ -18,6 +18,8 @@ export const MAX_POINTS_IN_MEMORY = 256;
 export const CHART_MAX_POINTS = 4096;
 export const NON_SAVING_CHART_WINDOW_MS = 60_000;
 
+export const POLLING_INTERVAL_MS = 200;
+
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;
 export const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
