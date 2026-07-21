@@ -2,56 +2,57 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 body {
-  @apply bg-slate-50 text-slate-900 min-h-screen dark:bg-slate-950 dark:text-slate-100;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Courier New', monospace;
+	@apply bg-slate-50 text-slate-900 min-h-screen dark:bg-slate-950 dark:text-slate-100;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+		"Courier New", monospace;
 }
 
 .card {
-  @apply rounded-xl bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
+	@apply rounded-xl bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
 }
 
 .button-primary {
-  @apply rounded-lg bg-emerald-500 px-4 py-1.5 font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed;
+	@apply rounded-lg bg-emerald-500 px-4 py-1.5 font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed;
 }
 
 .button-secondary {
-  @apply rounded-lg border border-slate-300 px-3 py-1.5 font-semibold text-slate-800 hover:border-emerald-400 dark:border-slate-700 dark:text-slate-50;
+	@apply rounded-lg border border-slate-300 px-3 py-1.5 font-semibold text-slate-800 hover:border-emerald-400 dark:border-slate-700 dark:text-slate-50;
 }
 
 @keyframes stop-save-sine-pulse {
-  0% {
-    background-color: rgb(239 68 68 / 0.4);
-    box-shadow: 0 0 0 0 rgb(239 68 68 / 0.2);
-  }
-  50% {
-    background-color: rgb(239 68 68 / 1);
-    box-shadow: 0 0 18px 2px rgb(239 68 68 / 0.65);
-  }
-  100% {
-    background-color: rgb(239 68 68 / 0.4);
-    box-shadow: 0 0 0 0 rgb(239 68 68 / 0.2);
-  }
+	0% {
+		background-color: rgb(239 68 68 / 0.4);
+		box-shadow: 0 0 0 0 rgb(239 68 68 / 0.2);
+	}
+	50% {
+		background-color: rgb(239 68 68 / 1);
+		box-shadow: 0 0 18px 2px rgb(239 68 68 / 0.65);
+	}
+	100% {
+		background-color: rgb(239 68 68 / 0.4);
+		box-shadow: 0 0 0 0 rgb(239 68 68 / 0.2);
+	}
 }
 
 .button-stop-save-pulse {
-  @apply rounded-lg px-4 py-1.5 font-semibold text-red-50 shadow;
-  animation: stop-save-sine-pulse 1.6s ease-in-out infinite;
+	@apply rounded-lg px-4 py-1.5 font-semibold text-red-50 shadow;
+	animation: stop-save-sine-pulse 1.6s ease-in-out infinite;
 }
 
 .button-stop-save-pulse:hover {
-  @apply bg-red-500;
+	@apply bg-red-500;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .button-stop-save-pulse {
-    animation: none;
-  }
+	.button-stop-save-pulse {
+		animation: none;
+	}
 }
 
 .input-compact {
-  @apply w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm font-semibold text-slate-900 text-right dark:border-slate-800 dark:bg-slate-800 dark:text-slate-100;
+	@apply w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm font-semibold text-slate-900 text-right dark:border-slate-800 dark:bg-slate-800 dark:text-slate-100;
 }
 
 .input-raw {
-  @apply font-semibold text-emerald-300;
+	@apply font-semibold text-emerald-300;
 }
