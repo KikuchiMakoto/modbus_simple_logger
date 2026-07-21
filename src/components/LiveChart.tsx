@@ -116,7 +116,7 @@ export function LiveChart({
 	const showRef = refRawHistory.length > 0;
 
 	const titleText = showRef
-		? `<span style="color:#94a3b8">CH ${currentRaw.toFixed(4)}</span> <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"} | ${currentRefPhysical.toFixed(4)} <span style="color:#f59e0b">Ref ${currentRefRaw.toFixed(4)}</span> <span style="color:#3b82f6">F ${currentRefFiltered.toFixed(4)}</span>`
+		? `<span style="color:#94a3b8">CH ${currentRaw.toFixed(4)}</span> <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}<br>${currentRefPhysical.toFixed(4)} <span style="color:#f59e0b">Ref ${currentRefRaw.toFixed(4)}</span> <span style="color:#3b82f6">F ${currentRefFiltered.toFixed(4)}</span>`
 		: `<span style="color:#94a3b8">CH ${currentRaw.toFixed(4)}</span> | <span style="color:#10b981">F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}`;
 
 	const layout = {
