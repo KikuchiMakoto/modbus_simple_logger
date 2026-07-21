@@ -1,5 +1,3 @@
-const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
-
 type JsonValue =
 	| string
 	| number
@@ -35,24 +33,12 @@ export const writeJsonStorage = (key: string, value: JsonValue): void => {
 	}
 };
 
-export const removeJsonStorage = (key: string): void => {
-	if (!isBrowser) return;
-	try {
-		localStorage.removeItem(getKey(key));
-	} catch (err) {
-		console.warn("Failed to remove localStorage item", err);
-	}
-};
-
-// Backwards-compatible migration: read from cookie if storage is empty
 export const readJsonCookie = <T extends JsonValue>(key: string): T | null => {
 	if (!isBrowser) return null;
 
-	// Try localStorage first
 	const storageValue = readJsonStorage<T>(key);
 	if (storageValue !== null) return storageValue;
 
-	// Fallback to cookie for migration
 	const cookie = document.cookie
 		.split("; ")
 		.find((entry) => entry.startsWith(`${key}=`));
@@ -60,9 +46,7 @@ export const readJsonCookie = <T extends JsonValue>(key: string): T | null => {
 	const value = cookie.substring(key.length + 1);
 	try {
 		const parsed = JSON.parse(decodeURIComponent(value)) as T;
-		// Migrate to localStorage
 		writeJsonStorage(key, parsed);
-		// Clear cookie
 		document.cookie = `${key}=; max-age=0; path=/`;
 		return parsed;
 	} catch (err) {
