@@ -1,4 +1,4 @@
-import { type CSSProperties, type ComponentType, useMemo } from 'react';
+import { type CSSProperties, type ComponentType, useCallback, useMemo, useState } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
@@ -25,11 +25,47 @@ type PlotProps = {
   layout: Partial<Layout>;
   config: Partial<Config>;
   style?: CSSProperties;
+  onInitialized?: (figure: unknown, graphDiv: HTMLElement) => void;
+  onUpdate?: (figure: unknown, graphDiv: HTMLElement) => void;
 };
 
 // The factory in src/plotly.ts already returns the React component directly, so
 // no CJS/ESM default-export normalization is needed here.
 const NormalizedPlot = Plot as ComponentType<PlotProps>;
+
+// Rendering backend that Plotly actually used for this chart. `scattergl` is a
+// WebGL/regl trace, so on a healthy machine this reports GPU-backed WebGL; if the
+// browser falls back to a software rasterizer (SwiftShader/llvmpipe) it reports
+// CPU so the degradation is visible rather than silent.
+type RenderBackend = { api: string; accel: 'GPU' | 'CPU' | ''; detail: string };
+
+function detectRenderBackend(graphDiv: HTMLElement): RenderBackend {
+  const canvas = graphDiv.querySelector('canvas') as HTMLCanvasElement | null;
+  if (!canvas) return { api: 'SVG/Canvas2D', accel: '', detail: 'no WebGL canvas' };
+
+  let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
+  let api = '';
+  const gl2 = canvas.getContext('webgl2');
+  if (gl2) {
+    gl = gl2;
+    api = 'WebGL2';
+  } else {
+    const gl1 = (canvas.getContext('webgl') ||
+      canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
+    if (gl1) {
+      gl = gl1;
+      api = 'WebGL';
+    }
+  }
+  if (!gl) return { api: 'Canvas2D', accel: 'CPU', detail: 'no WebGL context' };
+
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const renderer = dbg
+    ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+    : String(gl.getParameter(gl.RENDERER));
+  const software = /swiftshader|llvmpipe|software|microsoft basic/i.test(renderer);
+  return { api, accel: software ? 'CPU' : 'GPU', detail: renderer };
+}
 
 type AxisDescriptor =
   | { kind: 'time' }
@@ -67,6 +103,16 @@ export function ChartPanel({
 }: ChartPanelProps) {
   const xDesc = useMemo(() => parseAxisKey(xAxis), [xAxis]);
   const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
+
+  const [backend, setBackend] = useState<RenderBackend | null>(null);
+  const handleGraphDiv = useCallback((_figure: unknown, graphDiv: HTMLElement) => {
+    const next = detectRenderBackend(graphDiv);
+    setBackend((prev) =>
+      prev && prev.api === next.api && prev.accel === next.accel && prev.detail === next.detail
+        ? prev
+        : next,
+    );
+  }, []);
 
   const palette = useMemo(
     () =>
@@ -179,6 +225,21 @@ export function ChartPanel({
               </option>
             ))}
         </select>
+        {!isEmpty && backend && (
+          <span
+            title={`Plotly render backend: ${backend.api}${backend.accel ? ` (${backend.accel})` : ''} — ${backend.detail}`}
+            className={`ml-auto shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold leading-none ${
+              backend.accel === 'GPU'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                : backend.accel === 'CPU'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+            }`}
+          >
+            {backend.api}
+            {backend.accel ? ` · ${backend.accel}` : ''}
+          </span>
+        )}
       </div>
       {isEmpty ? (
         <div className="flex h-[280px] items-center justify-center text-sm text-slate-400">
@@ -190,6 +251,8 @@ export function ChartPanel({
           layout={plotLayout}
           config={plotConfig}
           style={{ width: '100%', height: '280px' }}
+          onInitialized={handleGraphDiv}
+          onUpdate={handleGraphDiv}
         />
       )}
     </section>
