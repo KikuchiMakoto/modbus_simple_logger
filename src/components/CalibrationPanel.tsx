@@ -111,26 +111,26 @@ export function CalibrationPanel({
               key={idx}
               className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800"
             >
-              <span className="w-10 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">
-                CH {idx.toString().padStart(2, '0')}
+              <span className="w-6 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                {idx.toString().padStart(2, '0')}
               </span>
               <div className="flex flex-1 items-center gap-1.5">
                 <span className="text-xs text-slate-500 dark:text-slate-400">a</span>
-                <div className="w-20">
+                <div className="min-w-0 flex-[3]">
                   <CalibCell
                     value={cal.a}
                     onChange={(v) => onUpdateCalibration(idx, 'a', v)}
                   />
                 </div>
                 <span className="text-xs text-slate-500 dark:text-slate-400">b</span>
-                <div className="w-20">
+                <div className="min-w-0 flex-[4]">
                   <CalibCell
                     value={cal.b}
                     onChange={(v) => onUpdateCalibration(idx, 'b', v)}
                   />
                 </div>
                 <span className="text-xs text-slate-500 dark:text-slate-400">c</span>
-                <div className="w-20">
+                <div className="min-w-0 flex-[3]">
                   <CalibCell
                     value={cal.c}
                     onChange={(v) => onUpdateCalibration(idx, 'c', v)}

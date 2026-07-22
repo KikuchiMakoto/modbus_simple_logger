@@ -56,6 +56,7 @@ import {
   StoredDataPoint,
 } from './utils/dataStorage';
 import { TsvWriter, createTsvWriter } from './utils/tsvExport';
+import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
@@ -199,6 +200,38 @@ const axisOptions = [
 
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 
+function CollapseButton({
+  collapsed,
+  onToggle,
+  label,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      title={collapsed ? `Expand ${label}` : `Minimize ${label}`}
+      className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+    >
+      <svg
+        viewBox="0 0 20 20"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={`h-4 w-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+      >
+        <polyline points="5 8 10 13 15 8" />
+      </svg>
+    </button>
+  );
+}
+
 function App() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const {
@@ -234,6 +267,9 @@ function App() {
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
   const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
+  const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
+  const [aoCollapsed, setAoCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ao_collapsed') ?? false);
+  const [paramCollapsed, setParamCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('param_collapsed') ?? false);
 
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
@@ -322,6 +358,18 @@ function App() {
   useEffect(() => {
     saveParamFreeLabels(paramFreeLabels);
   }, [paramFreeLabels]);
+
+  useEffect(() => {
+    writeJsonStorage('ai_collapsed', aiCollapsed);
+  }, [aiCollapsed]);
+
+  useEffect(() => {
+    writeJsonStorage('ao_collapsed', aoCollapsed);
+  }, [aoCollapsed]);
+
+  useEffect(() => {
+    writeJsonStorage('param_collapsed', paramCollapsed);
+  }, [paramCollapsed]);
 
   const handleAiFreeLabelChange = useCallback((idx: number, value: string) => {
     setAiFreeLabels((prev) => {
@@ -1318,15 +1366,19 @@ function App() {
         <section className="card">
         <div className="mb-0.5 flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Analog Input (16)</h2>
-          <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
-            <p className="text-[0.65rem]">
-              <em>Phy</em> = <em>a</em>&middot;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&middot;(<em>Raw</em>) + <em>c</em>
-            </p>
-            <p className="text-[0.6rem]">
-              <em>a</em>, <em>b</em>, <em>c</em> : Input Calibration
-            </p>
+          <div className="flex items-center gap-2">
+            <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
+              <p className="text-[0.65rem]">
+                <em>Phy</em> = <em>a</em>&middot;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&middot;(<em>Raw</em>) + <em>c</em>
+              </p>
+              <p className="text-[0.6rem]">
+                <em>a</em>, <em>b</em>, <em>c</em> : Input Calibration
+              </p>
+            </div>
+            <CollapseButton collapsed={aiCollapsed} onToggle={() => setAiCollapsed((v) => !v)} label="Analog Input" />
           </div>
         </div>
+        {!aiCollapsed && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {aiChannels.map((ch) => {
             const mode = voltageConfig[ch.id];
@@ -1386,12 +1438,15 @@ function App() {
             );
           })}
         </div>
+        )}
       </section>
 
       <section className="card">
         <div className="mb-0.5 flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Analog Output (8)</h2>
+          <CollapseButton collapsed={aoCollapsed} onToggle={() => setAoCollapsed((v) => !v)} label="Analog Output" />
         </div>
+        {!aoCollapsed && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {aoChannels.map((ch) => (
             <div
@@ -1421,12 +1476,15 @@ function App() {
             </div>
           ))}
         </div>
+        )}
       </section>
 
       <section className="card">
         <div className="mb-0.5 flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Parameter (16)</h2>
+          <CollapseButton collapsed={paramCollapsed} onToggle={() => setParamCollapsed((v) => !v)} label="Parameter" />
         </div>
+        {!paramCollapsed && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
           {paramValues.map((value, idx) => (
             <div
@@ -1456,6 +1514,7 @@ function App() {
             </div>
           ))}
         </div>
+        )}
       </section>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">

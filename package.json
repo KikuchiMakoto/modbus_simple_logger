@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "2.10",
+  "version": "2.11",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,27 +9,27 @@
     "preview": "bunx vite preview"
   },
   "dependencies": {
-    "plotly.js": "^3.6.0",
-    "pyodide": "314.0.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-plotly.js": "^3.0.0",
+    "plotly.js": "^3.7.0",
+    "pyodide": "^314.0.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-plotly.js": "^4.0.0",
     "react-rnd": "^10.5.3",
     "web-serial-polyfill": "^1.0.15"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.1",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/plotly.js": "^3.0.10",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/w3c-web-serial": "^1.0.8",
     "@types/w3c-web-usb": "^1.0.14",
     "@types/wicg-file-system-access": "^2023.10.7",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.15",
-    "tailwindcss": "^4.3.1",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
   }
 }
