@@ -1,6 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+// Self-hosted variable font: bundled by Vite (hashed woff2 under dist/, so the
+// precache-manifest plugin caches it for full offline use) and rendered
+// identically across Windows/Linux/ChromeOS/Android instead of each OS's own
+// monospace. Only the Latin subset is fetched at runtime; CJK falls through to
+// the system stack in index.css.
+import '@fontsource-variable/jetbrains-mono';
 import './index.css';
 
 class ErrorBoundary extends React.Component<
