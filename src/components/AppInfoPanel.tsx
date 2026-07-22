@@ -10,6 +10,7 @@ const LIBRARIES = [
   { name: 'Vite', version: '8', license: 'MIT' },
   { name: 'TypeScript', version: '6.0', license: 'Apache-2.0' },
   { name: 'web-serial-polyfill', version: '1.0', license: 'BSD-3-Clause' },
+  { name: 'JetBrains Mono', version: '5.3', license: 'OFL-1.1' },
   // Version injected from the exact pin in package.json (see vite.config.ts).
   { name: 'Pyodide', version: import.meta.env.VITE_PYODIDE_VERSION ?? 'unknown', license: 'MPL-2.0' },
 ];
