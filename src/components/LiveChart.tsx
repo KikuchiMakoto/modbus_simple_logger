@@ -116,8 +116,8 @@ export function LiveChart({
 	const showRef = refRawHistory.length > 0;
 
 	const titleText = showRef
-		? `<span style="color:#10b981">CH ${currentRaw.toFixed(4)} F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}<br><span style="color:#f43f5e">${currentRefPhysical.toFixed(4)} Ref ${currentRefRaw.toFixed(4)} F ${currentRefFiltered.toFixed(4)}</span>`
-		: `<span style="color:#10b981">CH ${currentRaw.toFixed(4)} F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${currentPhysical.toFixed(4)} ${isStable ? "●" : "○"}`;
+		? `<span style="color:#10b981">CH ${currentRaw.toFixed(4)} F ${currentFiltered.toFixed(4)}</span> ${currentMvPerV.toFixed(4)} mV/V ${isStable ? "●" : "○"}<br><span style="color:#f43f5e">${currentRefPhysical.toFixed(4)} Ref ${currentRefRaw.toFixed(4)} F ${currentRefFiltered.toFixed(4)}</span>`
+		: `<span style="color:#10b981">CH ${currentRaw.toFixed(4)} F ${currentFiltered.toFixed(4)}</span> | ${currentMvPerV.toFixed(4)} mV/V | ${isStable ? "●" : "○"}`;
 
 	const layout = {
 		title: {

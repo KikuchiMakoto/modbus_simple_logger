@@ -224,3 +224,37 @@ Phase 0-3 までに残っていた Biome lint エラーを修正:
 - `App.tsx`: localStorage `reference_sensors_v1` の旧フォーマット（`{a,b,c,degree}`）からのマイグレーション処理を追加
 - ドキュメント: `wiki/design-strain-calibrator.md`, `wiki/calibration.md`, `wiki/data-persistence.md`, `wiki/index.md` を更新
 - subagent 相談済み ✅
+
+## 2026-07-23 | feat | 現在値表示バナー + 飽和警告 + バグ修正
+
+subagent と 2 往復相談の上、以下を実装:
+
+**LiveReadingBanner コンポーネント新規追加**:
+- ツールバー直下に現在値を大きく表示するカードを配置
+- filtered raw counts (x 値) を主、mV/V を副として表示
+- 安定状態バッジ（Stable/Unstable + range 値）+ 飽和レベルバッジ（% + normal/warning/danger）
+- 1-port は 1 列、2-port は target/ref の 2 列 + セパレータ
+- `hasReceived` で未接続（初期 0 と真の 0 を区別）→ "Waiting..." 表示
+- `<output>` 要素でアクセシビリティ対応（色 + テキスト + アイコンの 3 重表現）
+
+**getLevelStatus 追加** (`src/utils/calibration.ts`):
+- 閾値: ratio >= 0.9 → danger, >= 0.8 → warning, それ以外 → normal
+- `LevelStatus` 型 (`"normal" | "warning" | "danger"`) をエクスポート
+- ユニットテスト 4 件追加
+
+**バグ修正**:
+- `useHx711Live.ts`: `voltage = hx711RawToMvPerV(raw)` → `filtered`（ノイズ軽減）
+- `useHx711Live.ts`: 1-port の `physical = raw` → `0`（無意味な値表示を防止）
+- `LiveChart.tsx`: タイトルから target channel の physical 表示を削除（常に 0 のため）
+
+**hasReceived 追加**:
+- `ChannelLiveState` に `hasReceived: boolean` 追加
+- 初回有効読み取り成功時に `hasReceivedRef` で永続的に追跡
+- ポーリングエラー時も前回の `hasReceived` 状態を保持
+
+**ドキュメント更新**:
+- `wiki/design-strain-calibrator.md`: UI 構造図 + 説明文 + ChannelLiveState + リスクに飽和警告追加
+- `wiki/calibration.md`: getAiStatus → getLevelStatus に更新
+- `AGENTS.md`: `getLevelColor()` → `getLevelStatus()` に修正
+
+typecheck ✅ lint ✅ test 55/55 ✅

@@ -77,6 +77,7 @@ export function useHx711Live(opts: UseHx711LiveOpts): UseHx711LiveReturn {
 				physical: 0,
 				stable: false,
 				range: 0,
+				hasReceived: false,
 			};
 		}
 		return init;
@@ -87,6 +88,7 @@ export function useHx711Live(opts: UseHx711LiveOpts): UseHx711LiveReturn {
 	const [isPolling, setIsPolling] = useState(false);
 
 	const detectorsRef = useRef<Map<number, SettlingDetector>>(new Map());
+	const hasReceivedRef = useRef<Set<number>>(new Set());
 	const historyRef = useRef<
 		Record<
 			number,
@@ -102,6 +104,7 @@ export function useHx711Live(opts: UseHx711LiveOpts): UseHx711LiveReturn {
 	useEffect(() => {
 		const detectors = detectorsRef.current;
 		detectors.clear();
+		hasReceivedRef.current.clear();
 		for (const ch of channels) {
 			detectors.set(ch, new SettlingDetector(settling, pollingMs));
 		}
@@ -168,14 +171,23 @@ export function useHx711Live(opts: UseHx711LiveOpts): UseHx711LiveReturn {
 			try {
 				const raw = await readChannelValue(client, ch, precision);
 				const { filtered, stable, range } = detector.update(raw);
-				const voltage = hx711RawToMvPerV(raw);
+				const voltage = hx711RawToMvPerV(filtered);
 
-				let physical = raw;
+				let physical = 0;
 				if (refCoeffs && ch === channels[channels.length - 1]) {
 					physical = applyRefPhysical(filtered, refCoeffs);
 				}
 
-				newStates[ch] = { raw, filtered, voltage, physical, stable, range };
+				newStates[ch] = {
+					raw,
+					filtered,
+					voltage,
+					physical,
+					stable,
+					range,
+					hasReceived: true,
+				};
+				hasReceivedRef.current.add(ch);
 
 				if (!stable) allStable_ = false;
 
@@ -194,6 +206,7 @@ export function useHx711Live(opts: UseHx711LiveOpts): UseHx711LiveReturn {
 					physical: 0,
 					stable: false,
 					range: 0,
+					hasReceived: hasReceivedRef.current.has(ch),
 				};
 				allStable_ = false;
 			}

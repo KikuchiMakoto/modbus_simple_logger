@@ -4,6 +4,7 @@ import { AppHeader } from "./components/AppHeader";
 import { CalibrationWorkbench } from "./components/CalibrationWorkbench";
 import { ChannelSelector } from "./components/ChannelSelector";
 import { LiveChart } from "./components/LiveChart";
+import { LiveReadingBanner } from "./components/LiveReadingBanner";
 import { ModbusConfigPanel } from "./components/ModbusConfigPanel";
 import { ModeSelector } from "./components/ModeSelector";
 import { RegressionPlot } from "./components/RegressionPlot";
@@ -440,66 +441,76 @@ export default function App() {
 			</div>
 
 			{connected && live.isPolling && (
-				<div className="grid flex-1 grid-cols-1 gap-2 overflow-hidden p-2 lg:grid-cols-[1fr_380px]">
-					<div className="flex flex-col gap-2 overflow-hidden">
-						<div className="card">
-							<LiveChart
-								rawHistory={
-									live.history[settings.targetCh]?.raw ?? new Float32Array(0)
-								}
-								filteredHistory={
-									live.history[settings.targetCh]?.filtered ??
-									new Float32Array(0)
-								}
-								currentRaw={targetState?.raw ?? 0}
-								currentFiltered={currentFilteredRaw}
-								currentMvPerV={targetState?.voltage ?? 0}
-								currentPhysical={targetState?.physical ?? 0}
-								isStable={targetState?.stable ?? false}
-								isDark={isDarkMode}
-								historyWindowSeconds={chartWindowSeconds}
-								refRawHistory={
-									live.history[settings.refCh]?.raw ?? new Float32Array(0)
-								}
-								refFilteredHistory={
-									live.history[settings.refCh]?.filtered ?? new Float32Array(0)
-								}
-								currentRefRaw={refState?.raw ?? 0}
-								currentRefFiltered={refState?.filtered ?? 0}
-								currentRefPhysical={currentRefPhysical}
-							/>
+				<>
+					<LiveReadingBanner
+						mode={cal.mode}
+						targetCh={settings.targetCh}
+						targetState={targetState}
+						refCh={cal.mode === "2port" ? settings.refCh : undefined}
+						refState={cal.mode === "2port" ? refState : undefined}
+					/>
+					<div className="grid flex-1 grid-cols-1 gap-2 overflow-hidden p-2 lg:grid-cols-[1fr_380px]">
+						<div className="flex flex-col gap-2 overflow-hidden">
+							<div className="card">
+								<LiveChart
+									rawHistory={
+										live.history[settings.targetCh]?.raw ?? new Float32Array(0)
+									}
+									filteredHistory={
+										live.history[settings.targetCh]?.filtered ??
+										new Float32Array(0)
+									}
+									currentRaw={targetState?.raw ?? 0}
+									currentFiltered={currentFilteredRaw}
+									currentMvPerV={targetState?.voltage ?? 0}
+									currentPhysical={targetState?.physical ?? 0}
+									isStable={targetState?.stable ?? false}
+									isDark={isDarkMode}
+									historyWindowSeconds={chartWindowSeconds}
+									refRawHistory={
+										live.history[settings.refCh]?.raw ?? new Float32Array(0)
+									}
+									refFilteredHistory={
+										live.history[settings.refCh]?.filtered ??
+										new Float32Array(0)
+									}
+									currentRefRaw={refState?.raw ?? 0}
+									currentRefFiltered={refState?.filtered ?? 0}
+									currentRefPhysical={currentRefPhysical}
+								/>
+							</div>
+							<div className="card flex-1">
+								<RegressionPlot
+									points={cal.points}
+									result={cal.result}
+									isDark={isDarkMode}
+								/>
+							</div>
 						</div>
-						<div className="card flex-1">
-							<RegressionPlot
-								points={cal.points}
-								result={cal.result}
-								isDark={isDarkMode}
-							/>
-						</div>
-					</div>
 
-					<div className="card overflow-y-auto">
-						<CalibrationWorkbench
-							points={cal.points}
-							degree={cal.degree}
-							result={cal.result}
-							validationError={cal.validationError}
-							currentFilteredRaw={currentFilteredRaw}
-							addPointEnabled={live.allStable}
-							xUnit={xUnit}
-							mode={cal.mode}
-							currentRefPhysical={currentRefPhysical}
-							onAddPoint={cal.addPoint}
-							onRemovePoint={cal.removePoint}
-							onUpdatePointY={cal.updatePointY}
-							onClear={cal.clearPoints}
-							onDegreeChange={cal.setDegree}
-							onXUnitChange={setXUnit}
-							onExportCsv={handleExportCsv}
-							onExportJson={handleExportJson}
-						/>
+						<div className="card overflow-y-auto">
+							<CalibrationWorkbench
+								points={cal.points}
+								degree={cal.degree}
+								result={cal.result}
+								validationError={cal.validationError}
+								currentFilteredRaw={currentFilteredRaw}
+								addPointEnabled={live.allStable}
+								xUnit={xUnit}
+								mode={cal.mode}
+								currentRefPhysical={currentRefPhysical}
+								onAddPoint={cal.addPoint}
+								onRemovePoint={cal.removePoint}
+								onUpdatePointY={cal.updatePointY}
+								onClear={cal.clearPoints}
+								onDegreeChange={cal.setDegree}
+								onXUnitChange={setXUnit}
+								onExportCsv={handleExportCsv}
+								onExportJson={handleExportJson}
+							/>
+						</div>
 					</div>
-				</div>
+				</>
 			)}
 
 			{!connected && (

@@ -24,17 +24,19 @@ const aiToPhysical = (raw, cal) => cal.a * raw * raw + cal.b * raw + cal.c;
 ## レベルメーター
 
 ```ts
-const getAiStatus = (raw) => {
+type LevelStatus = "normal" | "warning" | "danger";
+
+function getLevelStatus(raw: number): LevelStatus {
   const ratio = Math.abs(raw) / 32767;
-  if (ratio >= 0.9) return 'danger';
-  if (ratio >= 0.8) return 'warning';
-  return 'normal';
-};
+  if (ratio >= 0.9) return "danger";
+  if (ratio >= 0.8) return "warning";
+  return "normal";
+}
 ```
 
-- |raw| / 32767 を比として、3 段階の色（normal / warning / danger）を返す。
+- |raw| / 32767 を比として、3 段階（normal / warning / danger）を返す。
 - HX711 の A/D 変換が 24bit だが `int16` に丸めて格納される前提の閾値。
-- 検定アプリでも **レベルメーターは表示**する（`getAiStatus` / `getLevelColor` を流用）。
+- 検定アプリでは `LiveReadingBanner` の `LevelBadge` で表示する（色 + パーセント値 + テキスト）。
 
 ## HX711 変換
 

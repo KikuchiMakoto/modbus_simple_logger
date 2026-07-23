@@ -65,6 +65,12 @@
 │ Mode: (●)1-port  ( )2-port    Target CH: [CH 00 ▼]              │
 │ [2-port] Ref CH: [CH 00 ▼]  Ref Coeffs: a2=[0.0000] a1=[0.9876] a0=[0.0000] │
 │ Settling: Tolerance [5 cnts]  Window [1.0 s]  Cutoff [1.0 Hz]   │
+├──────────────────────────────────────────────────────────────────┤
+│ ┌── Live Reading Banner ────────────────────────────────────┐   │
+│ │ Target CH0                        │ Ref CH1 (2-port only) │   │
+│ │ x: 1234.5678 cnt  0.1473 mV/V   │ y: 1.234 kg  0.4125   │   │
+│ │ ● Stable  range: 0.2 cnt  [92%] │ ● Stable  range: 0.1 cnt │   │
+│ └──────────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────┬────────────────────────────────┤
 │ ┌───── Live Chart ──────────┐  │ Calibration Workbench           │
 │ │  raw + filtered overlay   │  │ [+ Add Point] [Export] [Clear] │
@@ -86,7 +92,7 @@
 ```
 
 - **2カラムレイアウト**: 左に live chart + regression plot、右に calibration workbench
-- **live readings カードは廃止**: 現在値は live chart の legend 部に表示（Raw / Filtered / mV/V / Phy）
+- **live readings バナー**: ツールバー直下に現在値カードを表示。filtered raw counts (x 値) + mV/V + 安定状態 + 飽和警告を 1-port/2-port 両対応で表示。LiveChart の凡例表示と併存
 - **live chart**: raw（生）と filtered（LPF 後）の2系列を time-series overlay。凡例に最新値を表示
 - **regression plot**: 点の追加/削除/編集ごとに**自動再計算**・再描画（Calculate ボタン不要）
 - **[+ Add Point]**: `allStable` の間のみ有効。値が再変動したら即座に disabled に戻る
@@ -194,6 +200,7 @@ src/
 │   ├── useCalibration.ts              # 検定点・degree・計算の状態管理
 │   └── useHx711Live.ts                # 1〜2ch ポーリング + 生値保持
 ├── components/
+│   ├── LiveReadingBanner.tsx           # 新規: ツールバー下の現在値表示バナー
 │   ├── LiveChart.tsx                  # 左上: raw+filtered time-series + 凡例に現在値
 │   ├── RegressionPlot.tsx             # 左下: 散布図 + 回帰線（auto-update, interactive）
 │   ├── CalibrationWorkbench.tsx       # 右: 検定テーブル + Add/Export/Clear + Degree 選択 + 単位切替
@@ -210,7 +217,7 @@ src/
     ├── settling.ts                    # 1次IIR LPF + 移動窓 range 安定判定
     ├── csvExport.ts                   # CSV ダウンロード (Blob + a[download])
     ├── jsonExport.ts                  # JSON ダウンロード
-    └── calibration.ts                 # hx711RawToMvPerV, レベルメーター色
+    └── calibration.ts                 # hx711RawToMvPerV, getLevelStatus (飽和警告)
 ```
 
 ### 削除するファイル
@@ -303,6 +310,7 @@ type ChannelLiveState = {
   physical: number;          // 物理量（換算後、2-port では参照係数使用）
   stable: boolean;           // 安定判定結果
   range: number;             // 現在の窓内 range
+  hasReceived: boolean;      // 少なくとも1回有効な読み取りがあったか
 };
 
 function useHx711Live(opts: {
@@ -578,7 +586,8 @@ modbus-strain-calibrator/
 │   │   ├── AppHeader.tsx         # 新規（タイトル・接続・設定ボタン）
 │   │   ├── ModeSelector.tsx      # 新規
 │   │   ├── ChannelSelector.tsx   # 新規
-│   │   ├── LiveChart.tsx         # 新規: raw+filtered time-series + 凡例に現在値
+│   │   ├── LiveReadingBanner.tsx      # 新規（現在値表示バナー）
+│   ├── LiveChart.tsx              # 新規: raw+filtered time-series + 凡例に現在値
 │   │   ├── RegressionPlot.tsx    # 新規（Plotly scatter + 回帰線, auto-update）
 │   │   ├── CalibrationWorkbench.tsx  # 新規（Degree 選択 + 単位切替 + Add/Export/Clear）
 │   │   ├── CalibrationRow.tsx    # 新規（x 単位切替対応）
@@ -708,6 +717,7 @@ pnpm preview          # → http://localhost:4173/modbus-strain-calibrator/
 | 安定判定が敏感すぎ/鈍感すぎ | ユーザーを待たせる or 不安定な状態で記録 | tolerance / windowSeconds / cutoffFrequency をユーザー設定可能に |
 | 2-port で参照係数の入力ミス | 検定対象係数全体が狂う | 参照係数入力時にライブ値 + 換算値プレビュー |
 | USB 切断で検定中断 | 作業中の points 消失 | localStorage に作業中データを毎変更で保存 |
+| HX711 ADC 飽和（raw >= 90% of int16 max） | 非線形領域での誤った検定 | レベルバッジで danger 警告（raw値が32767の80%超でwarning、90%超でdanger） |
 | ブラウザ非対応 (Safari / Firefox) | Web Serial 不可 | README で Chrome/Edge のみサポートと明記 |
 | localStorage クォータ超過 | 検定結果保存失敗 | JSON サイズ警告 (5MB 超で警告) |
 | COOP/COEP 設定ミス | SharedArrayBuffer 使えなくなる | vite.config.ts と sw.js の両方で設定、pre-commit チェック |
