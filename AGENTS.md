@@ -139,7 +139,7 @@ pnpm preview      # http://localhost:4173/modbus-strain-calibrator/
 **UI 規約**:
 - **1-port / 2-port モード切替**は画面内タブ UI で実現（ページ遷移なし）
 - ヘッダーリンク: アプリタイトルは `<a target="_blank" rel="noopener noreferrer">` で GitHub リポジトリへリンク
-- レベルメーター色は `utils/calibration.ts` の `getLevelColor()` を使う
+- レベルメーター色は `utils/calibration.ts` の `getLevelStatus()` を使う
 - 共通クラス: `.card`, `.button-primary`, `.button-secondary`（`index.css` で定義）
 
 **ビルド設定**:

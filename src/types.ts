@@ -55,6 +55,7 @@ export type ChannelLiveState = {
 	physical: number;
 	stable: boolean;
 	range: number;
+	hasReceived: boolean;
 };
 
 export type XUnit = "raw" | "mv_per_v" | "micro_strain";
