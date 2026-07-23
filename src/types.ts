@@ -16,6 +16,8 @@ export type ModbusPrecision = "normal" | "extended";
 
 // ── Calibrator-specific types ──
 
+import type { RatedOutputValue } from "./utils/calibration";
+
 export type CalibrationDegree = 1 | 2;
 
 export type CalibrationPoint = {
@@ -39,6 +41,7 @@ export type CalibrationResult = {
 	refCoeffs?: ReferenceSensorCoeffs;
 	updatedAt: number;
 	label?: string;
+	ratedOutput?: RatedOutputValue;
 };
 
 export type ReferenceSensorCoeffs = {
@@ -76,4 +79,5 @@ export type AppSettings = {
 	slaveId: number;
 	modbusPrecision: "normal" | "extended";
 	theme: "light" | "dark";
+	ratedCapacity: number;
 };

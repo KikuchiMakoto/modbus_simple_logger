@@ -1,3 +1,4 @@
+import type { RatedOutputValue } from "./calibration";
 import type { RegressionResult } from "./regression";
 
 export type CalibrationJson = {
@@ -7,12 +8,16 @@ export type CalibrationJson = {
 	degree: number;
 	coefficients: { a0: number; a1: number; a2: number };
 	metrics: { r2: number; rmse: number };
+	ratedCapacity?: number;
+	ratedOutput?: RatedOutputValue;
 	points: { timestamp: number; x: number; y: number }[];
 };
 
 export function calibrationToJson(
 	result: RegressionResult,
 	points: { timestamp: number; x: number; y: number }[],
+	ratedCapacity?: number,
+	ratedOutput?: RatedOutputValue,
 ): CalibrationJson {
 	return {
 		app: "ModbusStrainCalibrator",
@@ -21,6 +26,8 @@ export function calibrationToJson(
 		degree: result.degree,
 		coefficients: { a2: result.a2, a1: result.a1, a0: result.a0 },
 		metrics: { r2: result.r2, rmse: result.rmse },
+		...(ratedCapacity != null && ratedCapacity > 0 ? { ratedCapacity } : {}),
+		...(ratedOutput ? { ratedOutput } : {}),
 		points: points.map((p) => ({
 			timestamp: p.timestamp,
 			x: p.x,

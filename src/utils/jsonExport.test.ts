@@ -38,6 +38,36 @@ describe("calibrationToJson", () => {
 		expect(json.exportedAt).toBeDefined();
 		expect(typeof json.exportedAt).toBe("string");
 	});
+
+	it("includes rated output fields when provided", () => {
+		const json = calibrationToJson(mockResult, mockPoints, 100, {
+			raw: 50,
+			rawZero: 0,
+			rawRated: 50,
+			mVPerV: 1.95,
+			extrapolated: false,
+		});
+		expect(json.ratedCapacity).toBe(100);
+		expect(json.ratedOutput).toEqual({
+			raw: 50,
+			rawZero: 0,
+			rawRated: 50,
+			mVPerV: 1.95,
+			extrapolated: false,
+		});
+	});
+
+	it("omits rated capacity when zero", () => {
+		const json = calibrationToJson(mockResult, mockPoints, 0);
+		expect(json.ratedCapacity).toBeUndefined();
+		expect(json.ratedOutput).toBeUndefined();
+	});
+
+	it("omits rated output fields when not provided", () => {
+		const json = calibrationToJson(mockResult, mockPoints);
+		expect(json.ratedCapacity).toBeUndefined();
+		expect(json.ratedOutput).toBeUndefined();
+	});
 });
 
 describe("downloadJson", () => {

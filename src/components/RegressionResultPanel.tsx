@@ -62,6 +62,35 @@ export function RegressionResultPanel({
 					{result.points.length}
 				</span>
 			</div>
+			{result.ratedOutput && (
+				<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-slate-200 pt-1 dark:border-slate-700">
+					<span className="text-slate-500 dark:text-slate-400">
+						{result.mode === "2port" ? "Target rated output" : "Rated output"}:
+					</span>
+					<span className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+						{result.ratedOutput.mVPerV.toFixed(4)} mV/V
+					</span>
+					<span className="text-slate-500 dark:text-slate-400">
+						raw span:
+					</span>
+					<span className="text-right font-mono text-slate-900 dark:text-slate-100">
+						{result.ratedOutput.raw.toFixed(1)}
+					</span>
+					<span className="text-slate-400 dark:text-slate-500">
+						(raw zero: {result.ratedOutput.rawZero.toFixed(1)}, rated:{" "}
+						{result.ratedOutput.rawRated.toFixed(1)})
+					</span>
+					<span />
+					{result.ratedOutput.extrapolated && (
+						<>
+							<span className="text-amber-600 dark:text-amber-400">
+								&#x26a0; extrapolated
+							</span>
+							<span />
+						</>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

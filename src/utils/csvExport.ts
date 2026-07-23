@@ -1,8 +1,11 @@
+import type { RatedOutputValue } from "./calibration";
 import type { RegressionResult } from "./regression";
 
 export function calibrationToCsv(
 	result: RegressionResult,
 	points: { timestamp: number; x: number; y: number }[],
+	ratedCapacity?: number,
+	ratedOutput?: RatedOutputValue,
 ): string {
 	const lines: string[] = [];
 
@@ -17,6 +20,13 @@ export function calibrationToCsv(
 	lines.push(`# rmse=${result.rmse}`);
 	lines.push(`# n=${result.n}`);
 	lines.push(`# updated_at=${new Date().toISOString()}`);
+	if (ratedCapacity != null && ratedCapacity > 0) {
+		lines.push(`# rated_capacity=${ratedCapacity}`);
+	}
+	if (ratedOutput) {
+		lines.push(`# rated_output_raw=${ratedOutput.raw}`);
+		lines.push(`# rated_output_mV_V=${ratedOutput.mVPerV}`);
+	}
 	lines.push("timestamp_ms,x_filtered_raw,y_applied");
 
 	for (const p of points) {

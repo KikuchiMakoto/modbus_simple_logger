@@ -20,12 +20,14 @@ interface CalibrationWorkbenchProps {
 	xUnit: XUnit;
 	mode: CalibrationMode;
 	currentRefPhysical: number;
+	ratedCapacity: number;
 	onAddPoint: (x: number, y: number) => void;
 	onRemovePoint: (index: number) => void;
 	onUpdatePointY: (index: number, y: number) => void;
 	onClear: () => void;
 	onDegreeChange: (degree: CalibrationDegree) => void;
 	onXUnitChange: (unit: XUnit) => void;
+	onRatedCapacityChange: (value: number) => void;
 	onExportCsv: () => void;
 	onExportJson: () => void;
 }
@@ -60,12 +62,14 @@ export function CalibrationWorkbench({
 	xUnit,
 	mode,
 	currentRefPhysical,
+	ratedCapacity,
 	onAddPoint,
 	onRemovePoint,
 	onUpdatePointY,
 	onClear,
 	onDegreeChange,
 	onXUnitChange,
+	onRatedCapacityChange,
 	onExportCsv,
 	onExportJson,
 }: CalibrationWorkbenchProps) {
@@ -156,6 +160,19 @@ export function CalibrationWorkbench({
 					<option value={1}>1 (linear)</option>
 					<option value={2}>2 (quadratic)</option>
 				</select>
+
+				<span className="ml-2 text-slate-500 dark:text-slate-400">
+					Rated capacity:
+				</span>
+				<input
+					type="number"
+					step="any"
+					min="0"
+					value={ratedCapacity || ""}
+					onChange={(e) => onRatedCapacityChange(Number(e.target.value) || 0)}
+					placeholder="same unit as y"
+					className="w-28 rounded border border-slate-300 bg-white px-2 py-0.5 text-right text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+				/>
 			</div>
 
 			<div className="flex items-center gap-1 border-b border-slate-200 pb-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:text-slate-400">

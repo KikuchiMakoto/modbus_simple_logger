@@ -5,6 +5,7 @@ import type {
 	CalibrationPoint,
 	CalibrationResult,
 } from "../types";
+import { calculateRatedOutput } from "../utils/calibration";
 import { readJsonStorage, writeJsonStorage } from "../utils/cookies";
 import { type RegressionOutcome, fitRegression } from "../utils/regression";
 
@@ -18,7 +19,7 @@ type WorkbenchState = {
 	points2port?: CalibrationPoint[];
 };
 
-export function useCalibration() {
+export function useCalibration(ratedCapacity: number, targetCh: number) {
 	const [mode, setMode] = useState<CalibrationMode>("1port");
 	const [degree, setDegree] = useState<CalibrationDegree>(1);
 	const [points, setPoints] = useState<CalibrationPoint[]>([]);
@@ -79,8 +80,8 @@ export function useCalibration() {
 		const outcome: RegressionOutcome = fitRegression(points, degree);
 
 		if (outcome.ok) {
-			setResult({
-				ch: 0,
+			const newResult: CalibrationResult = {
+				ch: targetCh,
 				mode,
 				degree: outcome.value.degree,
 				a0: outcome.value.a0,
@@ -91,13 +92,30 @@ export function useCalibration() {
 				n: outcome.value.n,
 				points: [...points],
 				updatedAt: Date.now(),
-			});
+			};
+
+			if (ratedCapacity > 0) {
+				const xs = points.map((p) => p.x);
+				const ratedOutcome = calculateRatedOutput(
+					outcome.value.a0,
+					outcome.value.a1,
+					outcome.value.a2,
+					outcome.value.degree,
+					ratedCapacity,
+					{ min: Math.min(...xs), max: Math.max(...xs) },
+				);
+				if (ratedOutcome.ok) {
+					newResult.ratedOutput = ratedOutcome.value;
+				}
+			}
+
+			setResult(newResult);
 			setValidationError(null);
 		} else {
 			setResult(null);
 			setValidationError(outcome.error);
 		}
-	}, [points, degree, mode]);
+	}, [points, degree, mode, ratedCapacity, targetCh]);
 
 	const addPoint = useCallback((x: number, y: number) => {
 		setPoints((prev) => {

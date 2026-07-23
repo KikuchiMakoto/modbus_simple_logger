@@ -18,14 +18,15 @@ const mockPoints = [
 ];
 
 describe("calibrationToCsv", () => {
-	it("returns a CSV string with header and metadata", () => {
+	it("returns a CSV string with metadata rows", () => {
 		const csv = calibrationToCsv(mockResult, mockPoints);
-		expect(csv).toContain("# degree=1");
-		expect(csv).toContain("# a1=2");
-		expect(csv).toContain("# a0=1");
-		expect(csv).toContain("# r2=0.999");
-		expect(csv).toContain("# rmse=0.05");
-		expect(csv).toContain("# n=5");
+		expect(csv).toContain("Parameter,Value");
+		expect(csv).toContain("degree,1");
+		expect(csv).toContain("a1,2");
+		expect(csv).toContain("a0,1");
+		expect(csv).toContain("r2,0.999");
+		expect(csv).toContain("rmse,0.05");
+		expect(csv).toContain("n,5");
 	});
 
 	it("contains csv column header", () => {
@@ -43,6 +44,31 @@ describe("calibrationToCsv", () => {
 		const csv = calibrationToCsv(mockResult, mockPoints);
 		const lines = csv.split("\n");
 		expect(lines.length).toBeGreaterThanOrEqual(11);
+	});
+
+	it("includes rated capacity metadata when provided", () => {
+		const csv = calibrationToCsv(mockResult, mockPoints, 100, {
+			raw: 50,
+			rawZero: 0,
+			rawRated: 50,
+			mVPerV: 1.95,
+			extrapolated: false,
+		});
+		expect(csv).toContain("rated_capacity,100");
+		expect(csv).toContain("rated_output_raw,50");
+		expect(csv).toContain("rated_output_mV_V,1.95");
+	});
+
+	it("omits rated capacity when zero", () => {
+		const csv = calibrationToCsv(mockResult, mockPoints, 0);
+		expect(csv).not.toContain("rated_capacity");
+		expect(csv).not.toContain("rated_output");
+	});
+
+	it("omits rated output when not provided", () => {
+		const csv = calibrationToCsv(mockResult, mockPoints, undefined);
+		expect(csv).not.toContain("rated_capacity");
+		expect(csv).not.toContain("rated_output");
 	});
 });
 

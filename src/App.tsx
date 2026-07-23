@@ -111,6 +111,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 	slaveId: 1,
 	modbusPrecision: "normal",
 	theme: "light",
+	ratedCapacity: 0,
 };
 
 function formatTimestamp(): string {
@@ -137,7 +138,7 @@ export default function App() {
 
 	const [xUnit, setXUnit] = useState<XUnit>("raw");
 
-	const cal = useCalibration();
+	const cal = useCalibration(settings.ratedCapacity, settings.targetCh);
 
 	const [refCoeffs, setRefCoeffs] = useState<ReferenceSensorCoeffs>(() => {
 		const saved = readJsonStorage(REF_COEFFS_KEY) as Record<
@@ -250,17 +251,27 @@ export default function App() {
 		if (!cal.result) return;
 		const modeLabel = cal.mode === "1port" ? "1port" : "2port";
 		const filename = `calibration_ch${settings.targetCh}_${modeLabel}_${formatTimestamp()}.csv`;
-		const csv = calibrationToCsv(cal.result, cal.result.points);
+		const csv = calibrationToCsv(
+			cal.result,
+			cal.result.points,
+			settings.ratedCapacity,
+			cal.result.ratedOutput,
+		);
 		downloadCsv(filename, csv);
-	}, [cal.result, cal.mode, settings.targetCh]);
+	}, [cal.result, cal.mode, settings.targetCh, settings.ratedCapacity]);
 
 	const handleExportJson = useCallback(() => {
 		if (!cal.result) return;
 		const modeLabel = cal.mode === "1port" ? "1port" : "2port";
 		const filename = `calibration_ch${settings.targetCh}_${modeLabel}_${formatTimestamp()}.json`;
-		const json = calibrationToJson(cal.result, cal.result.points);
+		const json = calibrationToJson(
+			cal.result,
+			cal.result.points,
+			settings.ratedCapacity,
+			cal.result.ratedOutput,
+		);
 		downloadJson(filename, json);
-	}, [cal.result, cal.mode, settings.targetCh]);
+	}, [cal.result, cal.mode, settings.targetCh, settings.ratedCapacity]);
 
 	return (
 		<div
@@ -499,12 +510,16 @@ export default function App() {
 								xUnit={xUnit}
 								mode={cal.mode}
 								currentRefPhysical={currentRefPhysical}
+								ratedCapacity={settings.ratedCapacity}
 								onAddPoint={cal.addPoint}
 								onRemovePoint={cal.removePoint}
 								onUpdatePointY={cal.updatePointY}
 								onClear={cal.clearPoints}
 								onDegreeChange={cal.setDegree}
 								onXUnitChange={setXUnit}
+								onRatedCapacityChange={(value) =>
+									setSettings((s) => ({ ...s, ratedCapacity: value }))
+								}
 								onExportCsv={handleExportCsv}
 								onExportJson={handleExportJson}
 							/>
