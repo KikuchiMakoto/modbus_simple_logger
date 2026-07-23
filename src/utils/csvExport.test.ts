@@ -59,7 +59,7 @@ describe("downloadCsv", () => {
 		const removeChild = vi.fn();
 		const click = vi.fn();
 		vi.stubGlobal("document", {
-			createElement: vi.fn(() => ({ click } as unknown as HTMLAnchorElement)),
+			createElement: vi.fn(() => ({ click }) as unknown as HTMLAnchorElement),
 			body: { appendChild, removeChild },
 		});
 

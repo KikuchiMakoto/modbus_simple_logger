@@ -1,9 +1,9 @@
-import { vi, describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-	readJsonStorage,
-	writeJsonStorage,
 	readJsonCookie,
+	readJsonStorage,
 	writeJsonCookie,
+	writeJsonStorage,
 } from "./cookies";
 
 const { clearStorage } = vi.hoisted(() => {
