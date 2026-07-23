@@ -1,25 +1,25 @@
 {
-  "name": "ModbusSimpleLogger",
-  "short_name": "MSL",
-  "description": "ModbusRTU WebUSB data logger and visualization tool",
-  "start_url": "./",
-  "scope": "./",
-  "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#0f172a",
-  "orientation": "any",
-  "icons": [
-    {
-      "src": "./icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "./icon.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
-  ]
+	"name": "ModbusStrainCalibrator",
+	"short_name": "StrainCal",
+	"description": "HX711 strain gauge sensor calibration tool",
+	"start_url": "./",
+	"scope": "./",
+	"display": "standalone",
+	"background_color": "#020617",
+	"theme_color": "#0f172a",
+	"orientation": "any",
+	"icons": [
+		{
+			"src": "./icon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any maskable"
+		},
+		{
+			"src": "./icon.svg",
+			"sizes": "512x512",
+			"type": "image/svg+xml",
+			"purpose": "any maskable"
+		}
+	]
 }

@@ -1,0 +1,8 @@
+allowBuilds:
+  '@biomejs/biome': set this to true or false
+  '@parcel/watcher': true
+  es5-ext: set this to true or false
+  esbuild: set this to true or false
+onlyBuiltDependencies:
+  - '@biomejs/biome'
+  - esbuild

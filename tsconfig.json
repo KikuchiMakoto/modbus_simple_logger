@@ -1,16 +1,20 @@
 {
-  "compilerOptions": {
-    "ignoreDeprecations": "6.0",
-    "useDefineForClassFields": true,
-    "module": "ESNext",
-    "moduleResolution": "Node",
-    "strict": true,
-    "jsx": "react-jsx",
-    "types": ["vite/client", "w3c-web-serial", "w3c-web-usb", "wicg-file-system-access"],
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
-  },
-  "include": ["src"],
-  "exclude": ["node_modules"]
+	"compilerOptions": {
+		"useDefineForClassFields": true,
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"jsx": "react-jsx",
+		"types": [
+			"vite/client",
+			"w3c-web-serial",
+			"w3c-web-usb",
+			"wicg-file-system-access"
+		],
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true
+	},
+	"include": ["src"],
+	"exclude": ["node_modules"]
 }

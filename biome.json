@@ -1,0 +1,6 @@
+{
+	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+	"files": {
+		"ignore": ["dist", "pnpm-lock.yaml", "src/tailwind.gen.css"]
+	}
+}
