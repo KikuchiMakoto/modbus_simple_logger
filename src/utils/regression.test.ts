@@ -115,6 +115,21 @@ describe("fitRegression (quadratic)", () => {
 		expect(result.error).toContain("Singular");
 	});
 
+	it("handles constant y values with degree 2 (r² = 1)", () => {
+		const points: RegressionInput[] = [
+			{ x: 0, y: 5 },
+			{ x: 1, y: 5 },
+			{ x: 2, y: 5 },
+		];
+		const result = fitRegression(points, 2);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.a2).toBeCloseTo(0, 5);
+		expect(result.value.a1).toBeCloseTo(0, 5);
+		expect(result.value.a0).toBeCloseTo(5, 5);
+		expect(result.value.r2).toBeCloseTo(1, 10);
+	});
+
 	it("handles linear data with degree 2 (a ≈ 0)", () => {
 		const points: RegressionInput[] = [
 			{ x: 0, y: 1 },
