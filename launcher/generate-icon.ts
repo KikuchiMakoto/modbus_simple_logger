@@ -6,6 +6,10 @@
 // PNG in a minimal ICO container (Windows Vista+ accepts a PNG-encoded icon
 // image directly). If any step fails, we skip silently — the exe still builds,
 // just without a custom icon.
+//
+// The SVG is embedded in a zero-margin HTML wrapper before screenshotting.
+// Screenshotting the .svg file directly lets the browser apply its default 8px
+// body margin, which shifts the `width="100%"` artwork and clips one edge.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -50,7 +54,18 @@ if (!browser) skip('no Chromium browser found to rasterize the SVG');
 const work = join(tmpdir(), `msl-icon-${process.pid}`);
 mkdirSync(work, { recursive: true });
 const png = join(work, 'icon.png');
-const svgUrl = `file:///${SVG.replace(/\\/g, '/')}`;
+
+// Embed the SVG inline in a zero-margin page sized to exactly 256x256 so the
+// artwork fills the frame with no offset or clipping.
+const svg = readFileSync(SVG, 'utf8').replace(/<\?xml[^>]*\?>/i, '').trim();
+const html =
+  '<!doctype html><meta charset="utf-8">' +
+  '<style>html,body{margin:0;padding:0;background:transparent}' +
+  '#w{width:256px;height:256px}#w svg{display:block;width:256px;height:256px}</style>' +
+  `<div id="w">${svg}</div>`;
+const htmlPath = join(work, 'icon.html');
+writeFileSync(htmlPath, html);
+const htmlUrl = `file:///${htmlPath.replace(/\\/g, '/')}`;
 
 const proc = Bun.spawnSync(
   [
@@ -64,7 +79,7 @@ const proc = Bun.spawnSync(
     '--window-size=256,256',
     `--user-data-dir=${join(work, 'profile')}`,
     `--screenshot=${png}`,
-    svgUrl,
+    htmlUrl,
   ],
   { stdout: 'ignore', stderr: 'ignore' },
 );
