@@ -1,0 +1,54 @@
+{
+  // VS Code tasks for the desktop launcher. Run with:
+  //   Terminal > Run Task…  (or Ctrl+Shift+B for the default build task)
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Builds the web app, embeds it, and compiles the single-file launcher
+      // exe into launcher/bin/. Upload that file to a GitHub Release manually.
+      "label": "Launcher: build exe",
+      "type": "shell",
+      "command": "bun run launcher:build",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      // Builds and runs the launcher directly via Bun (no exe compile) — opens
+      // the app in Edge/Chrome for a quick check. Close the browser to stop.
+      "label": "Launcher: dev (run)",
+      "type": "shell",
+      "command": "bun run launcher:dev",
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      // Reveals the compiled exe in Explorer after a build.
+      "label": "Launcher: open bin folder",
+      "type": "shell",
+      "command": "explorer",
+      "args": ["launcher\\bin"],
+      "windows": {
+        "command": "explorer",
+        "args": ["launcher\\bin"]
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    }
+  ]
+}
