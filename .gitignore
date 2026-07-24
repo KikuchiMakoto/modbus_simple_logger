@@ -6,8 +6,17 @@ npm-debug.log*
 dist
 .DS_Store
 
-# Launcher build artifacts
-launcher/embedded.generated.ts
-launcher/icon.ico
+# Launcher: exclude the whole directory from Tailwind v4's content scanner
+# (Tailwind honours .gitignore). Without this, incidental strings in
+# launcher/*.ts are picked up as utility candidates and leak unused rules into
+# the app CSS bundle, changing the GitHub Pages build output. The launcher
+# TypeScript sources ARE version-controlled — they are committed with
+# `git add -f`; only the build artifacts (embedded.generated.ts, icon.ico) are
+# genuinely untracked.
+# NOTE: a NEW launcher source file must be staged with `git add -f launcher/…`;
+# a plain `git add` will skip it because of this rule.
+launcher/
+
+# Compiled launcher executables
 /modbus_simple_logger.exe
 /modbus_simple_logger
