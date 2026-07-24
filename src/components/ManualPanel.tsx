@@ -101,7 +101,7 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
             NDISコネクタ ピン配置
           </h3>
           <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
-            NDIS（日本工業規格 JIS B 7505 相当）の5ピンコネクタ。ロードセル・変位計に広く使用されます。
+            NDIS 7ピンコネクタ。ロードセル・変位計に広く使用されます。
           </p>
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
             {/* Visual connector layout */}
