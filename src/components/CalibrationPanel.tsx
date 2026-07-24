@@ -114,8 +114,8 @@ export function CalibrationPanel({
     >
       <div className="flex-1 overflow-y-auto p-3">
         {locked && (
-          <div className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-            ScriptRunner実行中: スケール係数 a・b と Load は変更できません。オフセット c と Tare のみ調整できます。
+          <div className="mb-2 rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            Script running: scale coefficients a and b, and Load, are locked. Only offset c and Tare can be adjusted.
           </div>
         )}
         <div className="space-y-1.5">

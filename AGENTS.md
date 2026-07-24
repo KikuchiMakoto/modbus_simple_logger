@@ -172,6 +172,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 定数は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
+- **配色ルール（重要）**: 明示的な指示がない限り、新規 UI 要素の色指定は **他と同じ緑（emerald）か通常のグレー（slate）のみ**を使う。青(blue/sky)・琥珀(amber)・赤(red)などを新規に持ち込まない。
+  - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
+  - 通知/注意バナー等も緑（成功）かグレー（中立・ロック等）で表現し、赤や琥珀の警告色は使わない
+  - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）
+  - 既存コードの確立済みセマンティック色（危険表示の red、レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを新規要素へ拡張しない
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`HX711CalibrationPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **HX711 キャリブレーションの2方式**（`HX711CalibrationPanel` + `utils/calibration.ts`）: ①スペック計算 = `b = 感度 × hx711SlopePerRaw(分母単位)`, a=0, c=0（物理量側の単位 kg/mm/N は表示ラベルのみで計算に不使用。効くのは分母の電気量単位 μV/V・mV/V・με）。②実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。適用は当該chの a/b/c を丸ごと上書き

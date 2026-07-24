@@ -119,7 +119,7 @@ function CaptureButton({ getRaw, onCapture, disabled = false }: CaptureButtonPro
       onPointerDown={begin}
       onPointerUp={end}
       onPointerCancel={cancel}
-      title="タップ=瞬間値 / 長押し(≥0.8s)=離すまでの平均値を取得"
+      title="Tap = instant · Hold (≥0.8s) = average until release"
       className="shrink-0 rounded border border-emerald-400 px-2 py-0.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 disabled:hover:bg-transparent dark:border-emerald-400/60 dark:text-emerald-400 dark:hover:bg-emerald-400/10 dark:disabled:border-slate-700 dark:disabled:text-slate-600"
     >
       Grab
@@ -208,7 +208,7 @@ export function HX711CalibrationPanel({
     if (!result || locked) return;
     onApply(channel, result);
     setApplied(
-      `CH ${channel.toString().padStart(2, '0')} に適用: ` +
+      `Applied to CH ${channel.toString().padStart(2, '0')}: ` +
         `a=${formatCoeff(result.a)}, b=${formatCoeff(result.b)}, c=${formatCoeff(result.c)}`,
     );
   };
@@ -222,7 +222,6 @@ export function HX711CalibrationPanel({
       onClose={onClose}
       title="HX711 Calibration"
       subtitle="CH 00–07 · Phy = a·Raw²+b·Raw+c"
-      accent="blue"
       defaultWidth={460}
       defaultHeight={600}
     >
@@ -252,8 +251,8 @@ export function HX711CalibrationPanel({
         {/* Method tabs */}
         <div className="mb-3 flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
           {([
-            ['spec', 'スペック計算'],
-            ['measure', '実測フィット'],
+            ['spec', 'Spec'],
+            ['measure', 'Measured'],
           ] as [CalibMethod, string][]).map(([value, label]) => (
             <button
               key={value}
@@ -261,7 +260,7 @@ export function HX711CalibrationPanel({
               onClick={() => setMethod(value)}
               className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
                 method === value
-                  ? 'bg-blue-500 text-white'
+                  ? 'bg-emerald-500 text-emerald-950'
                   : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
               }`}
             >
@@ -275,7 +274,7 @@ export function HX711CalibrationPanel({
             {/* Denominator unit — the only unit that affects b */}
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                分母の単位（電気量）— bの計算に効く単位
+                Denominator unit (electrical) — sets slope b
               </label>
               <select
                 value={draft.denomUnit}
@@ -293,8 +292,8 @@ export function HX711CalibrationPanel({
             {/* Spec input mode */}
             <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
               {([
-                ['pair', '定格ペア入力'],
-                ['sensitivity', '感度を直接入力'],
+                ['pair', 'Rated pair'],
+                ['sensitivity', 'Sensitivity'],
               ] as [SpecMode, string][]).map(([value, label]) => (
                 <button
                   key={value}
@@ -314,55 +313,55 @@ export function HX711CalibrationPanel({
             {draft.specMode === 'pair' ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="w-20 shrink-0 text-xs text-slate-500 dark:text-slate-400">定格出力</span>
+                  <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Rated output</span>
                   <input
                     type="text"
                     inputMode="decimal"
                     value={draft.ratedOutput}
                     onChange={(e) => patch({ ratedOutput: e.target.value })}
-                    placeholder="例: 2.0"
+                    placeholder="e.g. 2.0"
                     className={inputClass}
                   />
                   <span className="w-14 shrink-0 text-xs text-slate-500 dark:text-slate-400">{denomLabel}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="w-20 shrink-0 text-xs text-slate-500 dark:text-slate-400">物理量</span>
+                  <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Physical</span>
                   <input
                     type="text"
                     inputMode="decimal"
                     value={draft.physQty}
                     onChange={(e) => patch({ physQty: e.target.value })}
-                    placeholder="例: 5"
+                    placeholder="e.g. 5"
                     className={inputClass}
                   />
                   <input
                     type="text"
                     value={draft.physUnit}
                     onChange={(e) => patch({ physUnit: e.target.value })}
-                    placeholder="kg等"
+                    placeholder="unit"
                     className="w-14 shrink-0 rounded border border-slate-300 bg-white px-1 py-1 text-center text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
                   />
                 </div>
                 <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                  物理量の単位（kg等）は表示のみで計算には未使用です。
+                  The physical unit (kg, etc.) is a display label only — it is not used in the calculation.
                 </p>
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="w-20 shrink-0 text-xs text-slate-500 dark:text-slate-400">感度</span>
+                <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Sensitivity</span>
                 <input
                   type="text"
                   inputMode="decimal"
                   value={draft.sensitivity}
                   onChange={(e) => patch({ sensitivity: e.target.value })}
-                  placeholder="例: 2.5"
+                  placeholder="e.g. 2.5"
                   className={inputClass}
                 />
                 <input
                   type="text"
                   value={draft.physUnit}
                   onChange={(e) => patch({ physUnit: e.target.value })}
-                  placeholder="kg等"
+                  placeholder="unit"
                   className="w-14 shrink-0 rounded border border-slate-300 bg-white px-1 py-1 text-center text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
                 />
                 <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">/{denomLabel}</span>
@@ -373,19 +372,19 @@ export function HX711CalibrationPanel({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                測定点（{validPoints.length} 点有効 / {draft.points.length} 行）
+                Points ({validPoints.length} valid / {draft.points.length} rows)
               </span>
               <button
                 type="button"
                 onClick={() => patch({ points: [...draft.points, { phy: '', raw: '' }] })}
                 className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
               >
-                + 行追加
+                + Add row
               </button>
             </div>
             <div className="flex items-center gap-1.5 px-1 text-[11px] text-slate-400 dark:text-slate-500">
               <span className="w-5 shrink-0">#</span>
-              <span className="flex-1">物理量 {draft.physUnit.trim() && `(${draft.physUnit.trim()})`}</span>
+              <span className="flex-1">Physical</span>
               <span className="flex-1">Raw</span>
               <span className="w-[76px] shrink-0" />
             </div>
@@ -403,7 +402,7 @@ export function HX711CalibrationPanel({
                     points[idx] = { ...points[idx], phy: e.target.value };
                     patch({ points });
                   }}
-                  placeholder="物理量"
+                  placeholder="Physical"
                   className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-1 text-right text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
                 />
                 <input
@@ -429,15 +428,15 @@ export function HX711CalibrationPanel({
                 <button
                   type="button"
                   onClick={() => patch({ points: draft.points.filter((_, i) => i !== idx) })}
-                  title="行を削除"
-                  className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-xs font-semibold text-slate-500 hover:border-red-400 hover:text-red-500 dark:border-slate-600 dark:text-slate-400 dark:hover:border-red-400 dark:hover:text-red-400"
+                  title="Remove row"
+                  className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-xs font-semibold text-slate-500 hover:border-slate-400 hover:text-slate-700 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-400 dark:hover:text-slate-200"
                 >
                   ✕
                 </button>
               </div>
             ))}
             <p className="text-[11px] text-slate-400 dark:text-slate-500">
-              Grab: タップ=瞬間値 / 長押し=平均。2点→直線(a=0)、3点以上→2次で最小二乗。
+              Grab: tap = instant, hold = average. 2 pts → line (a=0), 3+ pts → quadratic least squares.
             </p>
           </div>
         )}
@@ -445,7 +444,7 @@ export function HX711CalibrationPanel({
         {/* Preview + Apply */}
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800">
           <div className="mb-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
-            結果プレビュー（{physUnitLabel}）
+            Preview ({physUnitLabel})
           </div>
           {result ? (
             <div className="grid grid-cols-3 gap-2 tabular-nums">
@@ -465,15 +464,15 @@ export function HX711CalibrationPanel({
           ) : (
             <div className="text-xs text-slate-400 dark:text-slate-500">
               {method === 'measure' && validPoints.length >= 2
-                ? '計算不可: Raw値が重複している等で一意に決まりません。'
-                : '入力が不足しています。'}
+                ? 'Cannot compute: Raw values are degenerate (no unique fit).'
+                : 'Not enough input.'}
             </div>
           )}
         </div>
 
         {locked && (
-          <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-            ScriptRunner実行中は適用できません（プレビューまで可能）。
+          <div className="mt-2 rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            Apply is disabled while a script is running (preview still works).
           </div>
         )}
 
@@ -487,9 +486,9 @@ export function HX711CalibrationPanel({
           type="button"
           disabled={!result || locked}
           onClick={handleApply}
-          className="mt-2 w-full rounded-lg bg-blue-500 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+          className="mt-2 w-full rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          このチャンネルに適用（a, b, c 上書き）
+          Apply to this channel (overwrite a, b, c)
         </button>
       </div>
     </FloatingWindow>

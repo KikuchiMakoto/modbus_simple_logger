@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "2.15",
+  "version": "2.16",
   "private": true,
   "type": "module",
   "scripts": {
