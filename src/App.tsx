@@ -59,6 +59,7 @@ import { TsvWriter, createTsvWriter } from './utils/tsvExport';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
+import { HX711CalibrationPanel } from './components/HX711CalibrationPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { ModbusConfigPanel } from './components/ModbusConfigPanel';
 import { VoltageConfigPanel } from './components/VoltageConfigPanel';
@@ -256,6 +257,7 @@ function App() {
   const [savePointCount, setSavePointCount] = useState(0);
   const [displayRevision, setDisplayRevision] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
+  const [hx711CalibrationPanelOpen, setHx711CalibrationPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
   const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
@@ -309,6 +311,8 @@ function App() {
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
       setCalibrationPanelOpen(true);
+    } else if (item === 'hx711Calibration') {
+      setHx711CalibrationPanelOpen(true);
     } else if (item === 'modbusConfig') {
       setModbusConfigPanelOpen(true);
     } else if (item === 'voltageConfig') {
@@ -1140,6 +1144,20 @@ function App() {
     });
   };
 
+  // Overwrite a channel's full a/b/c set at once (HX711 Calibration wizard apply).
+  const applyAiCalibrationValues = useCallback((idx: number, cal: AiCalibration) => {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= AI_CHANNELS) return;
+    setAiCalibration((prev) => {
+      const next = [...prev];
+      next[idx] = { a: cal.a, b: cal.b, c: cal.c };
+      setAiChannels((chs) => applyCalibrationToChannels(chs, next));
+      return next;
+    });
+  }, [applyCalibrationToChannels]);
+
+  // Live raw for a channel (freshest value; used by the HX711 capture button).
+  const getAiRawValue = useCallback((ch: number) => aiRawSourceRef.current[ch] ?? 0, []);
+
   const handleDownloadCalibration = () => {
     const calibrationData: Record<string, { a: number; b: number; c: number } | string> = {};
     aiCalibration.forEach((cal, idx) => {
@@ -1599,6 +1617,15 @@ function App() {
         onTareCalibration={handleTareCalibration}
         onSaveCalibration={handleDownloadCalibration}
         onLoadCalibration={handleLoadCalibrationFile}
+        locked={scriptRunner.scriptRunning}
+      />
+
+      <HX711CalibrationPanel
+        open={hx711CalibrationPanelOpen}
+        onClose={() => setHx711CalibrationPanelOpen(false)}
+        locked={scriptRunner.scriptRunning}
+        getAiRaw={getAiRawValue}
+        onApply={applyAiCalibrationValues}
       />
 
       <VoltageConfigPanel

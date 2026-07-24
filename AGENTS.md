@@ -39,14 +39,15 @@ src/
 │   └── useScriptRunner.ts           # Pyodide Worker 管理
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）
-│   ├── CalibrationPanel.tsx         # キャリブレーションウィンドウ（a·x²+b·x+c）
+│   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
+│   ├── HX711CalibrationPanel.tsx    # HX711(CH0-7) キャリブレーションウィザード（スペック計算 / 実測最小二乗）
 │   ├── ModbusConfigPanel.tsx        # シリアル設定ウィンドウ
 │   ├── VoltageConfigPanel.tsx       # 電圧表示モード設定（チャネルタイプ別フィルタ）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/
-    ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V）
+    ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ストリーミングライター（File System Access API）
     ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
@@ -172,6 +173,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
+- **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`HX711CalibrationPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
+- **HX711 キャリブレーションの2方式**（`HX711CalibrationPanel` + `utils/calibration.ts`）: ①スペック計算 = `b = 感度 × hx711SlopePerRaw(分母単位)`, a=0, c=0（物理量側の単位 kg/mm/N は表示ラベルのみで計算に不使用。効くのは分母の電気量単位 μV/V・mV/V・με）。②実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。適用は当該chの a/b/c を丸ごと上書き
 
 ## 変更stage前やcommit前のpackage.json更新のための絶対的なルール
 - 小規模変更(主観でいいです)ではマイナーバージョンをインクリメント
