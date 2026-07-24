@@ -94,6 +94,18 @@ function resolveAxisValue(point: DataPoint, desc: AxisDescriptor): number {
   }
 }
 
+// matplotlib/MATLAB-style data margins: return [min, max] expanded by `fraction`
+// of the data span on each side (10% on X, 5% on Y). Returns null when the data
+// has no finite extent, so the caller falls back to Plotly autorange. A zero
+// span (all values equal) pads by 5%/10% of the magnitude, or 1 as a last
+// resort, so the axis never collapses to a single point.
+function paddedRange(min: number, max: number, fraction: number): [number, number] | null {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  const span = max - min;
+  const pad = span > 0 ? span * fraction : Math.abs(max) * fraction || 1;
+  return [min - pad, max + pad];
+}
+
 function ChartPanelComponent({
   color,
   dataPoints,
@@ -139,31 +151,50 @@ function ChartPanelComponent({
 
   const isEmpty = dataPoints.length === 0;
 
-  const plotData = useMemo(() => {
-    if (isEmpty) return [];
+  const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
+    if (isEmpty) return { traces: [], xRange: null, yRange: null };
     // Build x/y in a single pass into typed arrays. Plotly's date axis accepts
     // epoch-ms numbers directly, so we avoid the per-point `new Date().toISOString()`
-    // allocation entirely; both axes end up numeric.
+    // allocation entirely; both axes end up numeric. Track finite min/max in the
+    // same pass to compute the padded axis ranges (avoids a second O(n) scan).
     const n = dataPoints.length;
     const xData = new Float64Array(n);
     const yData = new Float64Array(n);
     const xIsTime = xDesc.kind === 'time';
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let yMin = Infinity;
+    let yMax = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = dataPoints[i];
-      xData[i] = xIsTime ? p.timestamp : resolveAxisValue(p, xDesc);
-      yData[i] = resolveAxisValue(p, yDesc);
+      const xv = xIsTime ? p.timestamp : resolveAxisValue(p, xDesc);
+      const yv = resolveAxisValue(p, yDesc);
+      xData[i] = xv;
+      yData[i] = yv;
+      if (Number.isFinite(xv)) {
+        if (xv < xMin) xMin = xv;
+        if (xv > xMax) xMax = xv;
+      }
+      if (Number.isFinite(yv)) {
+        if (yv < yMin) yMin = yv;
+        if (yv > yMax) yMax = yv;
+      }
     }
 
-    return [
-      {
-        x: xData,
-        y: yData,
-        type: 'scattergl' as const,
-        mode: 'lines' as const,
-        line: { color, width: 1.5 },
-        name: `${yAxis} vs ${xAxis}`,
-      },
-    ];
+    return {
+      traces: [
+        {
+          x: xData,
+          y: yData,
+          type: 'scattergl' as const,
+          mode: 'lines' as const,
+          line: { color, width: 1.5 },
+          name: `${yAxis} vs ${xAxis}`,
+        },
+      ],
+      xRange: paddedRange(xMin, xMax, 0.1),
+      yRange: paddedRange(yMin, yMax, 0.05),
+    };
   }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty]);
 
   const plotLayout = useMemo(
@@ -176,16 +207,25 @@ function ChartPanelComponent({
         title: { text: xAxis },
         gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
+        // Explicit padded range (matplotlib-style 10% X margin). Falls back to
+        // Plotly autorange when the data has no finite extent. uirevision below
+        // still lets a user's manual zoom/pan persist across data updates.
+        ...(plot.xRange
+          ? { range: plot.xRange, autorange: false as const }
+          : { autorange: true as const }),
       },
       yaxis: {
         title: { text: yAxis },
         gridcolor: palette.grid,
+        ...(plot.yRange
+          ? { range: plot.yRange, autorange: false as const }
+          : { autorange: true as const }),
       },
       margin: { t: 30, r: 30, b: 50, l: 50 },
       uirevision: `${xAxis}-${yAxis}`,
       datarevision: displayRevision,
     }),
-    [xAxis, yAxis, palette, displayRevision],
+    [xAxis, yAxis, palette, displayRevision, plot],
   );
 
   const plotConfig = useMemo(
@@ -253,7 +293,7 @@ function ChartPanelComponent({
       ) : (
         <NormalizedPlot
           key={purgeEpoch}
-          data={plotData}
+          data={plot.traces}
           layout={plotLayout}
           config={plotConfig}
           style={{ width: '100%', height: '280px' }}
