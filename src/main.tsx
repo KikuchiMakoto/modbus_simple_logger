@@ -64,8 +64,37 @@ if (rootElement) {
   );
 }
 
+// Launcher (desktop exe) mode is detected purely by hostname: the launcher
+// serves the app from 127.0.0.1 only. Regular deployments never use that host
+// — GitHub Pages is a public domain and `vite preview` serves on `localhost` —
+// so this branch leaves Pages and PWA behaviour completely unchanged.
+//
+// In launcher mode the server itself sends COOP/COEP on every response and
+// disables caching (Cache-Control: no-store), so the Service Worker is neither
+// needed nor wanted: registering it would reintroduce an HTTP-cache-independent
+// cache layer that could serve stale assets after an exe update. We also
+// proactively unregister any SW left behind by a previous PWA visit to the same
+// origin (e.g. a developer who ran `vite preview` on 127.0.0.1 earlier), so no
+// residual precache survives into launcher mode.
+const isLauncherMode = window.location.hostname === '127.0.0.1';
+
+if (isLauncherMode) {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) => {
+        for (const registration of registrations) {
+          registration.unregister();
+        }
+      })
+      .catch((error) => {
+        console.warn('SW unregister failed:', error);
+      });
+  }
+}
+
 // Service Worker registration (PWA)
-if ('serviceWorker' in navigator) {
+else if ('serviceWorker' in navigator) {
   const currentVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
 
   // Ask a (waiting) Service Worker which app version it was built from.
