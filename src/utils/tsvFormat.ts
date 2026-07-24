@@ -75,7 +75,12 @@ export function formatTsvRow(
   physicalPrecision: number = 3
 ): string {
   const toStr = (v: number) => v.toString();
-  const fmt = (v: number) => v.toFixed(physicalPrecision);
+  // Round to physicalPrecision decimals, then drop trailing zeros and a bare
+  // decimal point: 0 -> "0", 1.230 -> "1.23", 1.000 -> "1", -0 -> "0". This
+  // trims wasteful zero-fill from the physical/voltage/Parameter columns to keep
+  // the file small, without changing the numeric value (parses identically in
+  // pandas/Excel).
+  const fmt = (v: number) => parseFloat(v.toFixed(physicalPrecision)).toString();
   // Single preallocated parts array, filled by index — no per-column copies.
   const parts: string[] = [formatTimestamp(timestamp)];
   appendFormatted(parts, aiRaw, toStr);
