@@ -59,7 +59,7 @@ import {
   dataStorage,
   StoredDataPoint,
 } from './utils/dataStorage';
-import { TsvWriter, createTsvWriter } from './utils/tsvExport';
+import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
@@ -292,7 +292,7 @@ function App() {
   const [actualRateHz, setActualRateHz] = useState<number>(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
-  const tsvWriterRef = useRef<TsvWriter | null>(null);
+  const tsvWriterRef = useRef<TsvSink | null>(null);
   const seqCounterRef = useRef(0);
   const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const displayUpdateCountRef = useRef(0);
@@ -1257,7 +1257,18 @@ function App() {
 
   const handleStartSave = async () => {
     try {
-      const writer = await createTsvWriter(AI_CHANNELS, AO_CHANNELS, undefined, 3, PARAM_CHANNELS, TSV_FLUSH_MAX_ROWS);
+      const writer = await createTsvWriter(
+        AI_CHANNELS,
+        AO_CHANNELS,
+        undefined,
+        3,
+        PARAM_CHANNELS,
+        TSV_FLUSH_MAX_ROWS,
+        (message) => {
+          console.error('TSV worker error:', message);
+          setStatus(`TSV write error: ${message}`);
+        },
+      );
       const startedAt = Date.now();
 
       pendingDataPoints.current = [];
@@ -1273,7 +1284,9 @@ function App() {
 
       tsvWriterRef.current = writer;
       flushTimerRef.current = window.setInterval(() => {
-        tsvWriterRef.current?.flush().catch((err) => console.error('TSV flush error:', err));
+        // Fire-and-forget: the worker owns the buffer and reports failures via
+        // the onError callback above; this just asks it to flush periodically.
+        tsvWriterRef.current?.flush();
       }, TSV_FLUSH_INTERVAL_MS);
       setActiveSaveFilename(writer.getFileName());
       setSaveStartedAt(startedAt);
