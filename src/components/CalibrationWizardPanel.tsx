@@ -1,47 +1,41 @@
 import { useEffect, useRef, useState } from 'react';
 import { AiCalibration } from '../types';
-import {
-  Hx711DenominatorUnit,
-  HX711_DENOMINATOR_UNITS,
-  specToCalibration,
-  fitCalibration,
-  CalibrationFitPoint,
-} from '../utils/calibration';
+import { specToCalibration, fitCalibration, CalibrationFitPoint } from '../utils/calibration';
 import { FloatingWindow } from './FloatingWindow';
-
-// HX711 occupies AI channels 0-7.
-const HX711_CHANNELS = 8;
 
 // Tap = instantaneous raw; hold ≥ LONG_PRESS_MS = mean of samples collected
 // (at SAMPLE_INTERVAL_MS) until release.
 const LONG_PRESS_MS = 800;
 const SAMPLE_INTERVAL_MS = 50;
 
-type CalibMethod = 'spec' | 'measure';
+type CalibMethod = 'measure' | 'spec';
 type SpecMode = 'pair' | 'sensitivity';
 
 type MeasureRow = { phy: string; raw: string };
+
+// A reference (denominator) unit for the spec method and its raw→unit slope.
+//   HX711:  fixed electrical units (μV/V, mV/V, με)
+//   ADS1115: 'Raw' (slope 1) and 'V'/'mV' (slope from the channel's range)
+export type DenominatorOption = { value: string; label: string; slopePerRaw: number };
 
 // Captured raw is kept to sub-count precision (averaging reduces noise) but
 // trimmed to 3 decimals so the cell stays readable.
 const formatCapturedRaw = (raw: number): string => String(Math.round(raw * 1000) / 1000);
 
 type ChannelDraft = {
-  denomUnit: Hx711DenominatorUnit;
+  denomUnit: string;
   specMode: SpecMode;
-  ratedOutput: string; // denominator-unit value at rated output (pair mode)
+  ratedOutput: string; // reference-unit value at rated output (pair mode)
   physQty: string;     // physical value at rated output (pair mode)
-  physUnit: string;    // physical unit label (display only, kg/mm/N/...)
   sensitivity: string; // direct sensitivity (sensitivity mode)
   points: MeasureRow[];
 };
 
-const makeDefaultDraft = (): ChannelDraft => ({
-  denomUnit: 'mv_per_v',
+const makeDefaultDraft = (defaultDenomUnit: string): ChannelDraft => ({
+  denomUnit: defaultDenomUnit,
   specMode: 'pair',
   ratedOutput: '',
   physQty: '',
-  physUnit: '',
   sensitivity: '',
   points: [
     { phy: '', raw: '' },
@@ -127,24 +121,39 @@ function CaptureButton({ getRaw, onCapture, disabled = false }: CaptureButtonPro
   );
 }
 
-type HX711CalibrationPanelProps = {
+type CalibrationWizardPanelProps = {
   open: boolean;
   onClose: () => void;
   // scriptRunning — freezes Apply (writing scale coefficients).
   locked: boolean;
+  title: string;
+  subtitle?: string;
+  channelStart: number;
+  channelCount: number;
+  // Reference-unit label shown for the spec method's denominator selector.
+  referenceLabel: string;
+  defaultDenomUnit: string;
+  getDenominatorOptions: (ch: number) => DenominatorOption[];
   getAiRaw: (ch: number) => number;
   onApply: (ch: number, cal: AiCalibration) => void;
 };
 
-export function HX711CalibrationPanel({
+export function CalibrationWizardPanel({
   open,
   onClose,
   locked,
+  title,
+  subtitle,
+  channelStart,
+  channelCount,
+  referenceLabel,
+  defaultDenomUnit,
+  getDenominatorOptions,
   getAiRaw,
   onApply,
-}: HX711CalibrationPanelProps) {
-  const [channel, setChannel] = useState(0);
-  const [method, setMethod] = useState<CalibMethod>('spec');
+}: CalibrationWizardPanelProps) {
+  const [channel, setChannel] = useState(channelStart);
+  const [method, setMethod] = useState<CalibMethod>('measure');
   const [drafts, setDrafts] = useState<Record<number, ChannelDraft>>({});
   const [applied, setApplied] = useState<string | null>(null);
 
@@ -157,20 +166,21 @@ export function HX711CalibrationPanel({
     return () => window.clearInterval(id);
   }, [open]);
 
-  const draft = drafts[channel] ?? makeDefaultDraft();
+  const draft = drafts[channel] ?? makeDefaultDraft(defaultDenomUnit);
 
   const patch = (partial: Partial<ChannelDraft>) => {
     setDrafts((prev) => ({
       ...prev,
-      [channel]: { ...(prev[channel] ?? makeDefaultDraft()), ...partial },
+      [channel]: { ...(prev[channel] ?? makeDefaultDraft(defaultDenomUnit)), ...partial },
     }));
     setApplied(null);
   };
 
-  // --- Method 1 (spec) preview ---
-  const denomLabel =
-    HX711_DENOMINATOR_UNITS.find((u) => u.value === draft.denomUnit)?.label ?? '';
-  const physUnitLabel = draft.physUnit.trim() || 'Phy';
+  // --- Spec preview ---
+  const denomOptions = getDenominatorOptions(channel);
+  const selectedDenom =
+    denomOptions.find((o) => o.value === draft.denomUnit) ?? denomOptions[0];
+  const denomLabel = selectedDenom?.label ?? '';
 
   const specSensitivity: number | null = (() => {
     if (draft.specMode === 'pair') {
@@ -186,9 +196,11 @@ export function HX711CalibrationPanel({
   })();
 
   const specResult: AiCalibration | null =
-    specSensitivity === null ? null : specToCalibration(specSensitivity, draft.denomUnit);
+    specSensitivity === null || !selectedDenom
+      ? null
+      : specToCalibration(specSensitivity, selectedDenom.slopePerRaw);
 
-  // --- Method 2 (measure) preview ---
+  // --- Measured preview ---
   const validPoints: CalibrationFitPoint[] = draft.points
     .filter(
       (p) =>
@@ -202,7 +214,7 @@ export function HX711CalibrationPanel({
   const measureResult: AiCalibration | null =
     validPoints.length >= 2 ? fitCalibration(validPoints) : null;
 
-  const result = method === 'spec' ? specResult : measureResult;
+  const result = method === 'measure' ? measureResult : specResult;
 
   const handleApply = () => {
     if (!result || locked) return;
@@ -220,8 +232,8 @@ export function HX711CalibrationPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="HX711 Calibration"
-      subtitle="CH 00–07 · Phy = a·Raw²+b·Raw+c"
+      title={title}
+      subtitle={subtitle}
       defaultWidth={460}
       defaultHeight={600}
     >
@@ -237,9 +249,9 @@ export function HX711CalibrationPanel({
             }}
             className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
           >
-            {Array.from({ length: HX711_CHANNELS }, (_, i) => (
-              <option key={i} value={i}>
-                CH {i.toString().padStart(2, '0')}
+            {Array.from({ length: channelCount }, (_, i) => channelStart + i).map((ch) => (
+              <option key={ch} value={ch}>
+                CH {ch.toString().padStart(2, '0')}
               </option>
             ))}
           </select>
@@ -248,11 +260,12 @@ export function HX711CalibrationPanel({
           </span>
         </div>
 
-        {/* Method tabs */}
+        {/* Method tabs — measured (multi-point) first, since a spec sheet is
+            often unavailable. */}
         <div className="mb-3 flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
           {([
-            ['spec', 'Spec'],
             ['measure', 'Measured'],
+            ['spec', 'Spec'],
           ] as [CalibMethod, string][]).map(([value, label]) => (
             <button
               key={value}
@@ -269,106 +282,7 @@ export function HX711CalibrationPanel({
           ))}
         </div>
 
-        {method === 'spec' ? (
-          <div className="space-y-3">
-            {/* Denominator unit — the only unit that affects b */}
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                Denominator unit (electrical) — sets slope b
-              </label>
-              <select
-                value={draft.denomUnit}
-                onChange={(e) => patch({ denomUnit: e.target.value as Hx711DenominatorUnit })}
-                className={inputClass}
-              >
-                {HX711_DENOMINATOR_UNITS.map((u) => (
-                  <option key={u.value} value={u.value}>
-                    {u.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Spec input mode */}
-            <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
-              {([
-                ['pair', 'Rated pair'],
-                ['sensitivity', 'Sensitivity'],
-              ] as [SpecMode, string][]).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => patch({ specMode: value })}
-                  className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
-                    draft.specMode === value
-                      ? 'bg-slate-600 text-white dark:bg-slate-500'
-                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {draft.specMode === 'pair' ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Rated output</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={draft.ratedOutput}
-                    onChange={(e) => patch({ ratedOutput: e.target.value })}
-                    placeholder="e.g. 2.0"
-                    className={inputClass}
-                  />
-                  <span className="w-14 shrink-0 text-xs text-slate-500 dark:text-slate-400">{denomLabel}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Physical</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={draft.physQty}
-                    onChange={(e) => patch({ physQty: e.target.value })}
-                    placeholder="e.g. 5"
-                    className={inputClass}
-                  />
-                  <input
-                    type="text"
-                    value={draft.physUnit}
-                    onChange={(e) => patch({ physUnit: e.target.value })}
-                    placeholder="unit"
-                    className="w-14 shrink-0 rounded border border-slate-300 bg-white px-1 py-1 text-center text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
-                  />
-                </div>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                  The physical unit (kg, etc.) is a display label only — it is not used in the calculation.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Sensitivity</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={draft.sensitivity}
-                  onChange={(e) => patch({ sensitivity: e.target.value })}
-                  placeholder="e.g. 2.5"
-                  className={inputClass}
-                />
-                <input
-                  type="text"
-                  value={draft.physUnit}
-                  onChange={(e) => patch({ physUnit: e.target.value })}
-                  placeholder="unit"
-                  className="w-14 shrink-0 rounded border border-slate-300 bg-white px-1 py-1 text-center text-xs text-slate-600 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300"
-                />
-                <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">/{denomLabel}</span>
-              </div>
-            )}
-          </div>
-        ) : (
+        {method === 'measure' ? (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
@@ -439,13 +353,97 @@ export function HX711CalibrationPanel({
               Grab: tap = instant, hold = average. 2 pts → line (a=0), 3+ pts → quadratic least squares.
             </p>
           </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Reference (denominator) unit — the only unit that affects b */}
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {referenceLabel} — sets slope b
+              </label>
+              <select
+                value={selectedDenom?.value ?? ''}
+                onChange={(e) => patch({ denomUnit: e.target.value })}
+                className={inputClass}
+              >
+                {denomOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Spec input mode */}
+            <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+              {([
+                ['pair', 'Rated pair'],
+                ['sensitivity', 'Sensitivity'],
+              ] as [SpecMode, string][]).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => patch({ specMode: value })}
+                  className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
+                    draft.specMode === value
+                      ? 'bg-slate-600 text-white dark:bg-slate-500'
+                      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {draft.specMode === 'pair' ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Rated output</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={draft.ratedOutput}
+                    onChange={(e) => patch({ ratedOutput: e.target.value })}
+                    placeholder="e.g. 2.0"
+                    className={inputClass}
+                  />
+                  <span className="w-14 shrink-0 text-xs text-slate-500 dark:text-slate-400">{denomLabel}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Physical</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={draft.physQty}
+                    onChange={(e) => patch({ physQty: e.target.value })}
+                    placeholder="e.g. 5"
+                    className={inputClass}
+                  />
+                  <span className="w-14 shrink-0" />
+                </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Slope b = physical ÷ rated output (× reference-unit scale).
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="w-24 shrink-0 text-xs text-slate-500 dark:text-slate-400">Sensitivity</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.sensitivity}
+                  onChange={(e) => patch({ sensitivity: e.target.value })}
+                  placeholder="e.g. 2.5"
+                  className={inputClass}
+                />
+                <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">/{denomLabel}</span>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Preview + Apply */}
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800">
-          <div className="mb-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
-            Preview ({physUnitLabel})
-          </div>
+          <div className="mb-1 text-xs font-semibold text-slate-600 dark:text-slate-300">Preview</div>
           {result ? (
             <div className="grid grid-cols-3 gap-2 tabular-nums">
               <div>

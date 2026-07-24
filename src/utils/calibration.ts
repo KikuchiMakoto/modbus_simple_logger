@@ -124,12 +124,13 @@ export const hx711SlopePerRaw = (unit: Hx711DenominatorUnit): number => {
   }
 };
 
-// Method 1: b = sensitivity × slope(denominator unit), a = 0, c = 0.
-// sensitivity carries units [physical]/[denominator unit] but is just a number
-// here; the physical unit label is irrelevant to the result.
-export const specToCalibration = (sensitivity: number, unit: Hx711DenominatorUnit): AiCalibration | null => {
-  if (!Number.isFinite(sensitivity)) return null;
-  const b = sensitivity * hx711SlopePerRaw(unit);
+// Method 1 (spec): b = sensitivity × slopePerRaw, a = 0, c = 0. The sensitivity
+// carries units [physical]/[reference unit] but is just a number here — the
+// physical unit is irrelevant to the result. slopePerRaw comes from the caller
+// (HX711: fixed electrical-unit slope; ADS1115: 1 for Raw, V-per-raw for volts).
+export const specToCalibration = (sensitivity: number, slopePerRaw: number): AiCalibration | null => {
+  if (!Number.isFinite(sensitivity) || !Number.isFinite(slopePerRaw)) return null;
+  const b = sensitivity * slopePerRaw;
   if (!Number.isFinite(b)) return null;
   return { a: 0, b, c: 0 };
 };

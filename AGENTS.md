@@ -40,7 +40,7 @@ src/
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
-│   ├── HX711CalibrationPanel.tsx    # HX711(CH0-7) キャリブレーションウィザード（スペック計算 / 実測最小二乗）
+│   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
 │   ├── ModbusConfigPanel.tsx        # シリアル設定ウィンドウ
 │   ├── VoltageConfigPanel.tsx       # 電圧表示モード設定（チャネルタイプ別フィルタ）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
@@ -179,7 +179,10 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 既存コードの確立済みセマンティック色（危険表示の red、レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを新規要素へ拡張しない
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`HX711CalibrationPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
-- **HX711 キャリブレーションの2方式**（`HX711CalibrationPanel` + `utils/calibration.ts`）: ①スペック計算 = `b = 感度 × hx711SlopePerRaw(分母単位)`, a=0, c=0（物理量側の単位 kg/mm/N は表示ラベルのみで計算に不使用。効くのは分母の電気量単位 μV/V・mV/V・με）。②実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。適用は当該chの a/b/c を丸ごと上書き
+- **キャリブレーションウィザードの2方式**（`CalibrationWizardPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) 共通コンポーネントを2インスタンスで使用。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
+  - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は Raw（傾き1）と V/mV（`rawToDisplayValue(1, voltageConfig[ch])` から算出、レンジ Unknown 時は Raw のみ）。
+  - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。
 
 ## 変更stage前やcommit前のpackage.json更新のための絶対的なルール
 - 小規模変更(主観でいいです)ではマイナーバージョンをインクリメント
