@@ -33,8 +33,23 @@ body {
   }
 }
 
+@keyframes stop-save-color-pulse {
+  0%,
+  100% {
+    background-color: rgb(239 68 68 / 0.5);
+  }
+  50% {
+    background-color: rgb(239 68 68 / 1);
+  }
+}
+
 .button-stop-save-pulse {
   @apply rounded-lg px-4 py-1.5 font-semibold text-red-50 shadow;
+  /* Solid fallback so the button is always a visible red: the keyframes drive
+     the colour while animating, but if the animation is disabled (e.g. the OS
+     "reduce motion" setting, common on Windows) the button must still look like
+     a button rather than transparent text. */
+  background-color: rgb(239 68 68 / 1);
   animation: stop-save-sine-pulse 1.6s ease-in-out infinite;
 }
 
@@ -42,9 +57,12 @@ body {
   @apply bg-red-500;
 }
 
+/* Reduced motion: drop the expanding-glow motion but keep a gentle colour-only
+   pulse — this is a functional "saving in progress" indicator, not decoration,
+   so it should still draw the eye without any vestibular-triggering movement. */
 @media (prefers-reduced-motion: reduce) {
   .button-stop-save-pulse {
-    animation: none;
+    animation: stop-save-color-pulse 2s ease-in-out infinite;
   }
 }
 

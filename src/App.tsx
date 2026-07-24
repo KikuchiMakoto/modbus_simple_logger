@@ -24,6 +24,8 @@ import {
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
+  CHART_REDRAW_INTERVAL_MS,
+  CHART_PURGE_INTERVAL_MS,
   NON_SAVING_CHART_WINDOW_MS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
@@ -58,7 +60,7 @@ import {
   dataStorage,
   StoredDataPoint,
 } from './utils/dataStorage';
-import { TsvWriter, createTsvWriter } from './utils/tsvExport';
+import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
@@ -259,6 +261,9 @@ function App() {
   const [saveElapsedMs, setSaveElapsedMs] = useState(0);
   const [savePointCount, setSavePointCount] = useState(0);
   const [displayRevision, setDisplayRevision] = useState(0);
+  // Bumped to force a full Plotly purge + remount of every chart (used as the
+  // Plot's React key). See CHART_PURGE_INTERVAL_MS in constants.ts.
+  const [chartEpoch, setChartEpoch] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hx711CalibrationPanelOpen, setHx711CalibrationPanelOpen] = useState(false);
   const [ads1115CalibrationPanelOpen, setAds1115CalibrationPanelOpen] = useState(false);
@@ -291,14 +296,17 @@ function App() {
   const [actualRateHz, setActualRateHz] = useState<number>(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
-  const tsvWriterRef = useRef<TsvWriter | null>(null);
+  const tsvWriterRef = useRef<TsvSink | null>(null);
   const seqCounterRef = useRef(0);
   const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const displayUpdateCountRef = useRef(0);
   const flushTimerRef = useRef<number | undefined>(undefined);
+  const chartRedrawTimerRef = useRef<number | undefined>(undefined);
+  const lastChartPurgeAtRef = useRef(Date.now());
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
+  const saveStartInProgressRef = useRef(false);
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
   const aoWriteInProgressRef = useRef(false);
@@ -441,6 +449,12 @@ function App() {
         for (let i = 0; i < buffer.length; i += 2) decimated.push(buffer[i]);
         dataBufferRef.current = decimated;
         saveDecimationStrideRef.current *= 2;
+        // Re-decimation replaces the whole trace anyway (half the points are
+        // dropped), so it is the least disruptive moment for a full chart
+        // rebuild — purge Plotly's WebGL/regl state here to keep long-session
+        // GPU-side accumulation bounded.
+        lastChartPurgeAtRef.current = Date.now();
+        setChartEpoch((v) => v + 1);
       }
     } else {
       // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
@@ -476,7 +490,26 @@ function App() {
       }
     }
 
-    setDisplayRevision((v) => v + 1);
+    // Time fallback for the purge above: re-decimation intervals double each
+    // time (and never occur while not saving), so also rebuild the charts after
+    // CHART_PURGE_INTERVAL_MS of continuous plotting without one.
+    if (Date.now() - lastChartPurgeAtRef.current >= CHART_PURGE_INTERVAL_MS) {
+      lastChartPurgeAtRef.current = Date.now();
+      setChartEpoch((v) => v + 1);
+    }
+
+    // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
+    // this flush runs ~10x/s, but redrawing all 4 scattergl charts that often is
+    // wasteful and feeds WebGL/regl churn. A single pending timer collapses a
+    // burst of flushes into one redraw showing the latest buffer. Reset paths
+    // (connect/disconnect/start/stop-save) still bump setDisplayRevision directly
+    // for an immediate redraw.
+    if (chartRedrawTimerRef.current === undefined) {
+      chartRedrawTimerRef.current = window.setTimeout(() => {
+        chartRedrawTimerRef.current = undefined;
+        setDisplayRevision((v) => v + 1);
+      }, CHART_REDRAW_INTERVAL_MS);
+    }
   }, []);
 
   const syncAoChannels = useCallback((values: number[]) => {
@@ -1243,35 +1276,63 @@ function App() {
   };
 
   const handleStartSave = async () => {
+    // Re-entry guard: a second Start (double-click, or a click racing the file
+    // picker) would create a second writer that overwrites tsvWriterRef and
+    // flushTimerRef, orphaning the first worker/interval with its file never
+    // closed. Also refuse to start while a save is already active.
+    if (tsvWriterRef.current || saveStartInProgressRef.current) return;
+    saveStartInProgressRef.current = true;
     try {
-      const writer = await createTsvWriter(AI_CHANNELS, AO_CHANNELS, undefined, 3, PARAM_CHANNELS, TSV_FLUSH_MAX_ROWS);
-      const startedAt = Date.now();
+      const writer = await createTsvWriter(
+        AI_CHANNELS,
+        AO_CHANNELS,
+        undefined,
+        3,
+        PARAM_CHANNELS,
+        TSV_FLUSH_MAX_ROWS,
+        (message) => {
+          console.error('TSV worker error:', message);
+          setStatus(`TSV write error: ${message}`);
+        },
+      );
+      try {
+        const startedAt = Date.now();
 
-      pendingDataPoints.current = [];
-      recentTimestampsRef.current = [];
-      setActualRateHz(0);
+        pendingDataPoints.current = [];
+        recentTimestampsRef.current = [];
+        setActualRateHz(0);
 
-      await dataStorage.clearAllData();
-      dataBufferRef.current = [];
-      // Restart the whole-capture downsampling from this save start.
-      saveDecimationStrideRef.current = 1;
-      saveRawCounterRef.current = 0;
-      setDisplayRevision((v) => v + 1);
+        await dataStorage.clearAllData();
+        dataBufferRef.current = [];
+        // Restart the whole-capture downsampling from this save start.
+        saveDecimationStrideRef.current = 1;
+        saveRawCounterRef.current = 0;
+        setDisplayRevision((v) => v + 1);
 
-      tsvWriterRef.current = writer;
-      flushTimerRef.current = window.setInterval(() => {
-        tsvWriterRef.current?.flush().catch((err) => console.error('TSV flush error:', err));
-      }, TSV_FLUSH_INTERVAL_MS);
-      setActiveSaveFilename(writer.getFileName());
-      setSaveStartedAt(startedAt);
-      setSaveElapsedMs(0);
-      setSavePointCount(0);
-      setStatus('Saving data to file');
+        tsvWriterRef.current = writer;
+        flushTimerRef.current = window.setInterval(() => {
+          // Fire-and-forget: the worker owns the buffer and reports failures via
+          // the onError callback above; this just asks it to flush periodically.
+          tsvWriterRef.current?.flush();
+        }, TSV_FLUSH_INTERVAL_MS);
+        setActiveSaveFilename(writer.getFileName());
+        setSaveStartedAt(startedAt);
+        setSaveElapsedMs(0);
+        setSavePointCount(0);
+        setStatus('Saving data to file');
+      } catch (setupErr) {
+        // Post-creation setup failed (e.g. IndexedDB clear): close the writer
+        // so the worker and its open file are never orphaned.
+        writer.close().catch(() => {});
+        throw setupErr;
+      }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         return;
       }
       setStatus((err as Error).message);
+    } finally {
+      saveStartInProgressRef.current = false;
     }
   };
 
@@ -1573,6 +1634,7 @@ function App() {
         <ChartPanel
           color="#34d399"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart1X}
@@ -1584,6 +1646,7 @@ function App() {
         <ChartPanel
           color="#60a5fa"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart2X}
@@ -1595,6 +1658,7 @@ function App() {
         <ChartPanel
           color="#f472b6"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart3X}
@@ -1606,6 +1670,7 @@ function App() {
         <ChartPanel
           color="#fbbf24"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart4X}
