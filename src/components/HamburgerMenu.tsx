@@ -8,7 +8,7 @@ type HamburgerMenuProps = {
 
 const MENU_ITEMS = [
   { key: 'modbusConfig', label: 'Modbus Config', icon: '🔌', wip: false },
-  { key: 'calibration', label: 'Calibration Value', icon: '⚙', wip: false },
+  { key: 'calibration', label: 'Calibration Value', icon: '⚙️', wip: false },
   { key: 'hx711Calibration', label: 'HX711 Calib (CH00–07)', icon: '⚖️', wip: false },
   { key: 'ads1115Calibration', label: 'ADS1115 Calib (CH08–15)', icon: '🎚️', wip: false },
   { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
@@ -41,7 +41,7 @@ export function HamburgerMenu({
                     : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
                 }`}
               >
-                <span className="text-lg">{item.icon}</span>
+                <span className="w-6 shrink-0 text-center text-lg">{item.icon}</span>
                 <span>{item.label}</span>
               </button>
             </li>
