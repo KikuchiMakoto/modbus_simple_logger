@@ -24,6 +24,7 @@ import {
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
+  CHART_REDRAW_INTERVAL_MS,
   NON_SAVING_CHART_WINDOW_MS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
@@ -296,6 +297,7 @@ function App() {
   const displayUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const displayUpdateCountRef = useRef(0);
   const flushTimerRef = useRef<number | undefined>(undefined);
+  const chartRedrawTimerRef = useRef<number | undefined>(undefined);
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
@@ -476,7 +478,18 @@ function App() {
       }
     }
 
-    setDisplayRevision((v) => v + 1);
+    // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
+    // this flush runs ~10x/s, but redrawing all 4 scattergl charts that often is
+    // wasteful and feeds WebGL/regl churn. A single pending timer collapses a
+    // burst of flushes into one redraw showing the latest buffer. Reset paths
+    // (connect/disconnect/start/stop-save) still bump setDisplayRevision directly
+    // for an immediate redraw.
+    if (chartRedrawTimerRef.current === undefined) {
+      chartRedrawTimerRef.current = window.setTimeout(() => {
+        chartRedrawTimerRef.current = undefined;
+        setDisplayRevision((v) => v + 1);
+      }, CHART_REDRAW_INTERVAL_MS);
+    }
   }, []);
 
   const syncAoChannels = useCallback((values: number[]) => {

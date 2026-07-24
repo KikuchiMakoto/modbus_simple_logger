@@ -1,4 +1,4 @@
-import { type CSSProperties, type ComponentType, useCallback, useMemo, useState } from 'react';
+import { type CSSProperties, type ComponentType, memo, useCallback, useMemo, useState } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
@@ -90,7 +90,7 @@ function resolveAxisValue(point: DataPoint, desc: AxisDescriptor): number {
   }
 }
 
-export function ChartPanel({
+function ChartPanelComponent({
   color,
   dataPoints,
   displayRevision,
@@ -258,3 +258,9 @@ export function ChartPanel({
     </section>
   );
 }
+
+// Memoized so the charts re-render only when their own inputs change
+// (displayRevision, axes, color, theme) — not on every App commit driven by the
+// full-rate numeric-readout state (setAiChannels etc.). All props are
+// stable-identity except displayRevision, which is the intended redraw trigger.
+export const ChartPanel = memo(ChartPanelComponent);

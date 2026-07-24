@@ -14,8 +14,13 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // points: while not saving it shows a ~NON_SAVING_CHART_WINDOW_MS sliding time
 // window; while saving it downsamples the whole capture (save-start → now) to
 // this budget. The full data is always written to TSV regardless.
-export const CHART_MAX_POINTS = 4096;
+export const CHART_MAX_POINTS = 1024;
 export const NON_SAVING_CHART_WINDOW_MS = 60_000;
+// Minimum interval between chart redraws (setDisplayRevision bumps). Chart data
+// flushes ~10x/s, but redrawing all 4 scattergl charts that often is wasteful
+// and feeds WebGL/regl resource churn. Coalescing redraws to ~5 fps keeps the
+// live view responsive while cutting steady GPU/React cost roughly in half.
+export const CHART_REDRAW_INTERVAL_MS = 200;
 
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;
