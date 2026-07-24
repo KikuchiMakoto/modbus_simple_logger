@@ -301,6 +301,7 @@ function App() {
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
+  const saveStartInProgressRef = useRef(false);
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
   const aoWriteInProgressRef = useRef(false);
@@ -1256,6 +1257,12 @@ function App() {
   };
 
   const handleStartSave = async () => {
+    // Re-entry guard: a second Start (double-click, or a click racing the file
+    // picker) would create a second writer that overwrites tsvWriterRef and
+    // flushTimerRef, orphaning the first worker/interval with its file never
+    // closed. Also refuse to start while a save is already active.
+    if (tsvWriterRef.current || saveStartInProgressRef.current) return;
+    saveStartInProgressRef.current = true;
     try {
       const writer = await createTsvWriter(
         AI_CHANNELS,
@@ -1269,35 +1276,44 @@ function App() {
           setStatus(`TSV write error: ${message}`);
         },
       );
-      const startedAt = Date.now();
+      try {
+        const startedAt = Date.now();
 
-      pendingDataPoints.current = [];
-      recentTimestampsRef.current = [];
-      setActualRateHz(0);
+        pendingDataPoints.current = [];
+        recentTimestampsRef.current = [];
+        setActualRateHz(0);
 
-      await dataStorage.clearAllData();
-      dataBufferRef.current = [];
-      // Restart the whole-capture downsampling from this save start.
-      saveDecimationStrideRef.current = 1;
-      saveRawCounterRef.current = 0;
-      setDisplayRevision((v) => v + 1);
+        await dataStorage.clearAllData();
+        dataBufferRef.current = [];
+        // Restart the whole-capture downsampling from this save start.
+        saveDecimationStrideRef.current = 1;
+        saveRawCounterRef.current = 0;
+        setDisplayRevision((v) => v + 1);
 
-      tsvWriterRef.current = writer;
-      flushTimerRef.current = window.setInterval(() => {
-        // Fire-and-forget: the worker owns the buffer and reports failures via
-        // the onError callback above; this just asks it to flush periodically.
-        tsvWriterRef.current?.flush();
-      }, TSV_FLUSH_INTERVAL_MS);
-      setActiveSaveFilename(writer.getFileName());
-      setSaveStartedAt(startedAt);
-      setSaveElapsedMs(0);
-      setSavePointCount(0);
-      setStatus('Saving data to file');
+        tsvWriterRef.current = writer;
+        flushTimerRef.current = window.setInterval(() => {
+          // Fire-and-forget: the worker owns the buffer and reports failures via
+          // the onError callback above; this just asks it to flush periodically.
+          tsvWriterRef.current?.flush();
+        }, TSV_FLUSH_INTERVAL_MS);
+        setActiveSaveFilename(writer.getFileName());
+        setSaveStartedAt(startedAt);
+        setSaveElapsedMs(0);
+        setSavePointCount(0);
+        setStatus('Saving data to file');
+      } catch (setupErr) {
+        // Post-creation setup failed (e.g. IndexedDB clear): close the writer
+        // so the worker and its open file are never orphaned.
+        writer.close().catch(() => {});
+        throw setupErr;
+      }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         return;
       }
       setStatus((err as Error).message);
+    } finally {
+      saveStartInProgressRef.current = false;
     }
   };
 

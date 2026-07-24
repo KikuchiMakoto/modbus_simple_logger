@@ -18,6 +18,13 @@ import type {
 
 export { formatTimestamp, createTsvHeader, formatTsvRow } from './tsvFormat';
 
+// Safety net for close(): if the worker has died and can never reply 'closed',
+// force-terminate after this long so Stop Save / Disconnect never hang on the
+// await. A normal drain is ≤ TSV_FLUSH_MAX_ROWS rows (sub-second), so hitting
+// this means something is genuinely wrong; the file may lose its final rows,
+// which is reported via onError.
+const CLOSE_TIMEOUT_MS = 10_000;
+
 /**
  * Streaming TSV sink. Backed by a Web Worker; every method forwards to it.
  * `writeRow` and `flush` are fire-and-forget (failures surface via the
@@ -41,17 +48,21 @@ export interface TsvSink {
 class TsvWorkerWriter implements TsvSink {
   private worker: Worker;
   private fileName: string;
+  private onError: (message: string) => void;
   private closePromise: Promise<void> | null = null;
   private closeResolve: (() => void) | null = null;
+  private closeTimeout: number | undefined;
 
   constructor(worker: Worker, fileName: string, onError: (message: string) => void) {
     this.worker = worker;
     this.fileName = fileName;
+    this.onError = onError;
     worker.addEventListener('message', (event: MessageEvent<TsvWorkerResponse>) => {
       const msg = event.data;
       if (msg.type === 'error') {
         onError(msg.message);
       } else if (msg.type === 'closed') {
+        window.clearTimeout(this.closeTimeout);
         this.closeResolve?.();
         this.worker.terminate();
       }
@@ -94,6 +105,13 @@ class TsvWorkerWriter implements TsvSink {
     if (!this.closePromise) {
       this.closePromise = new Promise<void>((resolve) => {
         this.closeResolve = resolve;
+        // Never let the caller's await hang: if the worker cannot reply
+        // 'closed' (hard crash), force-terminate and resolve anyway.
+        this.closeTimeout = window.setTimeout(() => {
+          this.onError('TSV close timed out; the file may be missing its final rows.');
+          this.worker.terminate();
+          resolve();
+        }, CLOSE_TIMEOUT_MS);
       });
       this.worker.postMessage({ type: 'close' });
     }
