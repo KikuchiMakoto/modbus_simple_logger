@@ -95,7 +95,13 @@ export class TsvWriter {
   private paramChannels: number;
   private physicalPrecision: number;
   private fileName: string;
+  private flushMaxRows: number;
   private writeBuffer: string[] = [];
+  // Serializes flushes so a row-count-triggered flush and the periodic timer
+  // flush can never issue overlapping stream.write() calls (which could
+  // interleave and corrupt the file). Always resolved so one failed write does
+  // not stall every later flush.
+  private flushChain: Promise<void> = Promise.resolve();
 
   constructor(
     stream: FileSystemWritableFileStream,
@@ -103,7 +109,8 @@ export class TsvWriter {
     aoChannels: number,
     physicalPrecision: number = 3,
     fileName: string = 'unnamed.tsv',
-    paramChannels: number = 0
+    paramChannels: number = 0,
+    flushMaxRows: number = 0
   ) {
     this.stream = stream;
     this.aiChannels = aiChannels;
@@ -111,6 +118,7 @@ export class TsvWriter {
     this.paramChannels = paramChannels;
     this.physicalPrecision = physicalPrecision;
     this.fileName = fileName;
+    this.flushMaxRows = flushMaxRows;
   }
 
   async writeHeader(): Promise<void> {
@@ -118,7 +126,24 @@ export class TsvWriter {
     await this.stream.write(header);
   }
 
-  async flush(): Promise<void> {
+  /**
+   * Flush the buffered rows to the stream. Flushes are serialized on a single
+   * chain, so callers (the periodic timer, the row-count trigger, and close())
+   * never overlap. Each turn drains whatever is buffered at that moment, so
+   * back-to-back flushes are safe and never double-write. The returned promise
+   * rejects if this flush's write fails, while the internal chain stays resolved
+   * so subsequent flushes still run.
+   */
+  flush(): Promise<void> {
+    const next = this.flushChain.then(
+      () => this.drainBuffer(),
+      () => this.drainBuffer(),
+    );
+    this.flushChain = next.catch(() => {});
+    return next;
+  }
+
+  private async drainBuffer(): Promise<void> {
     if (this.writeBuffer.length === 0) return;
     const data = this.writeBuffer.join('');
     this.writeBuffer = [];
@@ -158,6 +183,12 @@ export class TsvWriter {
       throw new Error(`Invalid Parameter values column count: expected ${this.paramChannels}, got ${paramValues.length}.`);
     }
     this.writeBuffer.push(formatTsvRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, paramValues, this.physicalPrecision));
+    // Row-count-based flush: cap each flush's work regardless of sampling rate so
+    // the join()+write() cost stays bounded (whichever comes first with the
+    // periodic timer). Fire-and-forget; errors are logged, mirroring the timer.
+    if (this.flushMaxRows > 0 && this.writeBuffer.length >= this.flushMaxRows) {
+      this.flush().catch((err) => console.error('TSV auto-flush error:', err));
+    }
   }
 
   async close(): Promise<void> {
@@ -177,6 +208,7 @@ export class TsvWriter {
  * @param suggestedName - Suggested filename (default: auto-generated with timestamp)
  * @param physicalPrecision - Decimal places for physical values (default: 3)
  * @param paramChannels - Number of Parameter channels (default: 0)
+ * @param flushMaxRows - Buffered-row count that triggers a flush (0 disables; default: 0)
  * @returns TsvWriter instance
  * @throws Error if File System Access API is not supported
  */
@@ -185,7 +217,8 @@ export async function createTsvWriter(
   aoChannels: number,
   suggestedName?: string,
   physicalPrecision: number = 3,
-  paramChannels: number = 0
+  paramChannels: number = 0,
+  flushMaxRows: number = 0
 ): Promise<TsvWriter> {
   if (!('showSaveFilePicker' in window)) {
     throw new Error('File System Access API not supported in this browser');
@@ -206,7 +239,7 @@ export async function createTsvWriter(
   });
 
   const stream = await fileHandle.createWritable();
-  const writer = new TsvWriter(stream, aiChannels, aoChannels, physicalPrecision, fileHandle.name, paramChannels);
+  const writer = new TsvWriter(stream, aiChannels, aoChannels, physicalPrecision, fileHandle.name, paramChannels, flushMaxRows);
 
   await writer.writeHeader();
 

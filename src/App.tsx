@@ -30,6 +30,7 @@ import {
   KEEP_LATEST_TRIM_INTERVAL,
   PROMISE_CHAIN_RESET_INTERVAL,
   TSV_FLUSH_INTERVAL_MS,
+  TSV_FLUSH_MAX_ROWS,
 } from './constants';
 import {
   aiToPhysical,
@@ -1243,7 +1244,7 @@ function App() {
 
   const handleStartSave = async () => {
     try {
-      const writer = await createTsvWriter(AI_CHANNELS, AO_CHANNELS, undefined, 3, PARAM_CHANNELS);
+      const writer = await createTsvWriter(AI_CHANNELS, AO_CHANNELS, undefined, 3, PARAM_CHANNELS, TSV_FLUSH_MAX_ROWS);
       const startedAt = Date.now();
 
       pendingDataPoints.current = [];

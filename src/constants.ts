@@ -28,3 +28,10 @@ export const BATCH_FLUSH_INTERVAL_MS = 100;
 export const KEEP_LATEST_TRIM_INTERVAL = 10;
 export const PROMISE_CHAIN_RESET_INTERVAL = 100;
 export const TSV_FLUSH_INTERVAL_MS = 60_000;
+// Row-count flush cap for TSV saving. The writer flushes on whichever comes
+// first: this many buffered rows, or TSV_FLUSH_INTERVAL_MS. This bounds the
+// per-flush join()+write() cost so a single large periodic flush (which grows
+// with the sampling rate) becomes many small sub-frame flushes, avoiding the
+// periodic main-thread hitch at high sampling rates (e.g. 50/100 Hz). The
+// interval remains the low-sampling-rate durability fallback.
+export const TSV_FLUSH_MAX_ROWS = 500;
