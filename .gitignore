@@ -5,3 +5,9 @@ package-lock.json
 npm-debug.log*
 dist
 .DS_Store
+
+# Launcher build artifacts
+launcher/embedded.generated.ts
+launcher/icon.ico
+/modbus_simple_logger.exe
+/modbus_simple_logger

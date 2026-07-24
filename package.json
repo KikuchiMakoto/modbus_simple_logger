@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "bunx vite dev",
     "build": "bunx vite build",
-    "preview": "bunx vite preview"
+    "preview": "bunx vite preview",
+    "launcher:dev": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/main.ts",
+    "launcher:build": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/build.ts"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
