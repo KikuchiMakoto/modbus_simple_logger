@@ -12,6 +12,10 @@ interface ChartPanelProps {
   color: string;
   dataPoints: DataPoint[];
   displayRevision: number;
+  /** Used as the Plot's React key: bumping it unmounts the old plot (which
+   * runs Plotly.purge, freeing its WebGL/regl resources) and mounts a fresh
+   * one, bounding GPU-side accumulation over long sessions. */
+  purgeEpoch: number;
   axisOptions: AxisOption[];
   xAxis: string;
   yAxis: string;
@@ -94,6 +98,7 @@ function ChartPanelComponent({
   color,
   dataPoints,
   displayRevision,
+  purgeEpoch,
   axisOptions,
   xAxis,
   yAxis,
@@ -247,6 +252,7 @@ function ChartPanelComponent({
         </div>
       ) : (
         <NormalizedPlot
+          key={purgeEpoch}
           data={plotData}
           layout={plotLayout}
           config={plotConfig}

@@ -21,6 +21,16 @@ export const NON_SAVING_CHART_WINDOW_MS = 60_000;
 // and feeds WebGL/regl resource churn. Coalescing redraws to ~5 fps keeps the
 // live view responsive while cutting steady GPU/React cost roughly in half.
 export const CHART_REDRAW_INTERVAL_MS = 200;
+// Periodic full chart rebuild (Plotly purge + fresh mount). Plotly.react reuses
+// its WebGL/regl resources across in-place updates, and scattergl is known to
+// accumulate GPU-side state over many updates — the one remaining way long
+// sessions could get progressively heavier. Rebuilding at the save-path
+// re-decimation (a natural visual discontinuity where half the points are
+// dropped anyway) and at latest every this many ms of continuous plotting
+// bounds that accumulation. Re-decimation intervals double each time (~100 s,
+// ~200 s, ... at 20 Hz), so the time fallback covers the late-save and
+// not-saving phases where re-decimations no longer occur.
+export const CHART_PURGE_INTERVAL_MS = 15 * 60_000;
 
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;

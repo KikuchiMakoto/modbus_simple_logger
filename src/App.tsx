@@ -25,6 +25,7 @@ import {
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
+  CHART_PURGE_INTERVAL_MS,
   NON_SAVING_CHART_WINDOW_MS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
@@ -260,6 +261,9 @@ function App() {
   const [saveElapsedMs, setSaveElapsedMs] = useState(0);
   const [savePointCount, setSavePointCount] = useState(0);
   const [displayRevision, setDisplayRevision] = useState(0);
+  // Bumped to force a full Plotly purge + remount of every chart (used as the
+  // Plot's React key). See CHART_PURGE_INTERVAL_MS in constants.ts.
+  const [chartEpoch, setChartEpoch] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hx711CalibrationPanelOpen, setHx711CalibrationPanelOpen] = useState(false);
   const [ads1115CalibrationPanelOpen, setAds1115CalibrationPanelOpen] = useState(false);
@@ -298,6 +302,7 @@ function App() {
   const displayUpdateCountRef = useRef(0);
   const flushTimerRef = useRef<number | undefined>(undefined);
   const chartRedrawTimerRef = useRef<number | undefined>(undefined);
+  const lastChartPurgeAtRef = useRef(Date.now());
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
@@ -444,6 +449,12 @@ function App() {
         for (let i = 0; i < buffer.length; i += 2) decimated.push(buffer[i]);
         dataBufferRef.current = decimated;
         saveDecimationStrideRef.current *= 2;
+        // Re-decimation replaces the whole trace anyway (half the points are
+        // dropped), so it is the least disruptive moment for a full chart
+        // rebuild — purge Plotly's WebGL/regl state here to keep long-session
+        // GPU-side accumulation bounded.
+        lastChartPurgeAtRef.current = Date.now();
+        setChartEpoch((v) => v + 1);
       }
     } else {
       // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
@@ -477,6 +488,14 @@ function App() {
           console.error('Error trimming data points:', err);
         });
       }
+    }
+
+    // Time fallback for the purge above: re-decimation intervals double each
+    // time (and never occur while not saving), so also rebuild the charts after
+    // CHART_PURGE_INTERVAL_MS of continuous plotting without one.
+    if (Date.now() - lastChartPurgeAtRef.current >= CHART_PURGE_INTERVAL_MS) {
+      lastChartPurgeAtRef.current = Date.now();
+      setChartEpoch((v) => v + 1);
     }
 
     // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
@@ -1615,6 +1634,7 @@ function App() {
         <ChartPanel
           color="#34d399"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart1X}
@@ -1626,6 +1646,7 @@ function App() {
         <ChartPanel
           color="#60a5fa"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart2X}
@@ -1637,6 +1658,7 @@ function App() {
         <ChartPanel
           color="#f472b6"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart3X}
@@ -1648,6 +1670,7 @@ function App() {
         <ChartPanel
           color="#fbbf24"
           dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
           xAxis={chart4X}
