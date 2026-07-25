@@ -1,4 +1,13 @@
-import { type CSSProperties, type ComponentType, memo, useCallback, useMemo, useState } from 'react';
+import {
+  type CSSProperties,
+  type ComponentType,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
@@ -71,6 +80,28 @@ function detectRenderBackend(graphDiv: HTMLElement): RenderBackend {
   return { api, accel: software ? 'CPU' : 'GPU', detail: renderer };
 }
 
+// Force-release the WebGL context(s) behind a graph div.
+//
+// `Plotly.purge()` — which react-plotly.js calls on unmount — does NOT destroy
+// the scattergl (regl) WebGL context: plotly.js issue #2852 and the still-open
+// #6365. Without this, every chart rebuild allocates a new context and leaks the
+// old one, and once the browser's ~8-16 context budget is exhausted it drops the
+// oldest contexts and those charts silently stop rendering. WEBGL_lose_context
+// is the established workaround: it tells the driver to drop the context now
+// rather than whenever GC happens to collect the canvas.
+//
+// Both context types are probed because getContext() only returns the context
+// that was actually created — asking for 'webgl2' on a 'webgl' canvas yields null.
+function releaseWebglContext(graphDiv: HTMLElement) {
+  for (const canvas of Array.from(graphDiv.querySelectorAll('canvas'))) {
+    const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as
+      | WebGLRenderingContext
+      | WebGL2RenderingContext
+      | null;
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+}
+
 type AxisDescriptor =
   | { kind: 'time' }
   | { kind: 'raw'; index: number }
@@ -122,7 +153,18 @@ function ChartPanelComponent({
   const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
 
   const [backend, setBackend] = useState<RenderBackend | null>(null);
+  // Last graph div handed to us by react-plotly.js. Tracked so the WebGL context
+  // of a replaced chart can be released explicitly — see releaseWebglContext.
+  const graphDivRef = useRef<HTMLElement | null>(null);
+
   const handleGraphDiv = useCallback((_figure: unknown, graphDiv: HTMLElement) => {
+    // A different div means the previous chart was remounted (purgeEpoch bump).
+    // react-plotly.js already purged it, but the purge leaves the WebGL context
+    // alive, so drop it here before it accumulates.
+    const previous = graphDivRef.current;
+    if (previous && previous !== graphDiv) releaseWebglContext(previous);
+    graphDivRef.current = graphDiv;
+
     const next = detectRenderBackend(graphDiv);
     setBackend((prev) =>
       prev && prev.api === next.api && prev.accel === next.accel && prev.detail === next.detail
@@ -130,6 +172,16 @@ function ChartPanelComponent({
         : next,
     );
   }, []);
+
+  // Release the last context when the panel itself goes away (chart count change,
+  // route teardown, HMR) — the remount path above never sees this one.
+  useEffect(
+    () => () => {
+      if (graphDivRef.current) releaseWebglContext(graphDivRef.current);
+      graphDivRef.current = null;
+    },
+    [],
+  );
 
   const palette = useMemo(
     () =>
@@ -190,6 +242,18 @@ function ChartPanelComponent({
           mode: 'lines' as const,
           line: { color, width: 1.5 },
           name: `${yAxis} vs ${xAxis}`,
+          // scattergl builds a spatial pick-index for hover, and that cost
+          // scales with CHART_MAX_POINTS. Nothing here consumes hover: there is
+          // no hovertemplate and no onHover/onClick handler on the Plot, so the
+          // index is pure waste. 'skip' suppresses both the hover labels and the
+          // hover/click events ('none' would keep firing events).
+          //
+          // Trade-off: this also removes the user's ability to hover a point and
+          // read its value. Deleting this line restores it — but CHART_MAX_POINTS
+          // was raised to 2048 on the assumption it is set, so drop it back to
+          // 1024 at the same time. (Effect not yet measured on-device; see
+          // docs/chart-library-comparison.md §11-1.)
+          hoverinfo: 'skip' as const,
         },
       ],
       xRange: paddedRange(xMin, xMax, 0.1),
@@ -222,6 +286,11 @@ function ChartPanelComponent({
           : { autorange: true as const }),
       },
       margin: { t: 30, r: 30, b: 50, l: 50 },
+      // Belt-and-braces with the trace's `hoverinfo: 'skip'`: stops Plotly from
+      // running hover hit-testing on mousemove at all. On its own this would
+      // only hide the labels (plotly.js#1987 — the spike lines still render),
+      // which is why both are set.
+      hovermode: false as const,
       uirevision: `${xAxis}-${yAxis}`,
       datarevision: displayRevision,
     }),
