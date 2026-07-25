@@ -50,6 +50,7 @@ src/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ストリーミングライター（File System Access API）
+    ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
     ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
 public/

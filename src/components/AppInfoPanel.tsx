@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { FloatingWindow } from './FloatingWindow';
+import { probeRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 
 const LIBRARIES = [
   { name: 'React', version: '19.2', license: 'MIT' },
@@ -19,6 +21,14 @@ const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? 'unknown';
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'modbus_simple_logger';
 
 export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const backend = useRenderBackend();
+
+  // Charts publish the backend once they render, but with no data yet there is
+  // no chart to ask — probe the browser directly so the panel is never blank.
+  useEffect(() => {
+    if (open && !backend) reportRenderBackend(probeRenderBackend());
+  }, [open, backend]);
+
   return (
     <FloatingWindow open={open} onClose={onClose} title="App Info" defaultWidth={384} defaultHeight={560}>
       <div className="flex flex-col gap-4 p-2 text-sm text-slate-700 dark:text-slate-200">
@@ -61,6 +71,37 @@ export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => 
                 </a>
               </dd>
             </div>
+          </dl>
+        </div>
+
+        <div>
+          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Chart Rendering</h4>
+          <dl className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-slate-500 dark:text-slate-400">Backend</dt>
+              <dd className="flex items-center gap-2">
+                <span className="font-mono">{backend ? backend.api : 'detecting…'}</span>
+                {backend?.accel && (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[0.6rem] font-semibold leading-none ${
+                      backend.accel === 'GPU'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                    }`}
+                  >
+                    {backend.accel}
+                  </span>
+                )}
+              </dd>
+            </div>
+            {backend && (
+              <div className="flex justify-between gap-3">
+                <dt className="shrink-0 text-slate-500 dark:text-slate-400">Renderer</dt>
+                <dd className="break-all text-right text-xs text-slate-600 dark:text-slate-300">
+                  {backend.detail}
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
 
