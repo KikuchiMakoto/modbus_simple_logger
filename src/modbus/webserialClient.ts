@@ -33,10 +33,34 @@ class AsyncMutex {
   }
 }
 
+/**
+ * Result of one `reader.read()`, with rejections captured instead of thrown.
+ *
+ * A read that is abandoned because its deadline expired stays pending in
+ * `pendingRead`; if it later rejects and nobody is awaiting it yet, a raw
+ * promise would surface as an unhandled rejection. Capturing the error keeps
+ * the parked promise inert until the next reader picks it up.
+ */
+type ReadOutcome =
+  | { ok: true; result: ReadableStreamReadResult<Uint8Array> }
+  | { ok: false; error: unknown };
+
+/** Minimum spacing between automatic port-reopen attempts after a dead stream. */
+const REOPEN_THROTTLE_MS = 2000;
+
 export class WebSerialModbusClient {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  /**
+   * The read() that is currently in flight, if any. Parked here (never
+   * cancelled) so a transfer that gives up waiting does not destroy the
+   * stream — see readChunk() for why cancelling is fatal on mobile.
+   */
+  private pendingRead: Promise<ReadOutcome> | null = null;
+  /** True once a read reported `done` or threw: the stream can never recover. */
+  private streamDead = false;
+  private lastReopenAttemptAt = 0;
   private slaveId: number;
   private serialSettings: SerialSettings;
   private serialApi: Serial;
@@ -186,6 +210,9 @@ export class WebSerialModbusClient {
 
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
+    this.pendingRead = null;
+    this.streamDead = false;
+    this.lastReopenAttemptAt = 0;
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
 
     return true;
@@ -206,6 +233,10 @@ export class WebSerialModbusClient {
     if (this.writer) {
       console.info(`${this.debugPrefix} closing writer`);
       try { await this.writer.close(); } catch (err) { console.warn(`${this.debugPrefix} writer close failed`, err); }
+      // close() finishes the stream but keeps the writer's lock; port.close()
+      // throws on a still-locked writable, which would leave the USB device
+      // claimed and make the next Connect fail.
+      try { this.writer.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} writer releaseLock failed`, err); }
       this.writer = null;
     }
 
@@ -215,6 +246,8 @@ export class WebSerialModbusClient {
       this.port = null;
     }
 
+    this.pendingRead = null;
+    this.streamDead = false;
     this.disconnecting = false;
     console.info(`${this.debugPrefix} disconnect() complete`);
   }
@@ -227,6 +260,31 @@ export class WebSerialModbusClient {
     if (!this.port || !this.reader || !this.writer) {
       throw new Error('Device not connected');
     }
+  }
+
+  /**
+   * Like ensureReady(), but first tries to rebuild the stream locks when the
+   * port is still open and only its readable/writable side was lost (e.g. a
+   * previous reopen attempt failed halfway). Without this, one failed reopen
+   * would leave every later transfer failing at ensureReady() with no path
+   * back — the device would stay silent until the user reconnects by hand.
+   * Must be called while holding the transfer mutex.
+   */
+  private async ensureReadyOrRecover(): Promise<void> {
+    if (this.port && !this.disconnecting && (!this.reader || !this.writer)) {
+      const now = Date.now();
+      if (now - this.lastReopenAttemptAt >= REOPEN_THROTTLE_MS) {
+        this.lastReopenAttemptAt = now;
+        console.warn(`${this.debugPrefix} streams missing; reopening port`);
+        try {
+          await this.reopenPort();
+          console.info(`${this.debugPrefix} port reopened before transfer`);
+        } catch (err) {
+          console.error(`${this.debugPrefix} port reopen failed`, err);
+        }
+      }
+    }
+    this.ensureReady();
   }
 
   private buildFrame(functionCode: number, payload: number[]): Uint8Array {
@@ -246,71 +304,101 @@ export class WebSerialModbusClient {
   }
 
   /**
-   * Drain and discard stale bytes from receive buffer.
-   * Uses a short read window to avoid blocking regular polling.
+   * Read one chunk from the serial port, giving up after `timeoutMs`.
+   *
+   * The in-flight `read()` is parked in `this.pendingRead` and re-awaited by
+   * the next caller instead of being cancelled. Cancelling is deliberately
+   * avoided: it is unrecoverable behind the WebUSB polyfill used on mobile.
+   * That polyfill's `UsbEndpointUnderlyingSource` has no `cancel` hook, so
+   * `reader.cancel()` merely closes the ReadableStream while
+   * `SerialPort.readable` keeps handing back that same closed stream — every
+   * later `read()` then resolves `{ done: true }` forever, which stalls
+   * polling at 0 Hz with the UI still showing a live connection. Parking the
+   * read also keeps the bytes: they are handed to whoever reads next rather
+   * than thrown away with the reader.
+   *
+   * @param timeoutMs - How long to wait for bytes before giving up.
+   * @returns The chunk, or null when the deadline expired first.
+   * @throws If the stream is closed or errored (marks the stream dead).
+   */
+  private async readChunk(timeoutMs: number): Promise<Uint8Array | null> {
+    const reader = this.reader;
+    if (!reader) {
+      throw new Error('Device not connected');
+    }
+    if (!this.pendingRead) {
+      this.pendingRead = reader.read().then(
+        (result): ReadOutcome => ({ ok: true, result }),
+        (error): ReadOutcome => ({ ok: false, error }),
+      );
+    }
+    const pending = this.pendingRead;
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race<ReadOutcome | null>([
+      pending,
+      new Promise<null>((resolve) => {
+        timeoutId = setTimeout(() => resolve(null), Math.max(0, timeoutMs));
+      }),
+    ]);
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+
+    // Deadline hit first: leave `pendingRead` in place so the bytes are not
+    // lost and the reader stays usable.
+    if (outcome === null) {
+      return null;
+    }
+
+    this.pendingRead = null;
+    if (!outcome.ok) {
+      this.streamDead = true;
+      throw outcome.error instanceof Error ? outcome.error : new Error(String(outcome.error));
+    }
+    const { value, done } = outcome.result;
+    if (done) {
+      this.streamDead = true;
+      throw new Error('Stream closed unexpectedly');
+    }
+    return value ?? new Uint8Array(0);
+  }
+
+  /**
+   * Drain and discard stale bytes from the receive buffer.
+   *
+   * Runs after a failed transfer so a late response cannot be mistaken for
+   * the answer to the next request. Uses a short read window to avoid
+   * blocking regular polling, and never cancels the reader (see readChunk).
+   *
+   * @param maxFlushMs - Drain window; defaults to 80 ms on the WebUSB
+   *   polyfill (slower turnaround) and 30 ms on native Web Serial.
    */
   private async flushReceiveBuffer(maxFlushMs?: number): Promise<void> {
-    if (!this.reader || !this.port?.readable) {
+    if (!this.reader || this.streamDead) {
       return;
     }
     const effectiveMaxFlushMs = maxFlushMs ?? (this.isUsingPolyfill ? 80 : 30);
 
-    const reader = this.reader;
     const start = Date.now();
     let discardedBytes = 0;
 
     while (true) {
-      const elapsedMs = Date.now() - start;
-      if (elapsedMs >= effectiveMaxFlushMs) {
+      const remainingMs = effectiveMaxFlushMs - (Date.now() - start);
+      if (remainingMs <= 0) break;
+
+      let chunk: Uint8Array | null;
+      try {
+        chunk = await this.readChunk(remainingMs);
+      } catch (readError) {
+        // Stream is closed or errored; recoverAfterTransferError() reopens it.
+        console.warn(`${this.debugPrefix} flushReceiveBuffer() read failed`, readError);
         break;
       }
-      const remainingMs = effectiveMaxFlushMs - elapsedMs;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const readResult = await Promise.race<ReadableStreamReadResult<Uint8Array> | null>([
-        reader.read(),
-        new Promise<null>((resolve) => {
-          timeoutId = setTimeout(() => resolve(null), remainingMs);
-        }),
-      ]);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+      // No more stale bytes arrived within the window.
+      if (chunk === null) break;
 
-      if (readResult === null) {
-        // Timed out waiting for additional bytes: cancel pending read and recreate reader lock.
-        try {
-          await reader.cancel();
-        } catch (cancelError) {
-          console.debug(`${this.debugPrefix} flushReceiveBuffer() cancel failed`, cancelError);
-        }
-        try {
-          reader.releaseLock();
-        } catch (releaseError) {
-          console.debug(`${this.debugPrefix} flushReceiveBuffer() releaseLock failed`, releaseError);
-        }
-        if (this.port.readable) {
-          try {
-            this.reader = this.port.readable.getReader();
-          } catch (getReaderError) {
-            console.warn(`${this.debugPrefix} flushReceiveBuffer() getReader failed`, getReaderError);
-            this.reader = null;
-            await this.disconnect();
-            return;
-          }
-        } else {
-          this.reader = null;
-          await this.disconnect();
-          return;
-        }
-        break;
-      }
-
-      const { value, done } = readResult;
-      if (done || !value || value.length === 0) {
-        break;
-      }
-
-      discardedBytes += value.length;
+      discardedBytes += chunk.length;
     }
 
     if (discardedBytes > 0) {
@@ -318,8 +406,80 @@ export class WebSerialModbusClient {
     }
   }
 
+  /**
+   * Close and re-open the port, rebuilding both stream locks.
+   *
+   * The only way back from a dead ReadableStream: `SerialPort.readable` keeps
+   * returning the closed stream until the port is re-opened (the WebUSB
+   * polyfill rebuilds it in `close()`, native Web Serial in `open()`). No user
+   * gesture is needed — the port permission is already granted.
+   *
+   * @throws If the port cannot be re-opened.
+   */
+  private async reopenPort(): Promise<void> {
+    const port = this.port;
+    if (!port) {
+      throw new Error('Device not connected');
+    }
+
+    // Both streams must be unlocked before close(), or it throws.
+    try { this.reader?.releaseLock(); } catch (err) { console.debug(`${this.debugPrefix} reopenPort() reader releaseLock failed`, err); }
+    try { this.writer?.releaseLock(); } catch (err) { console.debug(`${this.debugPrefix} reopenPort() writer releaseLock failed`, err); }
+    this.reader = null;
+    this.writer = null;
+    this.pendingRead = null;
+
+    try { await port.close(); } catch (err) { console.warn(`${this.debugPrefix} reopenPort() close failed`, err); }
+    await port.open({
+      baudRate: this.serialSettings.baudRate,
+      dataBits: this.serialSettings.dataBits,
+      stopBits: this.serialSettings.stopBits,
+      parity: this.serialSettings.parity,
+    });
+    if (!port.readable || !port.writable) {
+      throw new Error('Port streams are not available after reopen');
+    }
+
+    this.reader = port.readable.getReader();
+    this.writer = port.writable.getWriter();
+    this.streamDead = false;
+    this.lastTransferTime = 0;
+  }
+
+  /**
+   * Best-effort recovery run after every failed transfer.
+   *
+   * A live stream only needs its stale bytes drained. A dead one needs the
+   * port re-opened, throttled to REOPEN_THROTTLE_MS so a permanently
+   * unplugged device does not spin on reopen attempts every polling cycle.
+   */
+  private async recoverAfterTransferError(): Promise<void> {
+    if (!this.streamDead) {
+      try {
+        await this.flushReceiveBuffer();
+      } catch (flushErr) {
+        console.warn(`${this.debugPrefix} flush after error failed`, flushErr);
+      }
+    }
+    if (!this.streamDead) return;
+
+    const now = Date.now();
+    if (now - this.lastReopenAttemptAt < REOPEN_THROTTLE_MS) return;
+    this.lastReopenAttemptAt = now;
+
+    console.warn(`${this.debugPrefix} serial stream is dead; reopening port`);
+    try {
+      await this.reopenPort();
+      console.info(`${this.debugPrefix} port reopened after dead stream`);
+    } catch (reopenErr) {
+      console.error(`${this.debugPrefix} port reopen failed`, reopenErr);
+    }
+  }
+
   private async transfer(frame: Uint8Array, expectedLength: number, timeout = 1000): Promise<DataView> {
-    this.ensureReady();
+    if (!this.port) {
+      throw new Error('Device not connected');
+    }
     console.debug(`${this.debugPrefix} transfer() queued`, {
       expectedLength,
       timeout,
@@ -333,8 +493,10 @@ export class WebSerialModbusClient {
 
     const startTime = Date.now();
     try {
+      // Inside the mutex so a recovering reopen cannot race a concurrent
+      // transfer, and so the readiness check sees the rebuilt streams.
+      await this.ensureReadyOrRecover();
       const writer = this.writer!;
-      const reader = this.reader!;
 
       // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)
       const now = Date.now();
@@ -357,52 +519,22 @@ export class WebSerialModbusClient {
       const buffer: number[] = [];
 
       while (buffer.length < expectedLength) {
-        const elapsedMs = Date.now() - startTime;
-        if (elapsedMs >= timeout) {
+        const remainingMs = timeout - (Date.now() - startTime);
+        if (remainingMs <= 0) {
           throw new Error('Timeout waiting for response');
         }
-        const remainingMs = timeout - elapsedMs;
-        const readResult = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
-          let settled = false;
-          const timeoutId = setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            reject(new Error('Timeout waiting for response'));
-          }, remainingMs);
-          reader.read().then(
-            (result) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeoutId);
-              resolve(result);
-            },
-            (readError) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeoutId);
-              reject(readError);
-            },
-          );
-        });
-
-        const { value, done } = readResult;
-        if (done) {
-          throw new Error('Stream closed unexpectedly');
-        }
-        if (value) {
-          for (let i = 0; i < value.length; i++) buffer.push(value[i]);
-          if (this.verboseFrameLogging) {
-            console.debug(`${this.debugPrefix} transfer() read chunk`, {
-              chunkLength: value.length,
-              totalBuffered: buffer.length,
-              chunkHex: this.toHexString(value),
-            });
-          }
+        const chunk = await this.readChunk(remainingMs);
+        if (chunk === null) {
+          throw new Error('Timeout waiting for response');
         }
 
-        // Check if we have enough data
-        if (buffer.length >= expectedLength) {
-          break;
+        for (let i = 0; i < chunk.length; i++) buffer.push(chunk[i]);
+        if (this.verboseFrameLogging && chunk.length > 0) {
+          console.debug(`${this.debugPrefix} transfer() read chunk`, {
+            chunkLength: chunk.length,
+            totalBuffered: buffer.length,
+            chunkHex: this.toHexString(chunk),
+          });
         }
       }
 
@@ -453,21 +585,7 @@ export class WebSerialModbusClient {
         elapsedMs: Date.now() - startTime,
         error: err,
       });
-      try {
-        await this.flushReceiveBuffer();
-      } catch (flushErr) {
-        console.warn(`${this.debugPrefix} transfer() flush after error failed`, flushErr);
-        if (this.reader && this.port?.readable) {
-          try { await this.reader.cancel(); } catch { /* ignore */ }
-          try { this.reader.releaseLock(); } catch { /* ignore */ }
-          try {
-            this.reader = this.port.readable.getReader();
-          } catch {
-            this.reader = null;
-            await this.disconnect();
-          }
-        }
-      }
+      await this.recoverAfterTransferError();
       throw err;
     } finally {
       // Always release the mutex
