@@ -87,7 +87,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
 - **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
   - 非保存時: 直近 `NON_SAVING_CHART_WINDOW_MS`（60s）のスライディング時間窓
-  - 保存時: 保存開始〜現在の全期間を `CHART_MAX_POINTS`(4096) へストライド間引き（`saveDecimationStrideRef`/`saveRawCounterRef`、バッファが 2×超で偶数 index 再間引き＆stride 倍化 → メモリ一定）
+  - 保存時: 保存開始〜現在の全期間を `CHART_MAX_POINTS`(2048) へストライド間引き（`saveDecimationStrideRef`/`saveRawCounterRef`、バッファが 2×超で偶数 index 再間引き＆stride 倍化 → メモリ一定）
   - 共通上限 `CHART_MAX_POINTS`。`MAX_POINTS_IN_MEMORY`(256) は IndexedDB trim 専用
 - ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファ更新と IndexedDB バッチ書込みを実施）
 - `pageshow` / `visibilitychange` による復帰時即時ポーリング（`acquiring` 状態を ref で確認）
@@ -151,7 +151,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 | `OUTPUT_HOLDING_RETRY_WINDOW_MS` | 60000 | AO 書込みリトライ制限の評価ウィンドウ |
 | `OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AO 書込み最大失敗回数 |
 | `MAX_POINTS_IN_MEMORY` | 256 | 非保存時の IndexedDB 保持点数（trim 専用） |
-| `CHART_MAX_POINTS` | 4096 | チャート描画点数の上限（保存時ダウンサンプル目標） |
+| `CHART_MAX_POINTS` | 2048 | チャート描画点数の上限（保存時ダウンサンプル目標）。v3.1 で 1024→2048 |
 | `NON_SAVING_CHART_WINDOW_MS` | 60000 | 非保存時チャートのスライディング時間窓 |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
 | `BATCH_FLUSH_INTERVAL_MS` | 100 | バッチフラッシュの最大遅延 |
@@ -161,6 +161,12 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 通信方式は「Web Serial API」を基準に記述する（WebUSB は polyfill 経由のフォールバック）
 - ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
 - **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
+- **`scattergl` は性能上の選択ではなくデータモデル上の必然**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。scatter トレースは点列を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**scatter 相当のパラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`
+- **`hoverinfo: 'skip'` + `hovermode: false` を外さないこと**（`ChartPanel.tsx`）。scattergl はホバー判定用の空間インデックスを毎更新で構築し、そのコストは `CHART_MAX_POINTS` に比例する。本アプリは `hovertemplate` も `onHover`/`onClick` も使っていないため純粋な無駄であり、これを止めた前提で `CHART_MAX_POINTS` を 2048 に上げている。**ホバーでの値読みを復活させる場合は `CHART_MAX_POINTS` を 1024 に戻すこと**
+- **WebGL コンテキストは明示的に解放する**（`ChartPanel.tsx` の `releaseWebglContext`）。`Plotly.purge()`（react-plotly.js がアンマウント時に呼ぶ）は scattergl の WebGL コンテキストを破棄しない（plotly.js #2852 / #6365、後者は未解決）。解放しないとチャート差し替えのたびにコンテキストが増え、ブラウザ上限（概ね 8〜16）に達した時点で**古いチャートが黙って描画を停止する**。v3.1 以前にあった定期パージ（15分ごとの remount）はこの問題を悪化させるだけだったため廃止した。**「GPU 状態が溜まるから定期的に作り直す」という対策を再導入しないこと**
+- **チャート間引きは描画モードで手法を変えること。** 時系列モード（X=time）は 1px ごとの **min/max 間引き**が使え、描画コストを O(点数)→O(ピクセル幅) に落としつつ尖頭値を保存できる。**XY パラメトリックモードでは min/max は使用不可** — 同一 x に往路と復路の異なる y が乗るため、列ごとの集約はループ形状（囲む面積＝散逸エネルギー）を破壊する。XY では連続ピクセルセル重複除去や RDP を用い、**周回ごとのドリフト情報を消さないこと**（グローバル重複除去は不可）。なお現行の stride 間引き（`App.tsx`）は 2 点に 1 点を無条件に捨てるため**単サンプル幅のスパイクを取りこぼす**。トレードオフ分析は `docs/chart-library-comparison.md` §4-4
+- **間引き・描画の計算を主スレッドで重くしないこと。** 本アプリはデータロガーであり Modbus ポーリングも主スレッドで回るため、**描画側の負荷はポーリング周期のジッタ＝計測品質の劣化に直結する**。取り込み時の間引きは O(1)/点 を維持し、再描画時の走査が数 ms を超えるなら Worker へ移すこと（`tsvWriterWorker` / `pyodideWorker` に前例あり）
+- **`detectRenderBackend()`（`ChartPanel.tsx`）の GPU/CPU バッジは概算**。Canvas2D は Chromium で GPU アクセラレーション対象だが、Skia は**アンチエイリアス付きの凹パス**（長い折れ線）を GPU でラスタライズできず CPU 経路に落ちるため、「Canvas2D=CPU」「WebGL=GPU」の二分法は**どちらの方向にも不正確**。描画方式の性能判断は必ず実機計測で行い、この表示を根拠にしないこと
 - **ビルドチャンク分割**（`vite.config.ts`）: Plotly 等の vendor を `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
 - **プリキャッシュ注入**（`vite.config.ts` の `precache-manifest` プラグイン）: ビルド時に `dist` の全アセットを走査し `dist/sw.js` の `PRECACHE_MANIFEST` / `CACHE_VERSION` / `APP_VERSION` を置換。`sw.js` 側のプレースホルダ（`const PRECACHE_MANIFEST = [];` / `const CACHE_VERSION = 'dev';` / `const APP_VERSION = '';`）の文字列を変更するとマッチしなくなり**オフライン動作や更新プロンプトのバージョン表示が壊れる**ため注意。アセット追加時は手書き不要（自動で含まれる）
 - **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
