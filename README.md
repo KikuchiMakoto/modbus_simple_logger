@@ -18,6 +18,7 @@
 | **リアルタイムチャート** | Plotly.js による2画面表示。X/Y 軸を Raw / Physical / Parameter（16ch）から選択。描画バックエンド（GPU/CPU）バッジ表示 |
 | **データ保存** | File System Access API による TSV ストリーミング保存。IndexedDB でセッション中データを FIFO 管理 |
 | **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / Tare を制御 |
+| **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
 | **PWA** | Service Worker プリキャッシュで完全オフライン動作。COOP/COEP で SharedArrayBuffer を有効化 |
 | **その他** | Wake Lock による計測中のスリープ抑止、ダークモード、JetBrains Mono 同梱、アプリ内マニュアル |
 
@@ -54,6 +55,7 @@ Web 版（GitHub Pages / PWA）に加えて、**単一の実行ファイルで�
 - **キャッシュ不使用** — ランチャーモードでは Service Worker を登録せず（過去に登録済みの SW があれば解除）、全レスポンスに `Cache-Control: no-store` を付与。ETag / Last-Modified も返しません。exe を再ビルドすれば、再起動時に必ず最新の内容が表示されます（陳腐化キャッシュ事故が原理的に起きません）。
 - **クロスオリジン分離** — 配信サーバーが全レスポンスに COOP/COEP を付与するため、SharedArrayBuffer（Pyodide Worker）と ScriptRunner がそのまま動作します。
 - **専用プロファイル** — ブラウザは専用の `--user-data-dir` で起動するため、通常のブラウザ設定・ディスクキャッシュと混ざりません。
+- **MCP サーバー内蔵**（デスクトップ版限定） — 生成 AI クライアントから計測値の読み取りと制御が行えます（下記）。
 
 > **注意（既知の制約）**: 表示に使う Chromium のバージョンは、インストール済みブラウザ（Edge / Chrome）側の更新に依存します。ランチャー exe 自体はブラウザを同梱しません。
 
@@ -65,6 +67,37 @@ bun run launcher:build   # 単一実行ファイルを launcher/bin/ に生成
 ```
 
 Windows は `modbus_simple_logger.exe`（アイコン付き・コンソール非表示）、Linux は同名バイナリを生成します。VS Code では `Ctrl+Shift+B`（Launcher: build exe）でもビルド可。生成した exe は手動で Release に配布してください。
+
+---
+
+## MCP サーバー（デスクトップ版限定）
+
+デスクトップ版は **MCP（Model Context Protocol）サーバー**を内蔵しており、Claude Code などの生成 AI クライアントから稼働中のロガーを観測・制御できます。Web 版（GitHub Pages / PWA）にはこの機能はありません（ブラウザサンドボックス内で完結するため外部プロセスからの接続口を持てません）。
+
+**エンドポイント**: `http://127.0.0.1:8765/mcp`（Streamable HTTP、127.0.0.1 のみ待受）
+
+```bash
+claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
+```
+
+**ツール**
+
+| 種別 | ツール |
+|------|--------|
+| 読取り（常時可） | `get_status` / `get_ai_raw(ch)` / `get_ai_phy(ch)` / `get_ao(ch)` / `get_param(ch)` / `read_recent(n)` / `get_script()` |
+| 書込み（要許可） | `set_ao(ch, volt)` / `set_param(ch, value)` / `set_ai_tare(ch)` / `run_script(code)` / `stop_script()` |
+
+API は ScriptRunner の Python API と同一面です。実装も共通で、MCP ツールは ScriptRunner と同じ共有メモリ・同じコールバックを経由します（`set_ao` は必ずアプリ側の送信経路を通るため、Modbus フレーム間隔などの制約はそのまま維持されます）。
+
+**動作ルール**
+
+- **書込みは既定で無効**。アプリのメニュー「MCP Access」で明示的に許可した場合のみ通ります。読取りは常時可能です。
+- **ScriptRunner は1つだけ**。MCP から実行したスクリプトと画面から実行したスクリプトは同一の実行系・同一のエディタ内容を共有するため、二重実行は起こりません。実行中は反対側からの起動を拒否し、`get_script()` でいつでも内容と状態を確認できます。MCP から投入したコードは実行前に退避され、ScriptRunner パネルの「Restore」で復元できます。
+- **直接書込みはスクリプト実行中は拒否**されます（制御ループと外部書込みの競合を防ぐため）。停止は `stop_script` で行えます。
+- **多重起動は先勝ち**。2つ目以降のインスタンスはポートを取得できないため MCP 無効で通常起動します（アプリ自体は問題なく動作します）。
+- 高速な制御ループは MCP の往復では回せません。`run_script` で Python をハードウェア側に投入してください。
+
+---
 
 > **メンテナンス上の注意**: `launcher/` は Tailwind v4 のコンテンツスキャン対象から除外するため `.gitignore` に登録しています（除外しないと launcher 内の文字列がアプリの CSS バンドルに混入し、Pages のビルド出力が変わってしまうため）。既存の `launcher/*.ts` はバージョン管理下にありますが、**新しいソースファイルを追加する際は `git add -f launcher/<file>` が必要**です。
 

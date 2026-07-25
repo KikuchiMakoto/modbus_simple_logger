@@ -3,6 +3,11 @@ import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
 
 const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
+const SCRIPT_RUNNER_BACKUP_KEY = 'scriptRunnerCodeBackup';
+
+// Who started the current (or most recent) run. The MCP bridge overwrites the
+// editor contents when it runs a script, so the UI needs to say so.
+export type ScriptSource = 'user' | 'mcp';
 
 export function useScriptRunner(
   setAo: (ch: number, data: number) => void,
@@ -14,6 +19,10 @@ export function useScriptRunner(
     return stored ?? getDefaultScript();
   });
   const [scriptRunning, setScriptRunning] = useState(false);
+  const [scriptSource, setScriptSource] = useState<ScriptSource>('user');
+  const [hasScriptBackup, setHasScriptBackup] = useState(
+    () => readJsonStorage<string>(SCRIPT_RUNNER_BACKUP_KEY) !== null,
+  );
   const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
     scriptRunnerSupported
       ? 'Idle'
@@ -26,26 +35,54 @@ export function useScriptRunner(
   const aiPhysicalShareRef = useRef<Float32Array | null>(null);
   const aoShareRef = useRef<Float32Array | null>(null);
   const paramShareRef = useRef<Float32Array | null>(null);
+  const scriptCodeRef = useRef(scriptCode);
+  scriptCodeRef.current = scriptCode;
+
+  // Allocate the shared buffers up front, independently of the Pyodide worker.
+  //
+  // These are not only the worker's data channel: the polling loop publishes AI
+  // values into them every cycle and the MCP bridge (desktop launcher) reads and
+  // writes the very same memory. Allocating them lazily with the worker would
+  // mean AI/AO/Parameter values are invisible to anything but ScriptRunner until
+  // a script is run once. Allocation is a few hundred bytes and the worker (the
+  // expensive part) stays lazy.
+  const ensureShares = useCallback((): boolean => {
+    if (aiRawShareRef.current) return true;
+    if (!scriptRunnerSupported) return false;
+
+    aiRawShareRef.current = new Float32Array(
+      new SharedArrayBuffer(AI_CHANNELS * Float32Array.BYTES_PER_ELEMENT),
+    );
+    aiPhysicalShareRef.current = new Float32Array(
+      new SharedArrayBuffer(AI_CHANNELS * Float32Array.BYTES_PER_ELEMENT),
+    );
+    aoShareRef.current = new Float32Array(
+      new SharedArrayBuffer(AO_CHANNELS * Float32Array.BYTES_PER_ELEMENT),
+    );
+    paramShareRef.current = new Float32Array(
+      new SharedArrayBuffer(PARAM_CHANNELS * Float32Array.BYTES_PER_ELEMENT),
+    );
+    interruptBufferRef.current = new Uint8Array(new SharedArrayBuffer(1));
+    return true;
+  }, [scriptRunnerSupported]);
+
+  useEffect(() => {
+    ensureShares();
+  }, [ensureShares]);
 
   const ensureWorkerReady = useCallback((): Worker => {
     if (pyWorkerRef.current) return pyWorkerRef.current;
-    if (!scriptRunnerSupported) {
+    if (!ensureShares()) {
       throw new Error(
         'ScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
       );
     }
 
-    const rawSab = new SharedArrayBuffer(AI_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
-    const phySab = new SharedArrayBuffer(AI_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
-    const aoSab = new SharedArrayBuffer(AO_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
-    const paramSab = new SharedArrayBuffer(PARAM_CHANNELS * Float32Array.BYTES_PER_ELEMENT);
-    const intSab = new SharedArrayBuffer(1);
-
-    aiRawShareRef.current = new Float32Array(rawSab);
-    aiPhysicalShareRef.current = new Float32Array(phySab);
-    aoShareRef.current = new Float32Array(aoSab);
-    paramShareRef.current = new Float32Array(paramSab);
-    interruptBufferRef.current = new Uint8Array(intSab);
+    const rawSab = aiRawShareRef.current!.buffer as SharedArrayBuffer;
+    const phySab = aiPhysicalShareRef.current!.buffer as SharedArrayBuffer;
+    const aoSab = aoShareRef.current!.buffer as SharedArrayBuffer;
+    const paramSab = paramShareRef.current!.buffer as SharedArrayBuffer;
+    const intSab = interruptBufferRef.current!.buffer as SharedArrayBuffer;
 
     const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (event: MessageEvent) => {
@@ -105,7 +142,9 @@ export function useScriptRunner(
     setScriptRunnerStatus(nextStatus);
   }, []);
 
-  const startScriptRunner = useCallback(async () => {
+  // `codeOverride` exists because a caller that has just set new code cannot
+  // rely on the `scriptCode` state having been applied yet (see runScriptFromMcp).
+  const startScriptRunner = useCallback(async (codeOverride?: string) => {
     if (scriptExecutingRef.current) return;
     try {
       const worker = ensureWorkerReady();
@@ -113,21 +152,44 @@ export function useScriptRunner(
       scriptExecutingRef.current = true;
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
-      worker.postMessage({ type: 'run', code: scriptCode });
+      worker.postMessage({ type: 'run', code: codeOverride ?? scriptCodeRef.current });
     } catch (err) {
       scriptExecutingRef.current = false;
       setScriptRunning(false);
       stopScriptRunner(`Error: ${(err as Error).message}`);
     }
-  }, [ensureWorkerReady, scriptCode, stopScriptRunner]);
+  }, [ensureWorkerReady, stopScriptRunner]);
 
   const toggleScriptRunner = useCallback(() => {
     if (scriptRunning) {
       stopScriptRunner('Stopped');
       return;
     }
+    setScriptSource('user');
     void startScriptRunner();
   }, [scriptRunning, startScriptRunner, stopScriptRunner]);
+
+  // Run code submitted over the MCP bridge. The editor is a single shared
+  // buffer, so the user's code is saved to a backup slot first and can be
+  // restored from the ScriptRunner panel.
+  const runScriptFromMcp = useCallback((code: string) => {
+    if (scriptExecutingRef.current) {
+      throw new Error('A script is already running. Call stop_script first.');
+    }
+    writeJsonStorage(SCRIPT_RUNNER_BACKUP_KEY, scriptCodeRef.current);
+    setHasScriptBackup(true);
+    scriptCodeRef.current = code;
+    setScriptCode(code);
+    setScriptSource('mcp');
+    void startScriptRunner(code);
+  }, [startScriptRunner]);
+
+  const restoreScriptBackup = useCallback(() => {
+    const backup = readJsonStorage<string>(SCRIPT_RUNNER_BACKUP_KEY);
+    if (backup === null) return;
+    scriptCodeRef.current = backup;
+    setScriptCode(backup);
+  }, []);
 
   const clearScriptCode = useCallback(() => {
     setScriptCode(getDefaultScript());
@@ -151,10 +213,14 @@ export function useScriptRunner(
     scriptCode,
     setScriptCode,
     scriptRunning,
+    scriptSource,
     scriptRunnerStatus,
     toggleScriptRunner,
     stopScriptRunner,
     clearScriptCode,
+    runScriptFromMcp,
+    restoreScriptBackup,
+    hasScriptBackup,
     aiRawShareRef,
     aiPhysicalShareRef,
     aoShareRef,

@@ -70,9 +70,11 @@ import { VoltageConfigPanel } from './components/VoltageConfigPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
+import { McpPanel } from './components/McpPanel';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
+import { useMcpBridge, type McpApi } from './hooks/useMcpBridge';
 import { serial as serialPolyfill } from 'web-serial-polyfill';
 
 function isMobileDevice(): boolean {
@@ -274,6 +276,7 @@ function App() {
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
+  const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -342,6 +345,8 @@ function App() {
       setManualPanelOpen(true);
     } else if (item === 'scriptRunner') {
       setScriptRunnerPanelOpen(true);
+    } else if (item === 'mcp') {
+      setMcpPanelOpen(true);
     }
   };
 
@@ -605,6 +610,59 @@ function App() {
     }, 200);
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
+
+  // --- MCP bridge (desktop exe only) -------------------------------------
+  //
+  // The launcher's MCP server owns no state; it relays tool calls here. The
+  // handlers below deliberately reuse the same sources the polling loop and the
+  // ScriptRunner use (aiRawSourceRef / aoRawSourceRef / the Parameter share /
+  // setAo / handleTareCalibration), so the MCP tools and the Python API cannot
+  // drift apart. There is exactly one ScriptRunner, so a script started over MCP
+  // and one started from the panel are the same run — never two.
+  const [mcpWriteEnabled, setMcpWriteEnabled] = useState(false);
+  const mcpApiRef = useRef<McpApi>(null as unknown as McpApi);
+  mcpApiRef.current = {
+    getAiRaw: (ch) => aiRawSourceRef.current[ch] ?? 0,
+    getAiPhy: (ch) =>
+      aiToPhysical(aiRawSourceRef.current[ch] ?? 0, aiCalibrationRef.current[ch] ?? { a: 0, b: 1, c: 0 }),
+    // AO state is held in millivolts; set_ao/get_ao speak volts like ScriptRunner.
+    getAo: (ch) => (aoRawSourceRef.current[ch] ?? 0) / 1000,
+    getParam: (ch) => scriptRunner.paramShareRef.current?.[ch] ?? 0,
+    getStatus: () => ({
+      connected,
+      polling: acquiringRef.current,
+      saving: activeSaveFilename !== '',
+      pollingIntervalMs: pollingRateRef.current,
+      serial: `${formatSerialSettings(serialSettings)} slave ${slaveId}`,
+      scriptRunning: scriptRunner.scriptRunning,
+      scriptSource: scriptRunner.scriptSource,
+      writeEnabled: mcpWriteEnabled,
+    }),
+    readRecent: (n) =>
+      dataBufferRef.current.slice(-n).map((point) => ({
+        seq: point.seq,
+        timestamp: point.timestamp,
+        raw: Array.from(point.aiRaw),
+        phy: Array.from(point.aiPhysical),
+        param: Array.from(point.param),
+      })),
+    getScript: () => ({
+      code: scriptRunner.scriptCode,
+      status: scriptRunner.scriptRunnerStatus,
+      running: scriptRunner.scriptRunning,
+      source: scriptRunner.scriptSource,
+    }),
+    setAo,
+    setParam: (ch, value) => {
+      const share = scriptRunner.paramShareRef.current;
+      if (!share) throw new Error('Parameter channels are unavailable (no cross-origin isolation).');
+      share[ch] = value;
+    },
+    setAiTare: handleTareCalibration,
+    runScript: scriptRunner.runScriptFromMcp,
+    stopScript: () => scriptRunner.stopScriptRunner('Stopped by MCP'),
+  };
+  const mcpBridge = useMcpBridge(mcpApiRef, mcpWriteEnabled);
 
   const handleScriptEditorKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Tab') return;
@@ -1697,6 +1755,7 @@ function App() {
         open={hamburgerMenuOpen}
         onClose={() => setHamburgerMenuOpen(false)}
         onSelectItem={handleMenuSelect}
+        showMcp={mcpBridge.bridgeConnected || mcpBridge.mcpEnabled}
       />
 
       <ModbusConfigPanel
@@ -1783,6 +1842,14 @@ function App() {
         scriptRunner={scriptRunner}
         onEditorKeyDown={handleScriptEditorKeyDown}
         channelLabels={{ ai: aiFreeLabels, ao: aoFreeLabels, param: paramFreeLabels }}
+      />
+
+      <McpPanel
+        open={mcpPanelOpen}
+        onClose={() => setMcpPanelOpen(false)}
+        bridge={mcpBridge}
+        writeEnabled={mcpWriteEnabled}
+        onWriteEnabledChange={setMcpWriteEnabled}
       />
     </div>
   );
