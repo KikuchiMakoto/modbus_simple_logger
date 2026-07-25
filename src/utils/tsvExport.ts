@@ -10,6 +10,7 @@
  * Pure formatting helpers live in ./tsvFormat and are re-exported here for
  * backward compatibility.
  */
+import type { FileSystemFileHandle } from '../types';
 import type {
   TsvInitMessage,
   TsvRowMessage,
@@ -128,6 +129,11 @@ class TsvWorkerWriter implements TsvSink {
  * @param paramChannels - Number of Parameter channels (default: 0)
  * @param flushMaxRows - Buffered-row count that triggers a flush (0 disables; default: 0)
  * @param onError - Called with a message when a worker write/flush/close fails
+ * @param onPickerSettled - Called as soon as the file picker closes (whether it
+ *   returned a handle or the user cancelled), before the worker opens the file.
+ *   On Android the picker is a separate system activity that backgrounds — and
+ *   may freeze — the page for as long as it is open, so callers use this to
+ *   bracket work that must not be in flight meanwhile.
  * @returns TsvSink instance (header already written)
  * @throws Error if File System Access API is not supported, the user cancels,
  *   or the worker fails to open the file
@@ -140,6 +146,7 @@ export async function createTsvWriter(
   paramChannels: number = 0,
   flushMaxRows: number = 0,
   onError: (message: string) => void = () => {},
+  onPickerSettled: () => void = () => {},
 ): Promise<TsvSink> {
   if (!('showSaveFilePicker' in window)) {
     throw new Error('File System Access API not supported in this browser');
@@ -149,15 +156,22 @@ export async function createTsvWriter(
   const defaultName = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}.tsv`;
   const filename = suggestedName ?? defaultName;
 
-  const fileHandle = await window.showSaveFilePicker({
-    suggestedName: filename,
-    types: [
-      {
-        description: 'TSV Files',
-        accept: { 'text/tab-separated-values': ['.tsv'] },
-      },
-    ],
-  });
+  let fileHandle: FileSystemFileHandle;
+  try {
+    fileHandle = await window.showSaveFilePicker({
+      suggestedName: filename,
+      types: [
+        {
+          description: 'TSV Files',
+          accept: { 'text/tab-separated-values': ['.tsv'] },
+        },
+      ],
+    });
+  } finally {
+    // Runs on cancel/error too, so a caller that paused work for the picker
+    // always resumes it.
+    onPickerSettled();
+  }
   const fileName = fileHandle.name;
 
   const worker = new Worker(new URL('../tsvWriterWorker.ts', import.meta.url), { type: 'module' });

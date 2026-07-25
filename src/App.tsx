@@ -307,6 +307,11 @@ function App() {
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
   const saveStartInProgressRef = useRef(false);
+  // True while the save-file picker is open. On Android the picker is a system
+  // activity that backgrounds (and can freeze) the page for as long as it is
+  // shown, which would blow the deadline of any Modbus transfer started
+  // meanwhile. Polling keeps its schedule but skips issuing requests.
+  const filePickerOpenRef = useRef(false);
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
   const aoWriteInProgressRef = useRef(false);
@@ -922,7 +927,11 @@ function App() {
       idealScheduleRef.current = loopStart;
     }
     try {
-      await pollOnce();
+      // Skip the request while the save-file picker holds the foreground; the
+      // schedule below still advances, so polling resumes on its own tick.
+      if (!filePickerOpenRef.current) {
+        await pollOnce();
+      }
     } finally {
       pollingInProgressRef.current = false;
 
@@ -1282,6 +1291,7 @@ function App() {
     // closed. Also refuse to start while a save is already active.
     if (tsvWriterRef.current || saveStartInProgressRef.current) return;
     saveStartInProgressRef.current = true;
+    filePickerOpenRef.current = true;
     try {
       const writer = await createTsvWriter(
         AI_CHANNELS,
@@ -1293,6 +1303,12 @@ function App() {
         (message) => {
           console.error('TSV worker error:', message);
           setStatus(`TSV write error: ${message}`);
+        },
+        () => {
+          filePickerOpenRef.current = false;
+          // The page may have been frozen while the picker was up, so the
+          // polling schedule has drifted; resync from now.
+          idealScheduleRef.current = 0;
         },
       );
       try {
@@ -1332,6 +1348,9 @@ function App() {
       }
       setStatus((err as Error).message);
     } finally {
+      // Belt and braces: onPickerSettled already cleared this, but never leave
+      // polling suspended if createTsvWriter threw before reaching the picker.
+      filePickerOpenRef.current = false;
       saveStartInProgressRef.current = false;
     }
   };
