@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-- **React 19 + TypeScript 6.0 + Vite 8 + Tailwind CSS 4** で構成された Modbus RTU ロガー SPA
+- **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4** で構成された Modbus RTU ロガー SPA
 - 通信は **Web Serial API**（非対応環境では `web-serial-polyfill` 経由で WebUSB フォールバック）
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
@@ -33,14 +33,19 @@ src/
 ├── constants.ts                     # 一元化された定数（AI_CHANNELS, MAX_POINTS_* 等）
 ├── modbus/
 │   └── webserialClient.ts           # Web Serial トランスポート + Modbus RTU フレーム送受信
+├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
 ├── pyodideWorker.ts                 # Pyodide ScriptRunner 用 Web Worker
+├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
 ├── hooks/
 │   ├── useTheme.ts                  # テーマ管理（localStorage 永続化）
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
 │   ├── useScriptRunner.ts           # Pyodide Worker 管理 + SAB 先行確保
 │   └── useMcpBridge.ts              # MCP ブリッジのページ側（exe 限定・WS ディスパッチ）
 ├── components/
-│   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）
+│   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
+│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・API 一覧
+│   ├── ManualPanel.tsx              # アプリ内マニュアル
+│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
 │   ├── ModbusConfigPanel.tsx        # シリアル設定ウィンドウ
@@ -52,7 +57,9 @@ src/
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
-    ├── tsvExport.ts                 # TSV ストリーミングライター（File System Access API）
+    ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
+    ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
+    ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
     ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
@@ -67,7 +74,7 @@ public/
 ### Modbus 通信（`webserialClient.ts`）
 - `AsyncMutex` で転送の排他制御
 - CRC16 検証（純粋関数 `utils/crc16.ts`、`buffer`/`modbus-serial` 依存なし）
-- 精度モードに応じた最小メッセージ間隔（Normal: 10ms / Extended: 1ms）
+- 最小メッセージ間隔 = `max(精度モードの基準値, 5文字時間)`（基準値は Normal: 10ms / Extended: 1ms。5文字時間はボーレート・データビット・パリティ・ストップビットから算出）
 - 転送エラー後の受信バッファフラッシュ（`flushReceiveBuffer`）
 - タイムアウト時の Reader リカバリ（cancel → releaseLock → reacquire）
 - サポート Function Code: 1, 3, 4, 5, 6, 15, 16
@@ -78,14 +85,14 @@ USB Serial変換IC（CH340, FT232等）経由で UART→ModbusRTU を受信す�
 USBパケット遅延・詰まりによる通信エラーを防ぐため、**Modbus RTU フレーム送信間に
 最低10msの間隔が必須**。
 
-- `webserialClient.ts` の `transfer()` 内の `minMessageIntervalMs` がこれを担保（Normal: 10ms / Extended: 1ms）
+- `webserialClient.ts` の `transfer()` 内の `minMessageIntervalMs` がこれを担保（`calculateMinInterval()` = 基準値 Normal 10ms / Extended 1ms と 5文字時間の大きい方）
 - **この制約をアプリケーション層で再実装してはならない**（`transfer()` が単一責任）
 - `constants.ts` に追加の Wait 定数を定義しないこと（`transfer()` の待機と二重になる）
 - AO書込みを非ブロック化する場合も、`transfer()` の `AsyncMutex` により AI/AO 送信間の最低間隔が自動保証される
 - AO書込みは `doAoWriteAsync` で独立実行され、`aoWriteInProgressRef` で二重投入を防止する
 
 ### ポーリング（`App.tsx`）
-- 100ms〜5分の定期ポーリング（`setTimeout` 再帰スケジュール）
+- 50ms〜5分の定期ポーリング（`App.tsx` の `POLLING_OPTIONS`、既定 200ms。`setTimeout` 再帰スケジュール）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ内最大10回）
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
@@ -100,9 +107,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **ステータス更新は ref 経由で直接 DOM を更新**（不要な React 再レンダリングを抑制）
 
 ### ScriptRunner（`pyodideWorker.ts`）
-- Pyodide v314.0.0（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
+- Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
   - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
-  - バージョンは **`package.json` の `pyodide` 依存の完全固定ピン（`^` なし）が一次情報源**。URL 直書き禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
+  - バージョンは **`package.json` の `pyodide` 依存（現在 `^314.0.3`）が一次情報源**。アセットは `node_modules` の実インストール版からコピーされるためバージョンずれは構造的に起きない。URL 直書き・他ファイルへのバージョン直書きは禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
   - v314.0 以降は **module worker 必須**（classic worker 非対応）。本 Worker は `{ type: 'module' }` で生成済み
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
 - **SAB は Worker 生成と切り離して mount 時に先行確保する**（`useScriptRunner` の `ensureShares()`）。SAB は Worker 専用のデータ経路ではなく、ポーリングループが毎周期書き込み、MCP ブリッジが同じメモリを読み書きするため。Worker（重い方）の遅延生成は維持
@@ -120,14 +127,17 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **launcher プロセスから Modbus を触ってはならない**。書込みは必ず `setAo` → `doAoWriteAsync` → `transfer()` を通し、フレーム間隔の不変条件（下記「USB転送間隔制約」）を維持する
 - 書込み許可の判定は**ページ側の1箇所**（`useMcpBridge` の `writeEnabledRef`）に置く。既定 OFF、`McpPanel` のトグルで opt-in。launcher 側にゲートを二重実装しないこと
 - **ScriptRunner の実体は1つ**なので MCP 実行と UI 実行は同一の実行系・同一のエディタ内容を共有する（二重実行は構造的に起こらない）。実行中は反対側からの起動と直接書込み（`set_ao` 等）を拒否する。**「MCP 接続中は UI 側をロックする」といった所有権フラグを追加しないこと** — ブリッジ WS は exe 起動中ずっと繋がっているため、それを基準にすると UI が常時使用不能になる
+- **`get_labels` は MCP 専用**（ScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`ScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
 - `run_script` はエディタ内容を上書きするため、直前のコードを `scriptRunnerCodeBackup` へ退避し UI の「Restore」で戻せるようにしてある
 
 ### データ保存
 - **IndexedDB**: セッション中の全データポイントを蓄積（`keepLatestPoints` で自動トリム）
   - `init()` は冪等（複数回呼び出し安全）
   - `StoredDataPoint` に `seq` 連番を付与（重複検出・TSV 整合性）
-- **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し
-  - ヘッダーに `seq` 列を追加
+- **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
+  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `param_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
+  - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
+  - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は Normal（i16）では `toString()` の整数、Extended（f32）では init の `aiRawAsFloat` により浮動小数フォーマッタを通す
   - `Float32Array` / `number[]` の両方を受け付ける
 - **設定永続化**: **localStorage** にテーマ・チャート軸・キャリブレーションを JSON 保存
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）
@@ -150,7 +160,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - Modbus ADC 最高精度 ≈ 22bit < Float32 仮数部 24bit → 精度ロスなし
 - メモリ使用量: 65,536点時に約 **8MB 節約**（128B → 64B / チャネルセット）
 - Plotly.js は `Float32Array` をそのまま描画可能
-- TSV 書き出し時に `Array.from()` で変換
+- TSV 書き出しは `Float32Array` のまま Worker へ structured clone で渡す（**転送リストを使わない** — 呼び出し側の配列はチャート表示と共有されており neuter してはならない）。`Array.from()` 変換は行わない
 
 ## 主要定数（`src/constants.ts`）
 
@@ -158,6 +168,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 |------|------|------|
 | `AI_CHANNELS` | 16 | AI チャネル数 |
 | `AO_CHANNELS` | 8 | AO チャネル数（GP8403） |
+| `PARAM_CHANNELS` | 16 | Parameter（スクラッチ値）チャネル数 |
 | `AI_START_REGISTER` | 0 | AI Input Register 開始アドレス（Normal） |
 | `AI_FLOAT_START_REGISTER` | 5000 | AI Input Register 開始アドレス（Extended） |
 | `AO_START_REGISTER` | 0 | AO Holding Register 開始アドレス |
@@ -171,6 +182,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 | `NON_SAVING_CHART_WINDOW_MS` | 60000 | 非保存時チャートのスライディング時間窓 |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
 | `BATCH_FLUSH_INTERVAL_MS` | 100 | バッチフラッシュの最大遅延 |
+| `CHART_REDRAW_INTERVAL_MS` | 200 | チャート再描画の最小間隔（約5fps に合体） |
+| `TSV_FLUSH_MAX_ROWS` | 500 | TSV フラッシュを起こすバッファ行数 |
+| `TSV_FLUSH_INTERVAL_MS` | 60000 | TSV 定期フラッシュ間隔（低レート時の耐久性フォールバック） |
+| `KEEP_LATEST_TRIM_INTERVAL` | 10 | IndexedDB trim を実行する書込み回数間隔 |
+| `PROMISE_CHAIN_RESET_INTERVAL` | 100 | Promise チェーンをリセットする回数間隔 |
 
 ## 変更時の注意
 
@@ -202,7 +218,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）
   - 既存コードの確立済みセマンティック色（危険表示の red、レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを新規要素へ拡張しない
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
-- **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`HX711CalibrationPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
+- **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`CalibrationWizardPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **キャリブレーションウィザードの2方式**（`CalibrationWizardPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) 共通コンポーネントを2インスタンスで使用。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
   - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は Raw（傾き1）と V/mV（`rawToDisplayValue(1, voltageConfig[ch])` から算出、レンジ Unknown 時は Raw のみ）。
@@ -213,3 +229,21 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - マイナーバージョンが20になる場合は、メジャーバージョンを更新(Linux,Linus Torvaldsの思想)
 - 大規模変更(主観でいいです)ではメジャーバージョンをインクリメント
 - メジャーバージョンのインクリメント時は、マイナーをゼロに
+
+## 「push」と言われたときの絶対的なルール
+
+ユーザーが「push」「minor version update with tag and push」と言った場合、単なる `git push` ではなく
+**リリース操作**として以下を一括で実行する。
+
+1. 上記ルールに従って `package.json` の `version` を更新（小規模変更ならマイナーをインクリメント）。
+   バージョンはビルド時に `vite.config.ts` から `VITE_APP_VERSION` / `sw.js` の `APP_VERSION` へ
+   注入されるため、**他のファイルを書き換える必要はない**
+2. `npm run build` を通してから進める（壊れたリリースにタグを打たないため）
+3. 変更とバージョン更新を同一コミットに含めてコミット
+4. 注釈付きタグを作成: `git tag -a v3.4 -m "v3.4: <一行要約>"`（既存タグは
+   `git tag --sort=-v:refname | head` で確認し、番号を採番する）
+5. ブランチとタグの両方を push（`git push origin <branch>` + `git push origin v3.4`）
+6. 作業がフィーチャーブランチ上なら、この流れの中で `main` へ**マージコミット付きでマージ**する
+
+バージョン更新とタグを伴わない push は、デプロイ済み PWA の App Info が古いバージョンを表示し続ける
+ため不可。

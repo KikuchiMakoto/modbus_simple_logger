@@ -11,13 +11,13 @@
 | 機能 | 説明 |
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境は `web-serial-polyfill` 経由の WebUSB フォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング（200ms〜5分間隔）。Normal（i16）/ Extended（f32）の2精度モード |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング（50ms〜5分間隔、既定 200ms）。Normal（i16）/ Extended（f32）の2精度モード |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
-| **リアルタイムチャート** | Plotly.js による2画面表示。X/Y 軸を Raw / Physical / Parameter（16ch）から選択。描画バックエンド（GPU/CPU）バッジ表示 |
-| **データ保存** | File System Access API による TSV ストリーミング保存。IndexedDB でセッション中データを FIFO 管理 |
-| **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / Tare を制御 |
+| **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。描画バックエンド（GPU/CPU）バッジ表示 |
+| **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み・全点記録）。IndexedDB でセッション中データを FIFO 管理 |
+| **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御 |
 | **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
 | **PWA** | Service Worker プリキャッシュで完全オフライン動作。COOP/COEP で SharedArrayBuffer を有効化 |
 | **その他** | Wake Lock による計測中のスリープ抑止、ダークモード、JetBrains Mono 同梱、アプリ内マニュアル |
@@ -84,10 +84,12 @@ claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
 
 | 種別 | ツール |
 |------|--------|
-| 読取り（常時可） | `get_status` / `get_ai_raw(ch)` / `get_ai_phy(ch)` / `get_ao(ch)` / `get_param(ch)` / `read_recent(n)` / `get_script()` |
+| 読取り（常時可） | `get_status` / `get_labels()` / `get_ai_raw(ch)` / `get_ai_phy(ch)` / `get_ao(ch)` / `get_param(ch)` / `read_recent(n)` / `get_script()` |
 | 書込み（要許可） | `set_ao(ch, volt)` / `set_param(ch, value)` / `set_ai_tare(ch)` / `run_script(code)` / `stop_script()` |
 
-API は ScriptRunner の Python API と同一面です。実装も共通で、MCP ツールは ScriptRunner と同じ共有メモリ・同じコールバックを経由します（`set_ao` は必ずアプリ側の送信経路を通るため、Modbus フレーム間隔などの制約はそのまま維持されます）。
+`get_labels()` は各チャネルカードに入力した自由記述ラベルを `{ ai, ao, param }`（index = ch）で返します。チャネル番号だけでは分からない「何を測っているか」を AI 側が把握するためのもので、ScriptRunner の Python API には含みません（制御ループ内では不要なため）。
+
+その他の API は ScriptRunner の Python API と同一面です。実装も共通で、MCP ツールは ScriptRunner と同じ共有メモリ・同じコールバックを経由します（`set_ao` は必ずアプリ側の送信経路を通るため、Modbus フレーム間隔などの制約はそのまま維持されます）。
 
 **動作ルール**
 

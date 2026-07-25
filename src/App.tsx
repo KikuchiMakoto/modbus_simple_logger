@@ -638,6 +638,13 @@ function App() {
       scriptSource: scriptRunner.scriptSource,
       writeEnabled: mcpWriteEnabled,
     }),
+    // Same source and shape as the ScriptRunner panel's AI-prompt button, padded
+    // to full channel counts so index always equals ch.
+    getLabels: () => ({
+      ai: Array.from({ length: AI_CHANNELS }, (_, i) => aiFreeLabels[i] ?? ''),
+      ao: Array.from({ length: AO_CHANNELS }, (_, i) => aoFreeLabels[i] ?? ''),
+      param: Array.from({ length: PARAM_CHANNELS }, (_, i) => paramFreeLabels[i] ?? ''),
+    }),
     readRecent: (n) =>
       dataBufferRef.current.slice(-n).map((point) => ({
         seq: point.seq,

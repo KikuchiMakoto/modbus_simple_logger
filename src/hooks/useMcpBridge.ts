@@ -26,6 +26,18 @@ export type McpRecentSample = {
   param: number[];
 };
 
+/**
+ * Free-text labels the user typed on the AI / AO / Parameter cards. Index = ch,
+ * '' = unlabeled. Returned as one object rather than per channel: a client that
+ * has to correlate 16+8+16 channels would otherwise need 40 round trips, and
+ * this is the same shape the ScriptRunner panel's AI-prompt button emits.
+ */
+export type McpLabels = {
+  ai: string[];
+  ao: string[];
+  param: string[];
+};
+
 export type McpStatus = {
   connected: boolean;
   polling: boolean;
@@ -45,6 +57,7 @@ export type McpApi = {
   getAo: (ch: number) => number;
   getParam: (ch: number) => number;
   getStatus: () => McpStatus;
+  getLabels: () => McpLabels;
   readRecent: (n: number) => McpRecentSample[];
   getScript: () => { code: string; status: string; running: boolean; source: string };
   setAo: (ch: number, volt: number) => void;
@@ -117,6 +130,8 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
           return api.getParam(requireInt(params.ch, PARAM_CHANNELS, 'ch'));
         case 'get_status':
           return api.getStatus();
+        case 'get_labels':
+          return api.getLabels();
         case 'read_recent':
           return api.readRecent(Math.max(1, requireInt(params.n, 201, 'n')));
         case 'get_script':

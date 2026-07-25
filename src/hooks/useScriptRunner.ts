@@ -232,7 +232,7 @@ function getDefaultScript(): string {
   return `# get_ai_raw(ch) / get_ai_phy(ch): AI value. ch: 0-15.
 # set_ai_tare(ch): tare AI ch so current phy reads 0 (offset c only). ch: 0-15.
 # get_ao(ch) / set_ao(ch, vlt): AO voltage [V], clamped to 0-10, applied async. ch: 0-7.
-# get_param(ch) / set_param(ch, val): scratch value, shown in Parameter panel + TSV. ch: 0-7.
+# get_param(ch) / set_param(ch, val): scratch value, shown in Parameter panel + TSV. ch: 0-15.
 #
 # Wait ONLY with \`await asyncio.sleep(s)\` - NEVER time.sleep() (freezes the browser).
 # Loop with a plain while/for. Press Stop to halt at any time.

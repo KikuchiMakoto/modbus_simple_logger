@@ -23,7 +23,7 @@ export const MCP_PATH = '/mcp';
 
 const AI_CH = z.number().int().min(0).max(15).describe('AI channel, 0-15');
 const AO_CH = z.number().int().min(0).max(7).describe('AO channel, 0-7');
-const PARAM_CH = z.number().int().min(0).max(7).describe('Parameter channel, 0-7');
+const PARAM_CH = z.number().int().min(0).max(15).describe('Parameter channel, 0-15');
 
 // Scripts can take a while to hand off to the worker on its first run (Pyodide
 // boots lazily), so run_script gets a longer budget than the default. It still
@@ -55,11 +55,12 @@ const relay = async (
 
 const createMcpServer = (): McpServer => {
   const server = new McpServer(
-    { name: 'modbus-simple-logger', version: '3.3' },
+    { name: 'modbus-simple-logger', version: '3.5' },
     {
       instructions:
         'Controls a running Modbus Simple Logger desktop window (16 AI channels, 8 AO channels, ' +
-        '8 Parameter channels). Read tools always work; write tools require the user to enable ' +
+        '16 Parameter channels). Channels carry user-typed labels — call get_labels to learn what ' +
+        'each one measures. Read tools always work; write tools require the user to enable ' +
         '"MCP write access" in the app menu. For closed-loop or timed control, submit Python via ' +
         'run_script instead of polling set_ao in a loop — MCP round-trips are far too slow for ' +
         'control timing, and the in-app ScriptRunner runs the loop next to the hardware.',
@@ -75,6 +76,20 @@ const createMcpServer = (): McpServer => {
       annotations: { readOnlyHint: true },
     },
     async () => relay('get_status'),
+  );
+
+  server.registerTool(
+    'get_labels',
+    {
+      title: 'Get channel labels',
+      description:
+        'Free-text labels the user typed on the AI / AO / Parameter channel cards, as ' +
+        '{ ai: string[], ao: string[], param: string[] } with index = channel and "" for unlabeled. ' +
+        'Call this before reasoning about readings: the labels say what each channel is physically ' +
+        'measuring (load cell, displacement gauge, ...), which channel numbers alone do not.',
+      annotations: { readOnlyHint: true },
+    },
+    async () => relay('get_labels'),
   );
 
   server.registerTool(

@@ -12,10 +12,11 @@ type McpPanelProps = {
 
 const READ_TOOLS = [
   { name: 'get_status', desc: 'Connection, polling, saving and script state.' },
+  { name: 'get_labels()', desc: 'Free-text AI / AO / Parameter channel labels.' },
   { name: 'get_ai_raw(ch)', desc: 'Raw AI value. ch: 0-15.' },
   { name: 'get_ai_phy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
   { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
-  { name: 'get_param(ch)', desc: 'Parameter scratch value. ch: 0-7.' },
+  { name: 'get_param(ch)', desc: 'Parameter scratch value. ch: 0-15.' },
   { name: 'read_recent(n)', desc: 'Up to 200 recent samples from the chart buffer.' },
   { name: 'get_script()', desc: 'Editor contents, run state and who started it.' },
 ];
