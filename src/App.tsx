@@ -25,7 +25,6 @@ import {
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
-  CHART_PURGE_INTERVAL_MS,
   NON_SAVING_CHART_WINDOW_MS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
@@ -262,7 +261,9 @@ function App() {
   const [savePointCount, setSavePointCount] = useState(0);
   const [displayRevision, setDisplayRevision] = useState(0);
   // Bumped to force a full Plotly purge + remount of every chart (used as the
-  // Plot's React key). See CHART_PURGE_INTERVAL_MS in constants.ts.
+  // Plot's React key). Only the save-path re-decimation bumps it — the periodic
+  // timed purge was removed in v3.1 (see constants.ts); ChartPanel now releases
+  // the WebGL context explicitly, which is what the timer was really after.
   const [chartEpoch, setChartEpoch] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [hx711CalibrationPanelOpen, setHx711CalibrationPanelOpen] = useState(false);
@@ -302,7 +303,6 @@ function App() {
   const displayUpdateCountRef = useRef(0);
   const flushTimerRef = useRef<number | undefined>(undefined);
   const chartRedrawTimerRef = useRef<number | undefined>(undefined);
-  const lastChartPurgeAtRef = useRef(Date.now());
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
@@ -456,9 +456,9 @@ function App() {
         saveDecimationStrideRef.current *= 2;
         // Re-decimation replaces the whole trace anyway (half the points are
         // dropped), so it is the least disruptive moment for a full chart
-        // rebuild — purge Plotly's WebGL/regl state here to keep long-session
-        // GPU-side accumulation bounded.
-        lastChartPurgeAtRef.current = Date.now();
+        // rebuild. ChartPanel releases the outgoing WebGL context explicitly on
+        // this swap (releaseWebglContext), so the rebuild no longer leaks one —
+        // which is why the old timed purge could be dropped in v3.1.
         setChartEpoch((v) => v + 1);
       }
     } else {
@@ -493,14 +493,6 @@ function App() {
           console.error('Error trimming data points:', err);
         });
       }
-    }
-
-    // Time fallback for the purge above: re-decimation intervals double each
-    // time (and never occur while not saving), so also rebuild the charts after
-    // CHART_PURGE_INTERVAL_MS of continuous plotting without one.
-    if (Date.now() - lastChartPurgeAtRef.current >= CHART_PURGE_INTERVAL_MS) {
-      lastChartPurgeAtRef.current = Date.now();
-      setChartEpoch((v) => v + 1);
     }
 
     // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
