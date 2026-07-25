@@ -1,0 +1,260 @@
+// MCP server for the desktop launcher (exe build only).
+//
+// Exposes the ScriptRunner API surface — get_ai_raw / get_ai_phy / get_ao /
+// set_ao / get_param / set_param / set_ai_tare — plus monitoring tools and
+// run_script, so a generative-AI client can observe and drive the logger.
+//
+// Every tool is a thin wrapper over `bridge.call()`: the actual work happens in
+// the page against the same SharedArrayBuffers and callbacks the Pyodide
+// ScriptRunner uses (see src/hooks/useMcpBridge.ts). Write permission is decided
+// page-side by a UI toggle (off by default), so there is a single source of
+// truth for it and no way to bypass it from here.
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import { bridge } from './bridge';
+
+// Fixed port so MCP clients can be configured with a stable URL. A second
+// instance of the app fails to bind it and simply runs without MCP (first
+// wins), rather than stealing the endpoint from the running instance.
+export const MCP_PORT = 8765;
+export const MCP_PATH = '/mcp';
+
+const AI_CH = z.number().int().min(0).max(15).describe('AI channel, 0-15');
+const AO_CH = z.number().int().min(0).max(7).describe('AO channel, 0-7');
+const PARAM_CH = z.number().int().min(0).max(7).describe('Parameter channel, 0-7');
+
+// Scripts can take a while to hand off to the worker on its first run (Pyodide
+// boots lazily), so run_script gets a longer budget than the default. It still
+// only waits for the script to *start*, never for it to finish.
+const RUN_SCRIPT_TIMEOUT_MS = 20000;
+
+const text = (value: unknown): CallToolResult => ({
+  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
+});
+
+const failure = (err: unknown): CallToolResult => ({
+  content: [{ type: 'text', text: (err as Error).message ?? String(err) }],
+  isError: true,
+});
+
+// Tools never throw: a disconnected window, a disabled write toggle or a
+// running script are all normal states the client should see and reason about.
+const relay = async (
+  method: string,
+  params: Record<string, unknown> = {},
+  timeoutMs?: number,
+): Promise<CallToolResult> => {
+  try {
+    return text(await bridge.call(method, params, timeoutMs));
+  } catch (err) {
+    return failure(err);
+  }
+};
+
+const createMcpServer = (): McpServer => {
+  const server = new McpServer(
+    { name: 'modbus-simple-logger', version: '3.3' },
+    {
+      instructions:
+        'Controls a running Modbus Simple Logger desktop window (16 AI channels, 8 AO channels, ' +
+        '8 Parameter channels). Read tools always work; write tools require the user to enable ' +
+        '"MCP write access" in the app menu. For closed-loop or timed control, submit Python via ' +
+        'run_script instead of polling set_ao in a loop — MCP round-trips are far too slow for ' +
+        'control timing, and the in-app ScriptRunner runs the loop next to the hardware.',
+    },
+  );
+
+  server.registerTool(
+    'get_status',
+    {
+      title: 'Get logger status',
+      description:
+        'Connection, polling, saving and ScriptRunner state, plus whether MCP write access is currently enabled.',
+      annotations: { readOnlyHint: true },
+    },
+    async () => relay('get_status'),
+  );
+
+  server.registerTool(
+    'get_ai_raw',
+    {
+      title: 'Read AI raw value',
+      description: 'Latest raw AI reading for a channel (same value as ScriptRunner get_ai_raw).',
+      inputSchema: { ch: AI_CH },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ ch }) => relay('get_ai_raw', { ch }),
+  );
+
+  server.registerTool(
+    'get_ai_phy',
+    {
+      title: 'Read AI physical value',
+      description:
+        'Latest calibrated AI value for a channel, i.e. a*raw^2 + b*raw + c (same value as ScriptRunner get_ai_phy).',
+      inputSchema: { ch: AI_CH },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ ch }) => relay('get_ai_phy', { ch }),
+  );
+
+  server.registerTool(
+    'get_ao',
+    {
+      title: 'Read AO output',
+      description: 'Current AO output voltage in volts (same value as ScriptRunner get_ao).',
+      inputSchema: { ch: AO_CH },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ ch }) => relay('get_ao', { ch }),
+  );
+
+  server.registerTool(
+    'get_param',
+    {
+      title: 'Read Parameter channel',
+      description: 'Current Parameter scratch value (same value as ScriptRunner get_param).',
+      inputSchema: { ch: PARAM_CH },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ ch }) => relay('get_param', { ch }),
+  );
+
+  server.registerTool(
+    'read_recent',
+    {
+      title: 'Read recent samples',
+      description:
+        'Recent samples from the chart buffer: timestamp plus raw / physical / parameter values. ' +
+        'This is the display buffer, so while saving is active it is decimated to a fixed point ' +
+        'budget — the complete record is the TSV file, not this tool.',
+      inputSchema: { n: z.number().int().min(1).max(200).describe('How many of the most recent samples to return') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ n }) => relay('read_recent', { n }),
+  );
+
+  server.registerTool(
+    'get_script',
+    {
+      title: 'Get ScriptRunner state',
+      description: 'The Python code currently in the ScriptRunner editor, its run state and who started it.',
+      annotations: { readOnlyHint: true },
+    },
+    async () => relay('get_script'),
+  );
+
+  server.registerTool(
+    'set_ao',
+    {
+      title: 'Set AO output',
+      description:
+        'Set an AO output voltage (clamped to 0-10 V, applied asynchronously by the polling loop). ' +
+        'Rejected while a script is running — stop it first, or drive the output from the script.',
+      inputSchema: { ch: AO_CH, volt: z.number().describe('Output voltage in volts, clamped to 0-10') },
+    },
+    async ({ ch, volt }) => relay('set_ao', { ch, volt }),
+  );
+
+  server.registerTool(
+    'set_param',
+    {
+      title: 'Set Parameter channel',
+      description:
+        'Set a Parameter scratch value. It shows in the Parameter panel and is recorded per sample in the TSV.',
+      inputSchema: { ch: PARAM_CH, value: z.number().describe('Value to store') },
+    },
+    async ({ ch, value }) => relay('set_param', { ch, value }),
+  );
+
+  server.registerTool(
+    'set_ai_tare',
+    {
+      title: 'Tare AI channel',
+      description:
+        'Zero a channel at its current reading by adjusting only the calibration offset c; the a and b ' +
+        'scale factors are left untouched.',
+      inputSchema: { ch: AI_CH },
+    },
+    async ({ ch }) => relay('set_ai_tare', { ch }),
+  );
+
+  server.registerTool(
+    'run_script',
+    {
+      title: 'Run Python in ScriptRunner',
+      description:
+        'Load Python into the ScriptRunner editor and run it. The API is get_ai_raw(ch) / get_ai_phy(ch) / ' +
+        'get_ao(ch) / set_ao(ch, volt) / get_param(ch) / set_param(ch, val) / set_ai_tare(ch); wait only with ' +
+        '`await asyncio.sleep(s)`, never time.sleep(). Returns as soon as the script starts, not when it ' +
+        'finishes — poll get_script for status. This replaces the editor contents; the previous code is ' +
+        'backed up and restorable from the app UI.',
+      inputSchema: { code: z.string().describe('Python source to run') },
+    },
+    async ({ code }) => relay('run_script', { code }, RUN_SCRIPT_TIMEOUT_MS),
+  );
+
+  server.registerTool(
+    'stop_script',
+    {
+      title: 'Stop ScriptRunner',
+      description: 'Interrupt the running script.',
+    },
+    async () => relay('stop_script'),
+  );
+
+  return server;
+};
+
+export type McpHandle = { stop: () => void; port: number };
+
+// Starts the MCP endpoint, or returns null if the port is already taken (another
+// instance owns it — first wins) or the server could not start. Never fatal:
+// the app itself must keep working without MCP.
+export const startMcpServer = async (): Promise<McpHandle | null> => {
+  // Stateless: no session bookkeeping, plain JSON responses. All tools are
+  // request/response and nothing is ever pushed to the client, so a session or
+  // an SSE stream would buy nothing — and this keeps the endpoint trivially
+  // reachable (a single curl POST works).
+  //
+  // Stateless mode requires a fresh server + transport per request (the SDK
+  // refuses to reuse one, since message ids would collide between clients).
+  // Construction is just object setup — no I/O, no state to carry — because all
+  // the real state lives in the page behind the bridge.
+  const handle = async (req: Request): Promise<Response> => {
+    const server = createMcpServer();
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    const response = await transport.handleRequest(req);
+    // Buffer before tearing the server down so closing can never truncate the
+    // body. Responses here are small JSON documents.
+    const body = await response.text();
+    await server.close();
+    return new Response(body, { status: response.status, headers: response.headers });
+  };
+
+  try {
+    const http = Bun.serve({
+      hostname: '127.0.0.1',
+      port: MCP_PORT,
+      idleTimeout: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname !== MCP_PATH) return new Response('Not Found', { status: 404 });
+        return handle(req);
+      },
+    });
+    return {
+      port: http.port ?? MCP_PORT,
+      stop: () => http.stop(true),
+    };
+  } catch {
+    // EADDRINUSE is the expected case (a second app instance).
+    return null;
+  }
+};

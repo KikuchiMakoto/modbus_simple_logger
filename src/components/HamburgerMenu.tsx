@@ -4,6 +4,8 @@ type HamburgerMenuProps = {
   open: boolean;
   onClose: () => void;
   onSelectItem: (item: string) => void;
+  /** MCP is a desktop-launcher feature; the entry is hidden in the web build. */
+  showMcp?: boolean;
 };
 
 const MENU_ITEMS = [
@@ -13,6 +15,7 @@ const MENU_ITEMS = [
   { key: 'ads1115Calibration', label: 'ADS1115 Calib (CH08–15)', icon: '🎚️', wip: false },
   { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
   { key: 'scriptRunner', label: 'ScriptRunner', icon: '📜', wip: false },
+  { key: 'mcp', label: 'MCP Access', icon: '🤖', wip: false },
   { key: 'manual', label: 'Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'App Info', icon: 'ℹ️', wip: false },
 ];
@@ -21,12 +24,15 @@ export function HamburgerMenu({
   open,
   onClose,
   onSelectItem,
+  showMcp = false,
 }: HamburgerMenuProps) {
+  const items = MENU_ITEMS.filter((item) => item.key !== 'mcp' || showMcp);
+
   return (
     <SlidePanel open={open} onClose={onClose} title="Menu" maxWidth="max-w-xs">
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
-          {MENU_ITEMS.map((item) => (
+          {items.map((item) => (
             <li key={item.key}>
               <button
                 type="button"

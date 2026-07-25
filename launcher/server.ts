@@ -1,6 +1,7 @@
 // Static file server for the launcher: serves the embedded (built) web app on
 // 127.0.0.1 with cross-origin isolation and a hard no-cache policy.
 import { ASSETS, BASE_PATH } from './embedded.generated';
+import { bridge, BRIDGE_PATH_SUFFIX } from './bridge';
 
 export { BASE_PATH };
 
@@ -38,6 +39,9 @@ const baseHeaders = (type: string): Record<string, string> => ({
 });
 
 export const INDEX = `${BASE_PATH}index.html`;
+// WebSocket endpoint the page uses to serve MCP tool calls. Same origin as the
+// app itself, so no cross-origin or COEP considerations apply.
+export const BRIDGE_PATH = `${BASE_PATH}${BRIDGE_PATH_SUFFIX}`;
 
 // Preload every embedded asset into memory once so responses come from an owned
 // Uint8Array with fully controlled headers.
@@ -66,8 +70,19 @@ export const createServer = async () => {
     // mode (skip Service Worker) on exactly this hostname.
     hostname: '127.0.0.1',
     port: 0,
-    fetch(req) {
+    // The bridge socket is idle whenever no MCP client is asking for anything,
+    // which is most of the time; without this Bun would close it after 120s.
+    idleTimeout: 0,
+    fetch(req, srv) {
       const path = decodeURIComponent(new URL(req.url).pathname);
+
+      // MCP bridge upgrade. First page wins: a second window (or a stray tab on
+      // the same origin) is refused rather than displacing the live connection.
+      if (path === BRIDGE_PATH) {
+        if (bridge.connected) return new Response('Bridge already connected', { status: 409 });
+        if (srv.upgrade(req)) return undefined;
+        return new Response('Expected a WebSocket upgrade', { status: 426 });
+      }
 
       if (path === '/') return Response.redirect(BASE_PATH, 302);
       if (!path.startsWith(BASE_PATH)) return notFound();
@@ -83,6 +98,17 @@ export const createServer = async () => {
       const hasExtension = /\.[a-z0-9]+$/i.test(path);
       if (accept.includes('text/html') || !hasExtension) return send(INDEX);
       return notFound();
+    },
+    websocket: {
+      open(ws) {
+        if (!bridge.attach(ws)) ws.close(1013, 'Bridge already connected');
+      },
+      message(ws, message) {
+        if (typeof message === 'string') bridge.handleMessage(message);
+      },
+      close(ws) {
+        bridge.detach(ws);
+      },
     },
   });
 };

@@ -55,6 +55,9 @@ type WorkerIncomingMessage =
 
 let pyodide: PyodideLike | null = null;
 let initPromise: Promise<void> | null = null;
+// Kept so a failed initialization can be retried on the next run: the main
+// thread sends `init` only once, when it creates the worker.
+let initArgs: Extract<WorkerIncomingMessage, { type: 'init' }> | null = null;
 let running = false;
 let aiRawShare: Float32Array | null = null;
 let aiPhysicalShare: Float32Array | null = null;
@@ -90,7 +93,6 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   const { loadPyodide } = await import(/* @vite-ignore */ `${PYODIDE_BASE_URL}pyodide.mjs`);
   pyodide = (await loadPyodide({ indexURL: PYODIDE_BASE_URL })) as PyodideLike;
 
-  pyodide.setInterruptBuffer(interruptBuffer);
   pyodide.runPython(RUNNER_SETUP);
   pyodide.globals.set('get_ai_raw', (ch: number) => readAiValue(aiRawShare, Number(ch)));
   pyodide.globals.set('get_ai_phy', (ch: number) => readAiValue(aiPhysicalShare, Number(ch)));
@@ -114,6 +116,14 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
     writeParamValue(paramShare, Number(ch), Number(data));
   });
 
+  // Armed last, deliberately. A Stop issued while Pyodide was still loading
+  // leaves the interrupt buffer holding 2, and Pyodide checks that buffer inside
+  // every runPython() — so arming it before the setup code above would raise
+  // KeyboardInterrupt out of initialization itself, failing the init and leaving
+  // the worker unusable. The pending stop stays in the buffer for the run branch
+  // to honour.
+  pyodide.setInterruptBuffer(interruptBuffer);
+
   postWorkerMessage({ type: 'status', message: 'Ready' });
 };
 
@@ -121,6 +131,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
   const message = event.data;
 
   if (message.type === 'init') {
+    initArgs = message;
     if (!initPromise) {
       initPromise = initializePyodide(message.rawSab, message.phySab, message.aoSab, message.paramSab, message.intSab);
     }
@@ -158,8 +169,20 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
 
   if (message.type === 'run') {
     if (!initPromise) {
-      postWorkerMessage({ type: 'error', message: 'Worker is not initialized' });
-      return;
+      // A previous initialization failed (its promise was cleared so it could be
+      // retried). Retry here rather than leaving the worker permanently dead:
+      // the main thread has no way to re-send `init` short of recreating it.
+      if (!initArgs) {
+        postWorkerMessage({ type: 'error', message: 'Worker is not initialized' });
+        return;
+      }
+      initPromise = initializePyodide(
+        initArgs.rawSab,
+        initArgs.phySab,
+        initArgs.aoSab,
+        initArgs.paramSab,
+        initArgs.intSab,
+      );
     }
     if (running) {
       postWorkerMessage({ type: 'error', message: 'Script is already running' });
@@ -186,6 +209,9 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
     } catch (err) {
       const error = err as Error;
       const text = error.message ?? String(error);
+      // Initialization (not the script) failed: clear the rejected promise so
+      // the next run retries instead of replaying the same failure forever.
+      if (!pyodide) initPromise = null;
       // KeyboardInterrupt: sync loop stopped. CancelledError: async Task
       // cancelled. Both mean the user pressed Stop.
       if (text.includes('KeyboardInterrupt') || text.includes('CancelledError')) {

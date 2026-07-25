@@ -7,6 +7,8 @@
 // next launch.
 import { createServer, BASE_PATH } from './server';
 import { findBrowser, launchBrowser, type BrowserInfo } from './browser';
+import { startMcpServer, MCP_PORT, MCP_PATH, type McpHandle } from './mcp';
+import { bridge } from './bridge';
 
 const isWindows = process.platform === 'win32';
 
@@ -35,8 +37,25 @@ const server = await createServer().catch((err: Error) =>
 
 const appUrl = `http://127.0.0.1:${server.port}${BASE_PATH}`;
 
+// MCP endpoint for generative-AI clients. Unlike the app server this uses a
+// fixed port so clients can be configured once; if another instance already
+// owns it we simply run without MCP (first instance wins) instead of failing to
+// start or stealing the endpoint from the instance the AI is already talking to.
+const mcp: McpHandle | null = await startMcpServer();
+// The console is hidden in the packaged exe, so the page is the only place this
+// can be surfaced: tell it over the bridge and let the UI show the state.
+bridge.setEndpointInfo(
+  mcp ? { enabled: true, url: `http://127.0.0.1:${mcp.port}${MCP_PATH}` } : { enabled: false, url: null },
+);
+if (!mcp) {
+  console.error(
+    `MCP disabled: 127.0.0.1:${MCP_PORT} is already in use (another instance owns ${MCP_PATH}).`,
+  );
+}
+
 const browser: BrowserInfo | null = findBrowser();
 if (!browser) {
+  mcp?.stop();
   server.stop(true);
   fatal(
     'No compatible browser found.\n\n' +
@@ -57,6 +76,11 @@ const shutdown = (code: number) => {
     child.kill();
   } catch {
     // already gone
+  }
+  try {
+    mcp?.stop();
+  } catch {
+    // already stopped
   }
   try {
     server.stop(true);
