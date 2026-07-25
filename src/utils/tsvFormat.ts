@@ -25,7 +25,7 @@ export function formatTimestamp(timestamp: number): string {
 
 /**
  * Create TSV header row for AI/AO/Parameter channel data
- * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tao_raw_00\t...\tai_vlt_00\t...\tparam_00\t...
+ * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tai_vlt_00\t...\tao_raw_00\t...\tparam_00\t...
  * @param aiChannels - Number of AI channels
  * @param aoChannels - Number of AO channels
  * @param paramChannels - Number of Parameter channels (default: 0)
@@ -38,8 +38,8 @@ export function createTsvHeader(aiChannels: number, aoChannels: number, paramCha
     'timestamp',
     ...ch('ai_raw_', aiChannels),
     ...ch('ai_phy_', aiChannels),
-    ...ch('ao_raw_', aoChannels),
     ...ch('ai_vlt_', aiChannels),
+    ...ch('ao_raw_', aoChannels),
     ...ch('param_', paramChannels),
   ].join('\t') + '\n';
 }
@@ -63,6 +63,10 @@ function appendFormatted(
  * @param aiVoltage - Array of AI voltage display values
  * @param paramValues - Array of Parameter values (default: [])
  * @param physicalPrecision - Number of decimal places for physical/voltage/Parameter values (default: 3)
+ * @param aiRawAsFloat - When true, AI raw values are emitted with the float
+ *   formatter (used in Modbus extended precision mode, where AI Input Registers
+ *   are 32-bit floats). Default false: AI raw values are emitted as integers
+ *   via toString() (HX711 / ADS1115 ADC counts).
  * @returns TSV data row string with newline
  */
 export function formatTsvRow(
@@ -72,9 +76,10 @@ export function formatTsvRow(
   aoRaw: Float32Array | number[],
   aiVoltage: Float32Array | number[],
   paramValues: Float32Array | number[] = [],
-  physicalPrecision: number = 3
+  physicalPrecision: number = 3,
+  aiRawAsFloat: boolean = false
 ): string {
-  const toStr = (v: number) => v.toString();
+  const intStr = (v: number) => v.toString();
   // Round to physicalPrecision decimals, then drop trailing zeros and a bare
   // decimal point: 0 -> "0", 1.230 -> "1.23", 1.000 -> "1", -0 -> "0". This
   // trims wasteful zero-fill from the physical/voltage/Parameter columns to keep
@@ -83,10 +88,10 @@ export function formatTsvRow(
   const fmt = (v: number) => parseFloat(v.toFixed(physicalPrecision)).toString();
   // Single preallocated parts array, filled by index — no per-column copies.
   const parts: string[] = [formatTimestamp(timestamp)];
-  appendFormatted(parts, aiRaw, toStr);
+  appendFormatted(parts, aiRaw, aiRawAsFloat ? fmt : intStr);
   appendFormatted(parts, aiPhysical, fmt);
-  appendFormatted(parts, aoRaw, toStr);
   appendFormatted(parts, aiVoltage, fmt);
+  appendFormatted(parts, aoRaw, intStr);
   appendFormatted(parts, paramValues, fmt);
   return parts.join('\t') + '\n';
 }

@@ -1360,6 +1360,7 @@ function App() {
           // polling schedule has drifted; resync from now.
           idealScheduleRef.current = 0;
         },
+        modbusPrecision === 'extended',
       );
       try {
         const startedAt = Date.now();
