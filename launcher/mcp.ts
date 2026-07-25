@@ -14,6 +14,11 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { bridge } from './bridge';
+// Single source of truth for the version, same as the web app (which gets it
+// via VITE_APP_VERSION). Bun resolves this JSON import at build time and
+// `bun build --compile` inlines it into the exe, so the MCP handshake can never
+// drift from package.json the way a hand-written literal did.
+import pkg from '../package.json' with { type: 'json' };
 
 // Fixed port so MCP clients can be configured with a stable URL. A second
 // instance of the app fails to bind it and simply runs without MCP (first
@@ -55,7 +60,7 @@ const relay = async (
 
 const createMcpServer = (): McpServer => {
   const server = new McpServer(
-    { name: 'modbus-simple-logger', version: '3.5' },
+    { name: 'modbus-simple-logger', version: pkg.version },
     {
       instructions:
         'Controls a running Modbus Simple Logger desktop window (16 AI channels, 8 AO channels, ' +

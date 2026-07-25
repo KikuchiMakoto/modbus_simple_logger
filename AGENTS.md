@@ -127,6 +127,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **launcher プロセスから Modbus を触ってはならない**。書込みは必ず `setAo` → `doAoWriteAsync` → `transfer()` を通し、フレーム間隔の不変条件（下記「USB転送間隔制約」）を維持する
 - 書込み許可の判定は**ページ側の1箇所**（`useMcpBridge` の `writeEnabledRef`）に置く。既定 OFF、`McpPanel` のトグルで opt-in。launcher 側にゲートを二重実装しないこと
 - **ScriptRunner の実体は1つ**なので MCP 実行と UI 実行は同一の実行系・同一のエディタ内容を共有する（二重実行は構造的に起こらない）。実行中は反対側からの起動と直接書込み（`set_ao` 等）を拒否する。**「MCP 接続中は UI 側をロックする」といった所有権フラグを追加しないこと** — ブリッジ WS は exe 起動中ずっと繋がっているため、それを基準にすると UI が常時使用不能になる
+- **MCP ハンドシェイクのバージョンは `package.json` から取得する**（`launcher/mcp.ts` の `import pkg from '../package.json' with { type: 'json' }`）。Bun がビルド時に解決し `bun build --compile` が exe へインライン化する。**バージョン文字列を直書きに戻さないこと**（v3.5 以前は直書きで、実際に 3.3 のまま取り残されていた）
 - **`get_labels` は MCP 専用**（ScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`ScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
 - `run_script` はエディタ内容を上書きするため、直前のコードを `scriptRunnerCodeBackup` へ退避し UI の「Restore」で戻せるようにしてある
 
