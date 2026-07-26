@@ -1,9 +1,50 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Re-map Tailwind's `font-mono` (ScriptRunner editor, API reference <code>,
+   AppInfo / Manual / Mcp monospace spans) onto the same Iosevka stack as the
+   rest of the UI. Without this, .font-mono falls back to the system monospace
+   and the editor looks different from every other surface. */
+@theme {
+  --font-mono: 'Iosevka', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono CJK JP', 'Courier New', monospace;
+}
+
+/* Iosevka (Latin subset) — woff2 only, no woff fallback. Each weight is bundled
+   by Vite (bare `url()` is auto-resolved to a hashed URL under dist/assets/)
+   and fingerprinted for long-term precache. Only the four weights actually
+   used in the app are registered (see main.tsx). */
+@font-face {
+  font-family: 'Iosevka';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/iosevka/files/iosevka-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Iosevka';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/iosevka/files/iosevka-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Iosevka';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/iosevka/files/iosevka-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Iosevka';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/iosevka/files/iosevka-latin-700-normal.woff2') format('woff2');
+}
+
 body {
   @apply bg-slate-50 text-slate-900 min-h-screen dark:bg-slate-950 dark:text-slate-100;
-  font-family: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono CJK JP', 'Courier New', monospace;
+  font-family: 'Iosevka', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono CJK JP', 'Courier New', monospace;
 }
 
 .card {

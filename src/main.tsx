@@ -1,12 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-// Self-hosted variable font: bundled by Vite (hashed woff2 under dist/, so the
-// precache-manifest plugin caches it for full offline use) and rendered
-// identically across Windows/Linux/ChromeOS/Android instead of each OS's own
-// monospace. Only the Latin subset is fetched at runtime; CJK falls through to
-// the system stack in index.css.
-import '@fontsource-variable/jetbrains-mono';
+// Iosevka woff2 (Latin subset) is registered as @font-face in index.css using
+// Vite `?url` imports, which fingerprints and bundles the font files. woff is
+// skipped because every target browser (Web Serial / SharedArrayBuffer /
+// File System Access API) already supports woff2, and Iosevka is ~1MB per
+// weight in either format — the woff fallback would double the precache. The
+// app uses font-medium / semibold / bold (Tailwind 500/600/700) plus the
+// default 400, so only those four weights are imported.
 import './index.css';
 import { setupServiceWorker } from './utils/swUpdate';
 

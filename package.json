@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "3.7",
+  "version": "3.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "launcher:build": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/build.ts"
   },
   "dependencies": {
-    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource/iosevka": "^5.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "plotly.js": "^3.7.0",
     "pyodide": "^314.0.3",
