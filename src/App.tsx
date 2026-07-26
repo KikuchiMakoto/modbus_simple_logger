@@ -1906,15 +1906,39 @@ function App() {
                   >
                     {connected ? 'Disconnect' : 'Connect'}
                   </button>
-                  {!tsvWriterRef.current ? (
-                    <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
-                      Start Save
-                    </button>
-                  ) : (
-                    <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave}>
-                      Stop Save
-                    </button>
-                  )}
+                  {/* The file the picker creates stays 0 bytes until the writer
+                      closes it: a FileSystemWritableFileStream buffers into a
+                      swap file and only swings it onto the target on close().
+                      Nothing warns about that anywhere else — setStatus() is a
+                      no-op and the header has no room for a permanent notice —
+                      so it is said here, on the two buttons that bracket the
+                      run. No portal/tooltip library: the sticky header (z-10,
+                      positioned) is the nearest stacking context and clips
+                      nothing, so a plain absolute box paints over the page.
+                      Keep the last sentence as-is even once a crash-recovery
+                      mirror exists: promising recovery here would have people
+                      rely on it, and the promise still breaks under storage
+                      eviction or a write that never landed. A rescue path
+                      should announce itself only when it actually has
+                      something to restore. */}
+                  <div className="group relative">
+                    {!tsvWriterRef.current ? (
+                      <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected} aria-describedby="save-file-note">
+                        Start Save
+                      </button>
+                    ) : (
+                      <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave} aria-describedby="save-file-note">
+                        Stop Save
+                      </button>
+                    )}
+                    <div
+                      id="save-file-note"
+                      role="tooltip"
+                      className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-64 rounded border border-amber-400 bg-amber-50 p-2 text-left text-[0.7rem] font-normal leading-snug text-amber-800 shadow-lg group-hover:block group-focus-within:block dark:border-amber-500/60 dark:bg-slate-800 dark:text-amber-200"
+                    >
+                      The file is written when you press <strong>Stop Save</strong>. It stays 0 bytes while recording, and data is lost if the browser closes first.
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setHamburgerMenuOpen(true)}
