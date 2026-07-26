@@ -119,6 +119,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **計測経路のタイマーは必ず `setBackgroundTimeout` / `setBackgroundInterval` を使う**（ポーリングループ、`batchUpdateTimer`、TSV の `flushTimerRef`、`waitMs` のリトライ待ち、**`webserialClient.ts` のフレーム間隔待ちと受信タイムアウト**）。特に後者2つは `transfer()` のミューテックス内なので、抑制されると 10ms の最小間隔が最大1分の停止に化け、ポーリングだけ Worker 化しても意味がなくなる。Chromium は非表示ウィンドウのタイマーを 1Hz へ、さらに数分後には intensive throttling で **1分に1回**へ落とすため、`window.setTimeout` のままでは最小化した瞬間に 200ms 周期が「1分の欠測」に化ける
 - 逆に**画面表示だけのタイマーは `window.setTimeout` のままにする**（保存経過時間、コピー完了表示、チャート再描画デバウンス）。見ていない画面の時計が止まっても誰も困らず、Worker 往復を足す意味がない
 - 仕組みはタイマーの**スケジュールだけ**を専用 Worker が持つ形（Worker のタイマーは抑制対象外）。コールバックは従来どおり主スレッドで走る。**ブラウザにページごと凍結された場合は救えない** — そこはスリープ抑制（下記）と Wake Lock の担当
+- **バックエンドは可視状態で切り替える**（`pageVisible()`）。表示中は `window` タイマー（そもそも抑制されないので Worker 往復は純粋な損）、非表示になったら Worker。**この分岐を「常に Worker」に単純化しないこと** — `readChunk()` はフレーム1本につき USB チャンク数だけタイマーを取り直すため、20Hz では毎秒 60〜120 往復になり、実測で 20Hz が 16Hz まで落ちた（v3.17 の回帰）。非表示へ遷移した時点で生存中の `window` タイマーは Worker へ移し替える（delay は振り直しになるので、遷移1回につき最大1周期ぶん遅れる）
 - Worker が落ちた場合は全 live タイマーを `window` タイマーへ張り直す（`fallBackToWindowTimers`）。残り時間は分からないので**元の delay で再スタート**する。1回遅れる方が、ループが二度と回らないより遥かにマシという判断
 - id は自前カウンタで、ブラウザのタイマーハンドルとは別空間。**`window.clearTimeout` に渡さないこと**（必ず `clearBackgroundTimer`）
 - exe 版はさらにブラウザ起動フラグ（`launcher/browser.ts`）で抑制自体を無効化している。**フラグと Worker は独立した対策で、片方だけでは全ケースを覆えない**ため両方残すこと
