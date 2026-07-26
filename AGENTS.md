@@ -44,11 +44,11 @@ src/
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
-│   ├── ManualPanel.tsx              # アプリ内マニュアル
-│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン
+│   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
+│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
-│   ├── ModbusConfigPanel.tsx        # シリアル設定ウィンドウ
+│   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
 │   ├── VoltageConfigPanel.tsx       # 電圧表示モード設定（チャネルタイプ別フィルタ）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー（MCP 項目は exe 限定で表示）
 │   ├── McpPanel.tsx                 # MCP 状態表示＋書込み許可トグル（exe 限定）
@@ -160,10 +160,10 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 静的アセット: Stale-While-Revalidate（プリキャッシュ済みアセットの裏での更新用。オフライン時はプリキャッシュから配信）
 - `vite.config.ts` の `server.headers` / `preview.headers` でも COOP/COEP を設定
 - **SW 更新はユーザー承諾ゲート**（計測中断防止・バージョン固定）: `sw.js` の install は `skipWaiting()` を呼ばず、新 SW は **waiting に留まる**（旧バージョンが旧キャッシュのまま配信継続）。`utils/swUpdate.ts` は `window.confirm()` 承諾時のみ `SKIP_WAITING` を送信（無確認の自動適用経路は存在しない）→ activate（旧キャッシュ削除）→ `controllerchange` で無条件リロード。辞退時は waiting のまま保持され、次の明示チェックで再確認される。プロンプトのバージョン表示（`vX → vY`）は waiting ワーカーへの `GET_VERSION` メッセージで取得（500ms タイムアウト。旧ビルドの SW は非応答のためバージョン無し表示へフォールバック）。**activate 後の controllerchange で confirm してはならない**（その時点で旧キャッシュは削除済みのため、拒否すると未読込アセットの取得が壊れる）
-- **確認ウィンドウは明示チェック限定**（計測中の割り込み禁止）: `confirm()` を出せるのは **起動直後のチェック**と **App Info の「Check for Updates」ボタン**だけ。両者は同じ `checkForAppUpdate()` を呼ぶ（挙動は完全に同一）。判定は `explicitCheckRunning` フラグ（明示チェックの `registration.update()` 実行中のみ true）で行い、`updatefound` はこのフラグが立っているときだけ prompt 対象として adopt する。**セッション中に勝手に確認ウィンドウを出す経路を追加してはならない**
-- **Connect 中は更新チェック自体を停止**: `App.tsx` が `connected` を `setUpdateChecksSuspended()` へ流し、定期チェック・明示チェックの**両方**が no-op になる（`checkForAppUpdate()` は `'suspended'` を返し、App Info のボタンは disabled）。更新適用＝リロード＝ポート切断・計測停止のため、接続中は確認する意味がない
+- **確認ウィンドウは明示チェック限定**（計測中の割り込み禁止）: `confirm()` を出せるのは **起動直後のチェック**と **Application Info の「Check for Updates」ボタン**だけ。両者は同じ `checkForAppUpdate()` を呼ぶ（挙動は完全に同一）。判定は `explicitCheckRunning` フラグ（明示チェックの `registration.update()` 実行中のみ true）で行い、`updatefound` はこのフラグが立っているときだけ prompt 対象として adopt する。**セッション中に勝手に確認ウィンドウを出す経路を追加してはならない**
+- **Connect 中は更新チェック自体を停止**: `App.tsx` が `connected` を `setUpdateChecksSuspended()` へ流し、定期チェック・明示チェックの**両方**が no-op になる（`checkForAppUpdate()` は `'suspended'` を返し、Application Info のボタンは disabled）。更新適用＝リロード＝ポート切断・計測停止のため、接続中は確認する意味がない
 - 定期 update チェック（60秒 `setInterval`）は**サイレント**: 見つかった新 SW はプロンプト無しで install → waiting に留まる（次の明示チェックがダウンロード待ちなしで提示できる）。`setInterval` は `pagehide` でクリーンアップ
-- 明示チェックの結果（`UpdateCheckResult`）は App Info 内にテキスト表示のみ（別ウィンドウは出さない）。`registration.installing` が既に走っている場合はそれを adopt し、完了時にプロンプトする
+- 明示チェックの結果（`UpdateCheckResult`）は Application Info 内にテキスト表示のみ（別ウィンドウは出さない）。`registration.installing` が既に走っている場合はそれを adopt し、完了時にプロンプトする
 
 ### Float32 内部表現
 - `DataPoint.aiRaw` / `aiPhysical` / `aiVoltage` は `Float32Array`
@@ -215,6 +215,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
+- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと**（import・localStorage キー・`FloatingWindow` のジオメトリキーに波及するだけで利得がない）。ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
+- **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
 - **`launcher/` は `.gitignore` 対象**。`launcher/mcp.ts`・`launcher/bridge.ts` のような新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）
 - **MCP ツールを追加する場合は3箇所を揃える**: `launcher/mcp.ts` の `registerTool`（zod スキーマ）、`useMcpBridge.ts` の `dispatch`（実処理・書込みゲート）、`McpPanel.tsx` のツール一覧。実処理は既存のコールバック / SAB を経由させ、新しい状態を作らないこと
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
@@ -255,5 +257,5 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 5. ブランチとタグの両方を push（`git push origin <branch>` + `git push origin v3.4`）
 6. 作業がフィーチャーブランチ上なら、この流れの中で `main` へ**マージコミット付きでマージ**する
 
-バージョン更新とタグを伴わない push は、デプロイ済み PWA の App Info が古いバージョンを表示し続ける
+バージョン更新とタグを伴わない push は、デプロイ済み PWA の Application Info が古いバージョンを表示し続ける
 ため不可。

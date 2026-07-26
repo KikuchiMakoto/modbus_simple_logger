@@ -19,8 +19,8 @@
 | **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み・全点記録）。IndexedDB でセッション中データを FIFO 管理 |
 | **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御 |
 | **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
-| **PWA** | Service Worker プリキャッシュで完全オフライン動作。COOP/COEP で SharedArrayBuffer を有効化。更新確認は起動直後と App Info の「Check for Updates」ボタンのみで、デバイス接続中は停止（計測中に確認ウィンドウが割り込まない） |
-| **その他** | Wake Lock による計測中のスリープ抑止、ダークモード、Iosevka 同梱、アプリ内マニュアル |
+| **PWA** | Service Worker プリキャッシュで完全オフライン動作。COOP/COEP で SharedArrayBuffer を有効化。更新確認は起動直後と Application Info の「Check for Updates」ボタンのみで、デバイス接続中は停止（計測中に確認ウィンドウが割り込まない） |
+| **その他** | Wake Lock による計測中のスリープ抑止、ダークモード、Iosevka 同梱、アプリ内のコネクタ配線マニュアル（Connector Manual） |
 
 ---
 
