@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { probeRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
+import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
 
 const LIBRARIES = [
   { name: 'React', version: '19.2', license: 'MIT' },
@@ -20,14 +21,56 @@ const LIBRARIES = [
 const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? 'unknown';
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'modbus_simple_logger';
 
-export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+// The update itself is always confirmed by the window.confirm() prompt that the
+// check raises; these lines only report what the check found, since a button
+// with no visible outcome reads as broken.
+const UPDATE_STATUS: Record<UpdateCheckResult, string> = {
+  unsupported: 'Updates are not managed in this build.',
+  suspended: 'Disconnect the device to check for updates.',
+  prompted: 'A new version is available.',
+  downloading: 'Downloading a new version… you will be asked to reload when it is ready.',
+  'up-to-date': 'You are running the latest version.',
+  failed: 'Update check failed. Check your network connection.',
+};
+
+export function AppInfoPanel({
+  open,
+  onClose,
+  connected = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  // Applying an update reloads the page, which would drop the port and stop the
+  // measurement — so while a device is connected there is nothing to check for.
+  connected?: boolean;
+}) {
   const backend = useRenderBackend();
+  const [checking, setChecking] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+
+  // Same code path as the startup check (utils/swUpdate.ts): a ready new
+  // version raises the identical consent prompt, declining leaves it waiting.
+  const handleCheckForUpdates = async () => {
+    setChecking(true);
+    setUpdateStatus(null);
+    try {
+      setUpdateStatus(UPDATE_STATUS[await checkForAppUpdate()]);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   // Charts publish the backend once they render, but with no data yet there is
   // no chart to ask — probe the browser directly so the panel is never blank.
   useEffect(() => {
     if (open && !backend) reportRenderBackend(probeRenderBackend());
   }, [open, backend]);
+
+  // Drop the last check's result on connect: it would otherwise reappear as
+  // stale text once the device is disconnected again.
+  useEffect(() => {
+    if (connected) setUpdateStatus(null);
+  }, [connected]);
 
   return (
     <FloatingWindow open={open} onClose={onClose} title="App Info" defaultWidth={384} defaultHeight={560}>
@@ -72,6 +115,25 @@ export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => 
               </dd>
             </div>
           </dl>
+
+          {isUpdateCheckSupported() && (
+            <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => void handleCheckForUpdates()}
+                disabled={checking || connected}
+                title={connected ? 'Disconnect the device first — applying an update reloads the app' : undefined}
+                className="w-full rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {checking ? 'Checking…' : 'Check for Updates'}
+              </button>
+              {(connected || updateStatus) && (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  {connected ? UPDATE_STATUS.suspended : updateStatus}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         <div>
