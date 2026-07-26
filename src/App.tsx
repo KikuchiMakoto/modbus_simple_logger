@@ -1616,8 +1616,8 @@ function App() {
       {/* AI / AO / Parameter / Plot are read at a glance side by side: the gap
           between the groups is kept tight so more channels stay on one screen. */}
       <div className="space-y-1.5 p-2">
-        <section className="card">
-        <div className="mb-0.5 flex items-center justify-between">
+        <section className="card card-tight">
+        <div className="mb-px flex items-center justify-between">
           <h2 className="text-sm font-semibold leading-none">Analog Input (16)</h2>
           <div className="flex items-center gap-2">
             <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
@@ -1646,9 +1646,9 @@ function App() {
               translate="no"
               className="flex min-w-0 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="min-w-0 flex-1 p-1">
-                <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <div className="min-w-0 flex-1 px-1 py-0.5">
+                <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
                     {formatAiChannelDisplayLabel(ch.id)}
                   </span>
                   <input
@@ -1656,7 +1656,7 @@ function App() {
                     value={aiFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
                 <div className="space-y-0 pt-px text-base leading-none">
@@ -1694,8 +1694,8 @@ function App() {
         )}
       </section>
 
-      <section className="card">
-        <div className="mb-0.5 flex items-center justify-between">
+      <section className="card card-tight">
+        <div className="mb-px flex items-center justify-between">
           <h2 className="text-sm font-semibold leading-none">Analog Output (8)</h2>
           <CollapseButton collapsed={aoCollapsed} onToggle={() => setAoCollapsed((v) => !v)} label="Analog Output" />
         </div>
@@ -1712,9 +1712,9 @@ function App() {
               key={ch.id}
               className="flex min-w-0 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="min-w-0 flex-1 p-1">
-                <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <div className="min-w-0 flex-1 px-1 py-0.5">
+                <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
                     {ch.label}
                   </span>
                   <input
@@ -1722,7 +1722,7 @@ function App() {
                     value={aoFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
                 <div className="pt-px text-base leading-none">
@@ -1744,8 +1744,8 @@ function App() {
         )}
       </section>
 
-      <section className="card">
-        <div className="mb-0.5 flex items-center justify-between">
+      <section className="card card-tight">
+        <div className="mb-px flex items-center justify-between">
           <h2 className="text-sm font-semibold leading-none">Parameter (16)</h2>
           <CollapseButton collapsed={paramCollapsed} onToggle={() => setParamCollapsed((v) => !v)} label="Parameter" />
         </div>
@@ -1754,10 +1754,10 @@ function App() {
           {paramValues.map((value, idx) => (
             <div
               key={idx}
-              className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+                <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
                   {`CH ${idx.toString().padStart(2, '0')}`}
                 </span>
                 <input
@@ -1765,7 +1765,7 @@ function App() {
                   value={paramFreeLabels[idx] ?? ''}
                   onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
                   placeholder="Label"
-                  className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
               <div className="pt-px text-base leading-none">

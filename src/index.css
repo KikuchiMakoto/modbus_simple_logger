@@ -51,6 +51,14 @@ body {
   @apply rounded-xl bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
 }
 
+/* The AI / AO / Parameter sections are grids of small cards, so the section's
+   own padding is pure frame around a frame. Defined after .card and applied as
+   `card card-tight`, because .card is unlayered plain CSS and a p-1 utility in
+   the class attribute could never override it. */
+.card-tight {
+  @apply p-1;
+}
+
 .button-primary {
   @apply rounded-lg bg-emerald-500 px-4 py-1.5 font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed;
 }

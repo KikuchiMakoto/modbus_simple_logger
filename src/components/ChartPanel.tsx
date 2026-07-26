@@ -46,6 +46,10 @@ type PlotProps = {
 // no CJS/ESM default-export normalization is needed here.
 const NormalizedPlot = Plot as ComponentType<PlotProps>;
 
+// Plot area height. The empty state matches it exactly, so the card does not
+// change size the moment the first sample arrives.
+const PLOT_HEIGHT = '250px';
+
 // Force-release the WebGL context(s) behind a graph div.
 //
 // `Plotly.purge()` — which react-plotly.js calls on unmount — does NOT destroy
@@ -272,7 +276,7 @@ function ChartPanelComponent({
   );
 
   return (
-    <section className="card space-y-1.5">
+    <section className="card card-tight space-y-1">
       <div className="flex items-center gap-2">
         <label className="text-xs text-slate-400">X:</label>
         <select
@@ -304,7 +308,7 @@ function ChartPanelComponent({
         </select>
       </div>
       {isEmpty ? (
-        <div className="flex h-[280px] items-center justify-center text-sm text-slate-400">
+        <div className="flex items-center justify-center text-sm text-slate-400" style={{ height: PLOT_HEIGHT }}>
           No data — connect device and start polling
         </div>
       ) : (
@@ -313,7 +317,7 @@ function ChartPanelComponent({
           data={plot.traces}
           layout={plotLayout}
           config={plotConfig}
-          style={{ width: '100%', height: '280px' }}
+          style={{ width: '100%', height: PLOT_HEIGHT }}
           onInitialized={handleGraphDiv}
           onUpdate={handleGraphDiv}
         />
