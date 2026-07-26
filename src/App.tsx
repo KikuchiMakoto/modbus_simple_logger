@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -185,6 +185,82 @@ const createAoChannels = (): AoChannel[] =>
 
 const formatAiChannelDisplayLabel = (idx: number): string =>
   `CH ${idx.toString().padStart(2, '0')}`;
+
+// The hard limits below come from the converter ICs, not from this app: they
+// cannot be raised by changing a Voltage Config or a calibration coefficient,
+// and a reading that sits against one of them is clipped rather than large.
+// Nothing else on the page says which IC is behind which channel block, so it
+// is said on the channel label — the one part of a card that is the same in
+// every state. Same mechanism as the Start Save note (group-hover on a plain
+// absolute box), no tooltip library.
+const HX711_SPEC_NOTE = (
+  <>
+    <strong>HX711</strong> — strain input
+    <ul className="mt-1 list-disc space-y-0.5 pl-3">
+      <li>Gauge voltage: about 3 V DC</li>
+      <li>Raw stops at ±32767</li>
+      <li>That is about 4 mV/V (about 8,000 με)</li>
+    </ul>
+  </>
+);
+
+const ADS1115_SPEC_NOTE = (
+  <>
+    <strong>ADS1115</strong> — general input
+    <ul className="mt-1 list-disc space-y-0.5 pl-3">
+      <li>5 V board, so keep the input under 5.3 V</li>
+      <li>On the 6.144 V range: 0–5.3 V</li>
+      <li>Raw 0 to about 28,270</li>
+    </ul>
+  </>
+);
+
+const GP8403_SPEC_NOTE = (
+  <>
+    <strong>GP8403</strong> — general output
+    <ul className="mt-1 list-disc space-y-0.5 pl-3">
+      <li>Outputs 0–10 V</li>
+      <li>Set in mV, up to 10,000 mV</li>
+      <li>Current: about 20 mA</li>
+    </ul>
+  </>
+);
+
+// The cards sit in an 8-wide grid, so a note anchored left would run off the
+// right edge on the outer columns. Anchoring by column half keeps it inside the
+// page at the lg+ widths this tool is used at.
+function ChannelSpecNote({
+  id,
+  label,
+  note,
+  align,
+}: {
+  id: string;
+  label: string;
+  note: ReactNode;
+  align: 'left' | 'right';
+}) {
+  return (
+    <div className="group/spec relative shrink-0">
+      <span
+        tabIndex={0}
+        aria-describedby={id}
+        className="block cursor-help whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 underline decoration-dotted decoration-slate-400 underline-offset-2 dark:text-slate-200 dark:decoration-slate-500"
+      >
+        {label}
+      </span>
+      <div
+        id={id}
+        role="tooltip"
+        className={`pointer-events-none absolute top-full z-50 mt-1 hidden w-56 rounded border border-sky-400 bg-sky-50 p-2 text-left text-[0.7rem] font-normal normal-case leading-snug tracking-normal text-sky-900 shadow-lg group-hover/spec:block group-focus-within/spec:block dark:border-sky-500/60 dark:bg-slate-800 dark:text-sky-200 ${
+          align === 'left' ? 'left-0' : 'right-0'
+        }`}
+      >
+        {note}
+      </div>
+    </div>
+  );
+}
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2099,9 +2175,12 @@ function App() {
             >
               <div className="min-w-0 flex-1 px-1 py-0.5">
                 <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
-                    {formatAiChannelDisplayLabel(ch.id)}
-                  </span>
+                  <ChannelSpecNote
+                    id={`ai-spec-note-${ch.id}`}
+                    label={formatAiChannelDisplayLabel(ch.id)}
+                    note={ch.id < 8 ? HX711_SPEC_NOTE : ADS1115_SPEC_NOTE}
+                    align={ch.id % 8 < 4 ? 'left' : 'right'}
+                  />
                   <input
                     type="text"
                     value={aiFreeLabels[ch.id] ?? ''}
@@ -2166,9 +2245,12 @@ function App() {
             >
               <div className="min-w-0 flex-1 px-1 py-0.5">
                 <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
-                    {ch.label}
-                  </span>
+                  <ChannelSpecNote
+                    id={`ao-spec-note-${ch.id}`}
+                    label={ch.label}
+                    note={GP8403_SPEC_NOTE}
+                    align={ch.id % 8 < 4 ? 'left' : 'right'}
+                  />
                   <input
                     type="text"
                     value={aoFreeLabels[ch.id] ?? ''}
