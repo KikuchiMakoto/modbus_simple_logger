@@ -1477,10 +1477,10 @@ function App() {
                   File: {activeSaveFilename || '-'}
                 </p>
                 <p className="tabular-nums">
-                  Total: {formatElapsedTime(saveElapsedMs)} / Points: {savePointCount}
+                  Total: {formatElapsedTime(saveElapsedMs)} / #: {savePointCount}
                 </p>
                 <p className="tabular-nums">
-                  Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz / Actual: {actualRateHz.toFixed(1)} Hz
+                  Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz({actualRateHz.toFixed(1)})
                 </p>
               </div>
             </div>
@@ -1595,7 +1595,7 @@ function App() {
             >
               <div className="min-w-0 flex-1 p-1">
                 <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                  <span className="whitespace-nowrap text-base font-semibold text-slate-700 dark:text-slate-200">
+                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-sm font-semibold text-slate-700 dark:text-slate-200">
                     {formatAiChannelDisplayLabel(ch.id)}
                   </span>
                   <input
@@ -1603,25 +1603,25 @@ function App() {
                     value={aiFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
                 <div className="space-y-0 pt-px text-base leading-none">
                   <div className="flex justify-between items-center leading-none">
-                    <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
+                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
                       {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
-                    <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
+                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
                   {showVoltage && (
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
-                    <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">
+                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
                       {display.unit}
                     </span>
                     <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
@@ -1654,7 +1654,7 @@ function App() {
               className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                <span className="whitespace-nowrap text-base font-semibold text-slate-700 dark:text-slate-200">
+                <span className="shrink-0 whitespace-nowrap tracking-tighter text-sm font-semibold text-slate-700 dark:text-slate-200">
                   {ch.label}
                 </span>
                 <input
@@ -1662,12 +1662,12 @@ function App() {
                   value={aoFreeLabels[ch.id] ?? ''}
                   onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
                   placeholder="Label"
-                  className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
               <div className="pt-px text-base leading-none">
                 <div className="flex items-center justify-between leading-none">
-                  <span className="font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
+                  <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
                   <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
                     {(ch.physical / 1000).toFixed(3)}
                   </span>
@@ -1692,7 +1692,7 @@ function App() {
               className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                <span className="whitespace-nowrap text-base font-semibold text-slate-700 dark:text-slate-200">
+                <span className="shrink-0 whitespace-nowrap tracking-tighter text-sm font-semibold text-slate-700 dark:text-slate-200">
                   {`CH ${idx.toString().padStart(2, '0')}`}
                 </span>
                 <input
@@ -1700,12 +1700,12 @@ function App() {
                   value={paramFreeLabels[idx] ?? ''}
                   onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
                   placeholder="Label"
-                  className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
               <div className="pt-px text-base leading-none">
                 <div className="flex items-center justify-between leading-none">
-                  <span className="font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
+                  <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
                   <span className="text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400">
                     {value.toFixed(3)}
                   </span>
