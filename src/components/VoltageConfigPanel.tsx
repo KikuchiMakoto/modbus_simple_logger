@@ -39,9 +39,13 @@ export function VoltageConfigPanel({
           {voltageConfig.map((mode, idx) => {
             const isHx711 = idx < AI_CHANNELS / 2;
             const allowedModes = isHx711 ? HX711_MODES : ADS1115_MODES;
+            // Channel number, part name, and the range labels are all
+            // identifiers — "HX711 (mV/V)" translated is a range this app does
+            // not have.
             return (
               <div
                 key={idx}
+                translate="no"
                 className="flex items-center gap-1.5 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 dark:border-slate-700 dark:bg-slate-800"
               >
                 <span className="w-10 shrink-0 text-xs font-semibold text-slate-700 dark:text-slate-200">

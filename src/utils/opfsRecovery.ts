@@ -63,6 +63,40 @@ export async function requestPersistentStorage(): Promise<boolean> {
 }
 
 /**
+ * How long to keep retrying getFile() on a locked mirror before concluding the
+ * run is genuinely live in another tab.
+ *
+ * A reload is the common case this feature serves, and it is also the case
+ * where the lock is most likely to still be held: the previous document's
+ * worker is torn down asynchronously, and the sync access handle is released
+ * somewhere after the new page has already started running. Treating that first
+ * failed read as "another tab owns it" skipped the run silently and left the
+ * user with no prompt at all.
+ */
+const LOCK_RETRY_MS = 3_000;
+const LOCK_RETRY_INTERVAL_MS = 150;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Read a mirror's size, waiting out a lock the dead worker has not dropped yet. */
+async function readSizeWaitingForLock(handle: FileSystemFileHandle): Promise<number | null> {
+  const deadline = Date.now() + LOCK_RETRY_MS;
+  for (;;) {
+    try {
+      return (await handle.getFile()).size;
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        // Still locked after the grace period: a worker in another tab is
+        // recording into it right now. Live, not abandoned — leave it alone.
+        console.warn('TSV recovery: mirror is still locked, skipping.', err);
+        return null;
+      }
+      await delay(LOCK_RETRY_INTERVAL_MS);
+    }
+  }
+}
+
+/**
  * List runs that can be recovered, newest first.
  *
  * Empty and unrecognised entries are swept here rather than offered: the worker
@@ -73,19 +107,18 @@ export async function listRecoverableRuns(): Promise<RecoverableRun[]> {
   const dir = await getRecoveryDir(false);
   if (!dir) return [];
 
-  const runs: RecoverableRun[] = [];
+  // Collect first, then act: removeEntry() while the async iterator is still
+  // walking the directory can make it skip the following entry.
+  const entries: [string, FileSystemFileHandle][] = [];
   for await (const [name, handle] of dir.entries()) {
-    if (handle.kind !== 'file') continue;
+    if (handle.kind === 'file') entries.push([name, handle as FileSystemFileHandle]);
+  }
 
+  const runs: RecoverableRun[] = [];
+  for (const [name, handle] of entries) {
     const parts = parseRecoveryName(name);
-    let size: number;
-    try {
-      size = (await handle.getFile()).size;
-    } catch {
-      // A worker in another tab still holds the sync access handle, so this run
-      // is live, not abandoned. Leave it alone.
-      continue;
-    }
+    const size = await readSizeWaitingForLock(handle);
+    if (size === null) continue;
 
     if (!parts || size === 0) {
       await dir.removeEntry(name).catch(() => {});

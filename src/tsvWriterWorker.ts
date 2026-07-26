@@ -6,6 +6,7 @@
 // here; this worker calls createWritable() and owns everything after that.
 import { createTsvHeader, formatTsvRow } from './utils/tsvFormat';
 import { RECOVERY_DIR, buildRecoveryName } from './utils/opfsRecoveryShared';
+import { TSV_MIRROR_FLUSH_INTERVAL_MS, TSV_MIRROR_FLUSH_MAX_ROWS } from './constants';
 import type { FileSystemSyncAccessHandle } from './types';
 import type { TsvWorkerRequest, TsvWorkerResponse } from './utils/tsvWorkerProtocol';
 
@@ -23,14 +24,22 @@ let aiChannels = 0;
 let aoChannels = 0;
 let paramChannels = 0;
 
-// OPFS crash-recovery mirror. Everything that reaches the picked file's stream
-// is also appended here, synchronously and without a swap file, so a crash
-// mid-run leaves a complete file behind instead of the 0-byte target. See
-// utils/opfsRecoveryShared.ts for the full rationale.
+// OPFS crash-recovery mirror. Every row is also appended here, synchronously
+// and without a swap file, so a crash mid-run leaves a near-complete file
+// behind instead of the 0-byte target. See utils/opfsRecoveryShared.ts for the
+// full rationale.
+//
+// The mirror keeps its own buffer and its own timer rather than riding along on
+// the stream flush: at TSV_FLUSH_INTERVAL_MS the stream's cadence is a
+// performance trade-off, and inheriting it meant the mirror was empty for the
+// first minute of every run — exactly the window a crash-recovery feature is
+// judged on. See TSV_MIRROR_FLUSH_INTERVAL_MS.
 let mirror: FileSystemSyncAccessHandle | null = null;
 let mirrorDir: FileSystemDirectoryHandle | null = null;
 let mirrorName = '';
 let mirrorOffset = 0;
+let mirrorBuffer: string[] = [];
+let mirrorTimer: number | undefined;
 // The header is held back until there is a row to go with it, so a run that
 // captured nothing leaves a 0-byte mirror that startup sweeps silently instead
 // of offering the user a file with no data in it.
@@ -58,12 +67,37 @@ async function openMirror(originalName: string): Promise<void> {
     mirror = await handle.createSyncAccessHandle();
     mirror.truncate(0);
     mirrorOffset = 0;
+    // Worker timer, deliberately: window timers are throttled to once a minute
+    // once the page is hidden, and a minimised logging window is precisely when
+    // the machine is left alone long enough to crash.
+    mirrorTimer = self.setInterval(mirrorFlush, TSV_MIRROR_FLUSH_INTERVAL_MS);
   } catch (err) {
     mirror = null;
     mirrorDir = null;
     mirrorName = '';
     post({ type: 'error', message: `Crash recovery unavailable: ${errorMessage(err)}` });
   }
+}
+
+/**
+ * Append everything buffered since the last tick. Called on the mirror's own
+ * interval, on every row-count threshold, and once more before close.
+ */
+function mirrorFlush(): void {
+  if (mirrorBuffer.length === 0) return;
+  const data = mirrorBuffer.join('');
+  mirrorBuffer = [];
+  mirrorWrite(data);
+}
+
+/** Stop mirroring for good, releasing the timer and dropping buffered rows. */
+function disableMirror(): void {
+  if (mirrorTimer !== undefined) {
+    self.clearInterval(mirrorTimer);
+    mirrorTimer = undefined;
+  }
+  mirrorBuffer = [];
+  mirror = null;
 }
 
 /**
@@ -87,20 +121,21 @@ function mirrorWrite(data: string): void {
     } catch {
       // Already unusable; nothing to salvage.
     }
-    mirror = null;
+    disableMirror();
     post({ type: 'error', message: `Crash recovery stopped: ${errorMessage(err)}` });
   }
 }
 
 /** Close the mirror handle, releasing the OPFS lock on it. */
 function closeMirror(): void {
-  if (!mirror) return;
-  try {
-    mirror.close();
-  } catch {
-    // Nothing useful to do; the handle dies with the worker either way.
+  if (mirror) {
+    try {
+      mirror.close();
+    } catch {
+      // Nothing useful to do; the handle dies with the worker either way.
+    }
   }
-  mirror = null;
+  disableMirror();
 }
 
 /** Delete the mirror. Only after the picked file closed successfully. */
@@ -123,12 +158,14 @@ function flush(): Promise<void> {
 }
 
 async function drainBuffer(): Promise<void> {
+  // Mirror first: it is the copy that survives a crash, and it is synchronous,
+  // so it cannot be the thing left half-done by one. Unconditional, because a
+  // stream flush with nothing new for the stream can still have rows the
+  // mirror's own tick has not picked up yet.
+  mirrorFlush();
   if (!stream || writeBuffer.length === 0) return;
   const data = writeBuffer.join('');
   writeBuffer = [];
-  // Mirror first: it is the copy that survives a crash, and it is synchronous,
-  // so it cannot be the thing left half-done by one.
-  mirrorWrite(data);
   await stream.write(data);
 }
 
@@ -164,9 +201,12 @@ self.onmessage = async (event: MessageEvent<TsvWorkerRequest>) => {
         assertLength('AO raw', msg.aoRaw.length, aoChannels);
         assertLength('AI voltage', msg.aiVoltage.length, aiChannels);
         assertLength('Parameter values', msg.param.length, paramChannels);
-        writeBuffer.push(
-          formatTsvRow(msg.timestamp, msg.aiRaw, msg.aiPhysical, msg.aoRaw, msg.aiVoltage, msg.param, physicalPrecision, aiRawAsFloat),
-        );
+        const row = formatTsvRow(msg.timestamp, msg.aiRaw, msg.aiPhysical, msg.aoRaw, msg.aiVoltage, msg.param, physicalPrecision, aiRawAsFloat);
+        writeBuffer.push(row);
+        if (mirror) {
+          mirrorBuffer.push(row);
+          if (mirrorBuffer.length >= TSV_MIRROR_FLUSH_MAX_ROWS) mirrorFlush();
+        }
         // Row-count-based flush: cap each flush's join()+write() work regardless
         // of sampling rate (whichever comes first with the periodic 'flush').
         if (flushMaxRows > 0 && writeBuffer.length >= flushMaxRows) {

@@ -77,3 +77,17 @@ export const TSV_FLUSH_INTERVAL_MS = 60_000;
 // periodic main-thread hitch at high sampling rates (e.g. 50/100 Hz). The
 // interval remains the low-sampling-rate durability fallback.
 export const TSV_FLUSH_MAX_ROWS = 500;
+// Cadence of the OPFS crash-recovery mirror, which the writer worker drives on
+// its own timer rather than piggy-backing on the picked file's flush.
+//
+// Sharing that flush was the original design and it made the mirror useless for
+// the case it exists for: nothing reached OPFS until the first stream flush, so
+// a crash inside the first TSV_FLUSH_INTERVAL_MS left a 0-byte mirror and
+// startup had nothing to offer back. The mirror's whole justification is that
+// it can be written durably and cheaply as data arrives (a synchronous OPFS
+// append with no swap file), so it runs at the rate the user would actually
+// accept losing, while the stream keeps its performance-tuned interval.
+export const TSV_MIRROR_FLUSH_INTERVAL_MS = 1_000;
+// Row-count cap for the same, so a high sampling rate does not leave a second's
+// worth of rows sitting in memory between ticks.
+export const TSV_MIRROR_FLUSH_MAX_ROWS = 100;
