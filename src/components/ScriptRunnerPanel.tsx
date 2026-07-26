@@ -206,7 +206,7 @@ export function ScriptRunnerPanel({
           <ul className="space-y-2 px-3 pb-3 text-xs text-slate-600 dark:text-slate-400">
             {API_DOCS.map((api) => (
               <li key={api.name}>
-                <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                   {api.name}
                 </code>
                 <span className="ml-2">{api.desc}</span>

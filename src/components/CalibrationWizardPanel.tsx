@@ -369,7 +369,7 @@ export function CalibrationWizardPanel({
                 </option>
               ))}
             </select>
-            <span className="tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
+            <span translate="no" className="tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
               Raw: {Math.round(getAiRaw(channel))}
             </span>
           </div>
@@ -416,8 +416,8 @@ export function CalibrationWizardPanel({
               </div>
               <div className="flex items-center gap-1 px-1 text-[10px] text-slate-400 dark:text-slate-500">
                 <span className="w-4 shrink-0">#</span>
-                <span className="flex-1">Physical</span>
-                <span className="flex-1">Raw</span>
+                <span translate="no" className="flex-1">Physical</span>
+                <span translate="no" className="flex-1">Raw</span>
                 <span className="w-[66px] shrink-0" />
               </div>
             </>

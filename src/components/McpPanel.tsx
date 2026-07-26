@@ -128,7 +128,7 @@ function ToolList({ tools }: { tools: { name: string; desc: string }[] }) {
     <ul className="space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
       {tools.map((tool) => (
         <li key={tool.name}>
-          <code className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+          <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
             {tool.name}
           </code>
           <span className="ml-2">{tool.desc}</span>

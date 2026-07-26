@@ -2147,7 +2147,7 @@ function App() {
         <div className="mb-px flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Analog Input (16)</h2>
           <div className="flex items-center gap-2">
-            <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
+            <div translate="no" className="text-right leading-tight text-slate-500 dark:text-slate-400">
               <p className="text-[0.65rem]">
                 <em>Phy</em> = <em>a</em>&middot;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&middot;(<em>Raw</em>) + <em>c</em>
               </p>
@@ -2241,6 +2241,7 @@ function App() {
             return (
             <div
               key={ch.id}
+              translate="no"
               className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="min-w-0 flex-1 px-1 py-0.5">
@@ -2289,6 +2290,7 @@ function App() {
           {paramValues.map((value, idx) => (
             <div
               key={idx}
+              translate="no"
               className="min-w-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">

@@ -252,11 +252,15 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
                       <span className={`inline-block h-3 w-3 flex-shrink-0 rounded-full ${row.dot}`} />
                       {row.color}
                     </td>
-                    <td className="px-2 py-1.5 font-mono font-semibold">{row.abbr}</td>
-                    <td className="px-2 py-1.5">{row.name}</td>
+                    {/* Abbreviation, the English function name the column is
+                        explicitly for, and the NDIS letter are identifiers:
+                        a machine translation of "E+" or "Excitation +" is a
+                        different label from the one printed on the part. */}
+                    <td translate="no" className="px-2 py-1.5 font-mono font-semibold">{row.abbr}</td>
+                    <td translate="no" className="px-2 py-1.5">{row.name}</td>
                     <td className="px-2 py-1.5">{row.strain[lang]}</td>
                     <td className="px-2 py-1.5">{row.elec[lang]}</td>
-                    <td className="px-2 py-1.5 font-mono font-semibold">{row.ndis}</td>
+                    <td translate="no" className="px-2 py-1.5 font-mono font-semibold">{row.ndis}</td>
                   </tr>
                 ))}
               </tbody>
@@ -341,9 +345,9 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
             <dl className="flex-1 space-y-0.5 text-xs">
               {CABLE_ROWS.map((row) => (
                 <div key={row.ndis} className="flex gap-1">
-                  <dt className="w-8 shrink-0 font-mono font-bold">{row.ndis}</dt>
+                  <dt translate="no" className="w-8 shrink-0 font-mono font-bold">{row.ndis}</dt>
                   <dd className="text-slate-600 dark:text-slate-300">
-                    {row.abbr} — {row.elec[lang]}
+                    <span translate="no">{row.abbr}</span> — {row.elec[lang]}
                   </dd>
                 </div>
               ))}
@@ -351,7 +355,7 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
                   rather than left out: a letter missing from the key reads as
                   an omission, and someone would go looking for what it does. */}
               <div className="flex gap-1">
-                <dt className="w-8 shrink-0 font-mono font-bold text-slate-400 dark:text-slate-500">F / G</dt>
+                <dt translate="no" className="w-8 shrink-0 font-mono font-bold text-slate-400 dark:text-slate-500">F / G</dt>
                 <dd className="text-slate-400 dark:text-slate-500">{t.ndisUnused}</dd>
               </div>
             </dl>
@@ -420,6 +424,7 @@ function LangToggle({ lang, onChange }: { lang: ManualLang; onChange: (next: Man
     <div
       role="group"
       aria-label="Manual language"
+      translate="no"
       className="flex overflow-hidden rounded border border-slate-300 dark:border-slate-700"
     >
       {(['en', 'ja'] as const).map((value) => (
@@ -509,7 +514,9 @@ function KeyList({ keys }: { keys: { label: string; desc: ReactNode }[] }) {
     <dl className="min-w-0 flex-1 space-y-1">
       {keys.map((key) => (
         <div key={key.label} className="flex gap-2">
-          <dt className="shrink-0 whitespace-nowrap font-mono font-bold">{key.label}</dt>
+          <dt translate="no" className="shrink-0 whitespace-nowrap font-mono font-bold">
+            {key.label}
+          </dt>
           <dd className="text-slate-600 dark:text-slate-300">{key.desc}</dd>
         </div>
       ))}
@@ -562,7 +569,10 @@ function ScrewTerminal({ label }: { label: string }) {
   // The figure sits beside its text key, so every pixel it does not take is a
   // pixel the description keeps.
   return (
-    <div className="flex h-12 w-7 flex-col items-center justify-between rounded-sm bg-green-500 py-1">
+    <div
+      translate="no"
+      className="flex h-12 w-7 flex-col items-center justify-between rounded-sm bg-green-500 py-1"
+    >
       <span className="relative h-5 w-5 rounded-full border border-slate-500 bg-slate-300">
         <span className="absolute left-1/2 top-1/2 h-0.5 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-600" />
       </span>
@@ -587,6 +597,7 @@ function Pin({
 }) {
   return (
     <div
+      translate="no"
       className={`relative flex h-8 w-8 flex-col items-center justify-center overflow-hidden rounded-full text-center text-xs font-bold leading-none ${color} ${
         unused ? 'opacity-70' : ''
       }`}
