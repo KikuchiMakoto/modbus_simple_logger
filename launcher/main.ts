@@ -5,10 +5,14 @@
 // there is no network dependency and no caching layer (see server.ts headers),
 // so an exe rebuilt with new dist/ content always shows the new content on the
 // next launch.
-import { createServer, BASE_PATH } from './server';
+import { createServer, loadAssets, BASE_PATH } from './server';
 import { findBrowser, launchBrowser, type BrowserInfo } from './browser';
 import { startMcpServer, MCP_PORT, MCP_PATH, type McpHandle } from './mcp';
 import { bridge } from './bridge';
+import { hostFeed, OFF_STATUS } from './hostFeed';
+import { startViewerServer, lanViewerUrls, viewerUrl, type ViewerServerHandle } from './viewerServer';
+import { startTunnel, type TunnelHandle } from './tunnel';
+import { viewerHub } from './viewerHub';
 
 const isWindows = process.platform === 'win32';
 
@@ -17,23 +21,88 @@ const isWindows = process.platform === 'win32';
 // stderr is fine (the process is normally started from a terminal).
 const fatal = (message: string): never => {
   if (isWindows) {
-    Bun.spawnSync([
-      'powershell',
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Add-Type -AssemblyName PresentationFramework;' +
-        `[System.Windows.MessageBox]::Show(${JSON.stringify(message)}, 'Modbus Simple Logger') | Out-Null`,
-    ]);
+    Bun.spawnSync(
+      [
+        'powershell',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Add-Type -AssemblyName PresentationFramework;' +
+          `[System.Windows.MessageBox]::Show(${JSON.stringify(message)}, 'Modbus Simple Logger') | Out-Null`,
+      ],
+      // Same reason as the tunnel: a GUI-subsystem parent spawning a console
+      // program gets a console window for free. Here it would flash up behind
+      // the error dialog.
+      { windowsHide: true },
+    );
   } else {
     console.error(message);
   }
   process.exit(1);
 };
 
-const server = await createServer().catch((err: Error) =>
+const assets = await loadAssets().catch((err: Error) =>
   fatal(`${err.message}\nRun \`bun run launcher:build\` again.`),
 );
+
+const server = await createServer(assets).catch((err: Error) =>
+  fatal(`${err.message}\nRun \`bun run launcher:build\` again.`),
+);
+
+// Read-only remote monitoring, off until the host page asks for it. The switch
+// is in the page because the packaged exe has no console to put it in, and the
+// `__feed` socket carrying the request is loopback-only — so "the page" is
+// always the local window, never a viewer.
+let viewer: ViewerServerHandle | null = null;
+let tunnel: TunnelHandle | null = null;
+
+const stopSharing = () => {
+  tunnel?.stop();
+  tunnel = null;
+  viewer?.stop();
+  viewer = null;
+};
+
+// cloudflared died on its own (network dropped, Cloudflare closed the quick
+// tunnel, the process was killed from Task Manager). The published URL and the
+// QR code are dead at that point, so tear the rest down and tell the page —
+// leaving a panel that still shows a working-looking link is worse than saying
+// it stopped.
+const onTunnelLost = () => {
+  stopSharing();
+  hostFeed.pushStatus({
+    ...OFF_STATUS,
+    error: 'The internet link stopped unexpectedly. Turn it back on to get a new one.',
+  });
+};
+
+hostFeed.setControlHandler(async (action) => {
+  // Always start from a clean stop, including on enable: the two modes bind
+  // differently, so switching between them has to tear the old server down
+  // rather than reuse it.
+  stopSharing();
+  if (action.type === 'disable') return OFF_STATUS;
+
+  viewer = startViewerServer(assets, action.mode);
+  try {
+    const urls =
+      action.mode === 'tunnel'
+        ? [viewerUrl((tunnel = await startTunnel(viewer.port, onTunnelLost)).url)]
+        : lanViewerUrls(viewer.port);
+    return {
+      ...OFF_STATUS,
+      running: true,
+      mode: action.mode,
+      urls,
+      viewers: viewerHub.viewerCount,
+    };
+  } catch (err) {
+    // A tunnel that never came up leaves a loopback-only server listening for
+    // nobody; don't leave that behind just because the URL failed.
+    stopSharing();
+    throw err;
+  }
+});
 
 const appUrl = `http://127.0.0.1:${server.port}${BASE_PATH}`;
 
@@ -79,6 +148,11 @@ const shutdown = (code: number) => {
   }
   try {
     mcp?.stop();
+  } catch {
+    // already stopped
+  }
+  try {
+    stopSharing();
   } catch {
     // already stopped
   }
