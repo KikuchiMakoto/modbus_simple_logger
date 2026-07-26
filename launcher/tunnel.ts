@@ -59,15 +59,35 @@ export type TunnelHandle = {
 /**
  * Publish `port` (loopback) as an HTTPS URL. Rejects with a message meant for
  * the user: the Remote Monitoring panel is the only place this can surface.
+ *
+ * `onUnexpectedExit` fires if cloudflared dies on its own — the link is dead at
+ * that point, and the panel has to say so rather than keep showing a URL and a
+ * QR code that no longer resolve.
  */
-export const startTunnel = async (port: number): Promise<TunnelHandle> => {
+export const startTunnel = async (
+  port: number,
+  onUnexpectedExit?: () => void,
+): Promise<TunnelHandle> => {
   const binary = await materialise();
   const child = Bun.spawn(
     [binary, 'tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'],
-    { stdout: 'pipe', stderr: 'pipe' },
+    {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      // cloudflared is a console-subsystem binary and the launcher is a GUI one,
+      // so without this Windows allocates a console and shows an empty terminal
+      // window next to the app. It is not just ugly: closing that window kills
+      // cloudflared and silently takes the link down, which is impossible to
+      // explain to someone who did not know the window was part of the app.
+      windowsHide: true,
+    },
   );
 
+  // Set once we stop it deliberately, so a kill from stop() is not reported back
+  // to the user as a failure.
+  let stopping = false;
   const kill = () => {
+    stopping = true;
     try {
       child.kill();
     } catch {
@@ -109,6 +129,12 @@ export const startTunnel = async (port: number): Promise<TunnelHandle> => {
     void child.exited.then((code) => {
       finish(() => reject(new Error(`The tunnel process exited before it was ready (code ${code}).`)));
     });
+  });
+
+  // Only armed after the URL was handed out: before that, an exit is reported by
+  // the promise above instead.
+  void child.exited.then(() => {
+    if (!stopping) onUnexpectedExit?.();
   });
 
   return { url, stop: kill };

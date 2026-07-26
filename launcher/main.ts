@@ -21,14 +21,20 @@ const isWindows = process.platform === 'win32';
 // stderr is fine (the process is normally started from a terminal).
 const fatal = (message: string): never => {
   if (isWindows) {
-    Bun.spawnSync([
-      'powershell',
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Add-Type -AssemblyName PresentationFramework;' +
-        `[System.Windows.MessageBox]::Show(${JSON.stringify(message)}, 'Modbus Simple Logger') | Out-Null`,
-    ]);
+    Bun.spawnSync(
+      [
+        'powershell',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Add-Type -AssemblyName PresentationFramework;' +
+          `[System.Windows.MessageBox]::Show(${JSON.stringify(message)}, 'Modbus Simple Logger') | Out-Null`,
+      ],
+      // Same reason as the tunnel: a GUI-subsystem parent spawning a console
+      // program gets a console window for free. Here it would flash up behind
+      // the error dialog.
+      { windowsHide: true },
+    );
   } else {
     console.error(message);
   }
@@ -57,6 +63,19 @@ const stopSharing = () => {
   viewer = null;
 };
 
+// cloudflared died on its own (network dropped, Cloudflare closed the quick
+// tunnel, the process was killed from Task Manager). The published URL and the
+// QR code are dead at that point, so tear the rest down and tell the page —
+// leaving a panel that still shows a working-looking link is worse than saying
+// it stopped.
+const onTunnelLost = () => {
+  stopSharing();
+  hostFeed.pushStatus({
+    ...OFF_STATUS,
+    error: 'The internet link stopped unexpectedly. Turn it back on to get a new one.',
+  });
+};
+
 hostFeed.setControlHandler(async (action) => {
   // Always start from a clean stop, including on enable: the two modes bind
   // differently, so switching between them has to tear the old server down
@@ -68,7 +87,7 @@ hostFeed.setControlHandler(async (action) => {
   try {
     const urls =
       action.mode === 'tunnel'
-        ? [viewerUrl((tunnel = await startTunnel(viewer.port)).url)]
+        ? [viewerUrl((tunnel = await startTunnel(viewer.port, onTunnelLost)).url)]
         : lanViewerUrls(viewer.port);
     return {
       ...OFF_STATUS,
