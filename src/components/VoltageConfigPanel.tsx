@@ -31,23 +31,23 @@ export function VoltageConfigPanel({
       title="Voltage Config"
       subtitle="AI Channel Display Mode"
       accent="blue"
-      defaultWidth={440}
-      defaultHeight={560}
+      defaultWidth={380}
+      defaultHeight={460}
     >
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="space-y-2">
+      <div className="flex-1 overflow-y-auto p-2">
+        <div className="space-y-0.5">
           {voltageConfig.map((mode, idx) => {
             const isHx711 = idx < AI_CHANNELS / 2;
             const allowedModes = isHx711 ? HX711_MODES : ADS1115_MODES;
             return (
               <div
                 key={idx}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
+                className="flex items-center gap-1.5 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 dark:border-slate-700 dark:bg-slate-800"
               >
-                <span className="w-12 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                <span className="w-10 shrink-0 text-xs font-semibold text-slate-700 dark:text-slate-200">
                   CH {idx.toString().padStart(2, '0')}
                 </span>
-                <span className="w-14 shrink-0 text-xs text-slate-500 dark:text-slate-400">
+                <span className="w-12 shrink-0 text-[0.7rem] text-slate-500 dark:text-slate-400">
                   {isHx711 ? 'HX711' : 'ADS1115'}
                 </span>
                 <select
@@ -57,7 +57,7 @@ export function VoltageConfigPanel({
                     next[idx] = e.target.value as VoltageMode;
                     onVoltageConfigChange(next);
                   }}
-                  className="flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                  className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-0 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
                 >
                   {VOLTAGE_MODES
                     .filter((m) => allowedModes.has(m.value))

@@ -73,7 +73,7 @@ export function AppInfoPanel({
   }, [connected]);
 
   return (
-    <FloatingWindow open={open} onClose={onClose} title="App Info" defaultWidth={384} defaultHeight={560}>
+    <FloatingWindow open={open} onClose={onClose} title="Application Info" defaultWidth={384} defaultHeight={560}>
       <div className="flex flex-col gap-4 p-2 text-sm text-slate-700 dark:text-slate-200">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
           <h3 className="mb-1 text-base font-bold text-emerald-600 dark:text-emerald-400">

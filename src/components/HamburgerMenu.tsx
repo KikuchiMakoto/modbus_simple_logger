@@ -9,15 +9,15 @@ type HamburgerMenuProps = {
 };
 
 const MENU_ITEMS = [
-  { key: 'modbusConfig', label: 'Modbus Config', icon: '🔌', wip: false },
+  { key: 'modbusConfig', label: 'Connection Config', icon: '🔌', wip: false },
   { key: 'calibration', label: 'Calibration Value', icon: '⚙️', wip: false },
   { key: 'hx711Calibration', label: 'HX711 Calib (CH00–07)', icon: '⚖️', wip: false },
   { key: 'ads1115Calibration', label: 'ADS1115 Calib (CH08–15)', icon: '🎚️', wip: false },
   { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
   { key: 'scriptRunner', label: 'ScriptRunner', icon: '📜', wip: false },
   { key: 'mcp', label: 'MCP Access', icon: '🤖', wip: false },
-  { key: 'manual', label: 'Manual', icon: '📖', wip: false },
-  { key: 'appInfo', label: 'App Info', icon: 'ℹ️', wip: false },
+  { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
+  { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
 ];
 
 export function HamburgerMenu({

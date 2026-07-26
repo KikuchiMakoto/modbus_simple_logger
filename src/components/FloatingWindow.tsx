@@ -113,26 +113,30 @@ export function FloatingWindow({
         aria-label={title}
       >
         <div className="flex h-full w-full flex-col">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 dark:border-slate-700">
+          {/* Title bar of every floating panel. It is pure chrome — it must not
+              cost more vertical space than a row of the content it frames, so
+              the type matches the app's section headings (text-sm) rather than
+              being a size of its own. */}
+          <div className="flex items-center justify-between border-b border-slate-200 px-2 py-1 dark:border-slate-700">
             <div className="floating-window-drag-handle min-w-0 flex-1 cursor-move touch-none select-none">
-              <h2 className={`truncate text-lg font-bold ${accentColor}`}>
+              <h2 className={`truncate text-sm font-bold leading-tight ${accentColor}`}>
                 {title}
               </h2>
               {subtitle && (
-                <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                <p className="truncate text-[0.7rem] leading-tight text-slate-500 dark:text-slate-400">
                   {subtitle}
                 </p>
               )}
             </div>
-            <div className="flex shrink-0 items-center gap-2 pl-2">
+            <div className="flex shrink-0 items-center gap-1 pl-2">
               {headerActions}
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
+                className="rounded border border-slate-300 p-1 text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
                 aria-label={`Close ${title}`}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
