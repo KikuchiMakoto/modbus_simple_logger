@@ -254,8 +254,15 @@ export const fitCalibration = (points: CalibrationFitPoint[]): AiCalibration | n
   return fitLinearLeastSquares(points);
 };
 
+// Level thresholds for the AI meter and its reading, as a fraction of full
+// scale: caution from 0.70, saturation risk from 0.85. Deliberately earlier
+// than the range edge — an ADC reading that is already at 0.9 leaves almost no
+// headroom for the next load step.
+export const AI_LEVEL_CAUTION_RATIO = 0.7;
+export const AI_LEVEL_DANGER_RATIO = 0.85;
+
 export const getLevelColor = (ratio: number): { bar: string; text: string } => {
-  if (ratio > 0.9) return { bar: 'bg-red-500', text: 'text-red-600 dark:text-red-400' };
-  if (ratio > 0.6) return { bar: 'bg-yellow-400', text: 'text-yellow-500 dark:text-yellow-400' };
+  if (ratio > AI_LEVEL_DANGER_RATIO) return { bar: 'bg-red-500', text: 'text-red-600 dark:text-red-400' };
+  if (ratio > AI_LEVEL_CAUTION_RATIO) return { bar: 'bg-yellow-400', text: 'text-yellow-500 dark:text-yellow-400' };
   return { bar: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400' };
 };
