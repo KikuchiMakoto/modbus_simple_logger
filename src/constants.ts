@@ -27,6 +27,21 @@ export const NON_SAVING_CHART_WINDOW_MS = 60_000;
 // and feeds WebGL/regl resource churn. Coalescing redraws to ~5 fps keeps the
 // live view responsive while cutting steady GPU/React cost roughly in half.
 export const CHART_REDRAW_INTERVAL_MS = 200;
+// How often per-sample readouts (measured rate, saved-point count) are pushed
+// into React state. They are numbers a human reads, so 4/s is already more than
+// anyone can follow — while a state update per sample put a full re-render of
+// the channel cards between two Modbus transfers, turning display cost into
+// polling jitter. The underlying values are exact and kept in refs; only the
+// publishing is on a budget.
+export const READOUT_PUBLISH_INTERVAL_MS = 250;
+// Floor on how often the AI channel cards are refreshed, applied only when
+// polling faster than this (at the default 200 ms nothing changes). A publish
+// re-renders every channel card, and at 20 Hz that render lands between two
+// Modbus transfers — display cost turning straight into polling jitter, which
+// is the one trade this app must never make. 10 Hz is already past what anyone
+// can read off a moving number. Raise it to 0 to go back to one render per
+// sample; the recorded data is unaffected either way.
+export const CHANNEL_CARD_MIN_INTERVAL_MS = 100;
 // NOTE: CHART_PURGE_INTERVAL_MS (periodic 15-minute purge + remount) was removed
 // in v3.1. It was counterproductive: `Plotly.purge()` does not destroy the
 // scattergl WebGL context (plotly.js issues #2852 / #6365, the latter still open),

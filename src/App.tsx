@@ -25,6 +25,8 @@ import {
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
+  READOUT_PUBLISH_INTERVAL_MS,
+  CHANNEL_CARD_MIN_INTERVAL_MS,
   NON_SAVING_CHART_WINDOW_MS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
@@ -366,6 +368,12 @@ function App() {
   const lastAiReadCompletedAtRef = useRef(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const recentTimestampsRef = useRef<number[]>([]);
+  // Readouts (measured rate, saved-point count) are published to React on a
+  // budget rather than per sample — see READOUT_PUBLISH_INTERVAL_MS.
+  const lastRatePublishRef = useRef(0);
+  const lastCardPublishRef = useRef(0);
+  const lastSaveCountPublishRef = useRef(0);
+  const savePointCountRef = useRef(0);
   const [actualRateHz, setActualRateHz] = useState<number>(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
@@ -994,8 +1002,14 @@ function App() {
     });
   }, [scriptRunner]);
 
-  const updateDataHistory = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
-    const timestamp = Date.now();
+  // `timestamp` is the capture time, taken in pollOnce the moment the AI read
+  // returned — NOT Date.now() from in here. This function runs from a promise
+  // continuation, so reading the clock here would stamp every point with
+  // whenever the display queue happened to drain, mixing render latency into
+  // the recorded time base. That also made the two sinks disagree: TSV rows
+  // already carried the capture time, so the chart, IndexedDB and TSV described
+  // the same sample as having happened at different moments.
+  const updateDataHistory = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
     const seq = seqCounterRef.current++;
 
     // Persistence (IndexedDB while not saving) and display-buffer maintenance
@@ -1009,12 +1023,18 @@ function App() {
       param,
     });
 
+    // Measured from capture times, so this reports the acquisition rate rather
+    // than the rate at which the display managed to keep up.
     const ts = recentTimestampsRef.current;
     ts.push(timestamp);
     if (ts.length > 40) ts.splice(0, ts.length - 40);
     if (ts.length >= 2) {
       const elapsed = ts[ts.length - 1] - ts[0];
-      if (elapsed > 0) {
+      // Throttled: the readout is for a human, and pushing a new number 20 times
+      // a second only bought an unreadable flicker plus a React render competing
+      // with the very loop it is measuring.
+      if (elapsed > 0 && timestamp - lastRatePublishRef.current >= READOUT_PUBLISH_INTERVAL_MS) {
+        lastRatePublishRef.current = timestamp;
         setActualRateHz(Math.round(((ts.length - 1) / elapsed) * 1000 * 10) / 10);
       }
     }
@@ -1050,24 +1070,37 @@ function App() {
     return timestampsRef.current.length;
   }, []);
 
-  const enqueueDisplayUpdate = useCallback((aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
+  const enqueueDisplayUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
-        setAiChannels((prev) =>
-          prev.map((ch, idx) => {
-            const rawValue = aiRaw[idx] ?? ch.raw;
-            const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-            return {
-              ...ch,
-              raw: rawValue,
-              physical: aiPhysical[idx] ?? ch.physical,
-              status: getAiStatus(rawValue),
-              voltage,
-              microStrain,
-            };
-          }),
-        );
-        updateDataHistory(aiRaw, aiPhysical, param);
+        // Card values are published at CHANNEL_CARD_MIN_INTERVAL_MS at most, and
+        // only when the polling interval is shorter than that — i.e. never at
+        // the default 200 ms, where one render per sample is affordable. Above
+        // 10 Hz it is not: every publish re-renders 40 channel cards between two
+        // Modbus transfers, and nobody can read a number changing 20 times a
+        // second anyway. The data path below is NOT throttled — every sample
+        // still reaches the chart buffer, IndexedDB and TSV.
+        const cardsDue =
+          pollingRateRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
+          timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;
+        if (cardsDue) {
+          lastCardPublishRef.current = timestamp;
+          setAiChannels((prev) =>
+            prev.map((ch, idx) => {
+              const rawValue = aiRaw[idx] ?? ch.raw;
+              const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+              return {
+                ...ch,
+                raw: rawValue,
+                physical: aiPhysical[idx] ?? ch.physical,
+                status: getAiStatus(rawValue),
+                voltage,
+                microStrain,
+              };
+            }),
+          );
+        }
+        updateDataHistory(timestamp, aiRaw, aiPhysical, param);
       })
       .catch((err) => {
         console.error('[App] display update event failed', err);
@@ -1088,7 +1121,16 @@ function App() {
         aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? 'unknown').value;
       }
       writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, param);
-      setSavePointCount((prev) => prev + 1);
+      // The exact count lives in a ref; React only hears about it a few times a
+      // second. This runs synchronously inside pollOnce, in its own task, so as
+      // a state update it forced a second full render per sample on top of the
+      // channel-value one — doubling the render load during a save, which is
+      // exactly when the loop can least afford the competition.
+      savePointCountRef.current += 1;
+      if (timestamp - lastSaveCountPublishRef.current >= READOUT_PUBLISH_INTERVAL_MS) {
+        lastSaveCountPublishRef.current = timestamp;
+        setSavePointCount(savePointCountRef.current);
+      }
     } catch (err) {
       console.error('[App] save update failed', err);
       setStatus(`TSV write error: ${(err as Error).message}`);
@@ -1214,8 +1256,10 @@ function App() {
         ? new Float32Array(paramShare)
         : new Float32Array(PARAM_CHANNELS);
 
-      const timestamp = Date.now();
-      enqueueDisplayUpdate(aiRaw, aiPhysical, param);
+      // One capture time for every sink: chart, IndexedDB, TSV and the rate
+      // readout all describe this sample as having happened here.
+      const timestamp = lastAiReadCompletedAtRef.current;
+      enqueueDisplayUpdate(timestamp, aiRaw, aiPhysical, param);
       enqueueSaveUpdate(timestamp, aiRaw, aiPhysical, param);
     } else if (!firstError) {
       firstError = new Error('AI read failed');
@@ -1452,6 +1496,8 @@ function App() {
     setActiveSaveFilename('');
     setSaveStartedAt(null);
     setSaveElapsedMs(0);
+    savePointCountRef.current = 0;
+    lastSaveCountPublishRef.current = 0;
     setSavePointCount(0);
     try {
       if (writerToClose) {
@@ -1473,6 +1519,7 @@ function App() {
       displayUpdateChainRef.current = Promise.resolve();
       pendingDataPoints.current = [];
       recentTimestampsRef.current = [];
+      lastRatePublishRef.current = 0;
       setActualRateHz(0);
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
@@ -1657,6 +1704,7 @@ function App() {
 
         pendingDataPoints.current = [];
         recentTimestampsRef.current = [];
+        lastRatePublishRef.current = 0;
         setActualRateHz(0);
 
         await dataStorage.clearAllData();
@@ -1679,6 +1727,8 @@ function App() {
         setActiveSaveFilename(writer.getFileName());
         setSaveStartedAt(startedAt);
         setSaveElapsedMs(0);
+        savePointCountRef.current = 0;
+        lastSaveCountPublishRef.current = 0;
         setSavePointCount(0);
         setStatus('Saving data to file');
       } catch (setupErr) {
@@ -1709,6 +1759,8 @@ function App() {
     setActiveSaveFilename('');
     setSaveStartedAt(null);
     setSaveElapsedMs(0);
+    savePointCountRef.current = 0;
+    lastSaveCountPublishRef.current = 0;
     setSavePointCount(0);
 
     try {
@@ -1719,6 +1771,7 @@ function App() {
 
     pendingDataPoints.current = [];
     recentTimestampsRef.current = [];
+    lastRatePublishRef.current = 0;
     setActualRateHz(0);
 
     await dataStorage.clearAllData();
