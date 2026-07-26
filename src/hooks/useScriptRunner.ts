@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
+import { notify, NOTIFY_TAG } from '../utils/notifications';
 
 const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
 const SCRIPT_RUNNER_BACKUP_KEY = 'scriptRunnerCodeBackup';
@@ -214,6 +215,7 @@ export function useScriptRunner(
         | { type: 'set_ai_tare'; ch: number }
         | { type: 'status'; message: string }
         | { type: 'output'; stream: 'stdout' | 'stderr'; text: string }
+        | { type: 'notify'; message: string }
         | { type: 'done'; message?: string }
         | { type: 'interrupted'; message?: string }
         | { type: 'error'; message: string; traceback?: string };
@@ -225,23 +227,33 @@ export function useScriptRunner(
         setScriptRunnerStatus(message.message);
       } else if (message.type === 'output') {
         appendLog(message.stream, message.text);
+      } else if (message.type === 'notify') {
+        // set_notify(msg). Logged first: the log is the record, the toast is
+        // only the interruption, and the user may have turned it off.
+        appendLog('system', `notify: ${message.message}`);
+        notify('ScriptRunner', message.message, { tag: NOTIFY_TAG.scriptMessage });
       } else if (message.type === 'done') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Completed');
         appendLog('system', message.message ?? 'Completed');
+        notify('ScriptRunner', 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('completed');
       } else if (message.type === 'interrupted') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Stopped');
         appendLog('system', message.message ?? 'Stopped');
+        notify('ScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('stopped');
       } else if (message.type === 'error') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(`Error: ${message.message}`);
         appendLog('stderr', message.traceback ?? message.message);
+        // Sticky: a run that died is the one event worth leaving on screen
+        // until someone actually looks at it.
+        notify('ScriptRunner error', message.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
         settleRun('error', message.message, message.traceback ?? null);
       }
     };
@@ -250,6 +262,7 @@ export function useScriptRunner(
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${event.message}`);
       appendLog('stderr', event.message);
+      notify('ScriptRunner error', event.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', event.message);
     };
 
@@ -277,6 +290,11 @@ export function useScriptRunner(
     setScriptRunnerStatus(nextStatus);
     if (wasRunning) {
       appendLog('system', nextStatus);
+      // The worker answers this Stop with an 'interrupted' message of its own a
+      // moment later; both carry the same tag, so the second replaces the first
+      // rather than stacking. Notifying here too is what covers the case where
+      // no answer comes back at all (Pyodide was still booting).
+      notify('ScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
       settleRun('stopped');
     }
   }, [appendLog, settleRun]);
@@ -296,6 +314,11 @@ export function useScriptRunner(
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
       worker.postMessage({ type: 'run', code: codeOverride ?? scriptCodeRef.current });
+      notify(
+        'ScriptRunner',
+        source === 'mcp' ? 'Script started from MCP.' : 'Script started.',
+        { tag: NOTIFY_TAG.scriptRun },
+      );
       return info;
     } catch (err) {
       const text = (err as Error).message;
@@ -303,6 +326,7 @@ export function useScriptRunner(
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${text}`);
       appendLog('stderr', text);
+      notify('ScriptRunner error', text, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', text);
       return scriptRunRef.current;
     }
@@ -387,6 +411,7 @@ function getDefaultScript(): string {
 # set_ai_tare(ch): tare AI ch so current phy reads 0 (offset c only). ch: 0-15.
 # get_ao(ch) / set_ao(ch, vlt): AO voltage [V], clamped to 0-10, applied async. ch: 0-7.
 # get_param(ch) / set_param(ch, val): scratch value, shown in Parameter panel + TSV. ch: 0-15.
+# set_notify(msg): OS notification + Output log line. Enable Notifications in the menu first.
 #
 # Wait ONLY with \`await asyncio.sleep(s)\` - NEVER time.sleep() (freezes the browser).
 # Loop with a plain while/for. Press Stop to halt at any time.

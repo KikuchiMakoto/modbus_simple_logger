@@ -25,6 +25,7 @@ const API_DOCS = [
   { name: 'set_ao(ch, vlt)', desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.' },
   { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
   { name: 'set_param(ch, val)', desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.' },
+  { name: 'set_notify(msg)', desc: 'Raise an OS notification (needs Notifications on in the menu). Always written to Output.' },
   { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait. NEVER time.sleep().' },
 ];
 

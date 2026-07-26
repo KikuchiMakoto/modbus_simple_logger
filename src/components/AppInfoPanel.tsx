@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { probeRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
+import type { NotificationsState } from '../hooks/useNotifications';
 
 const LIBRARIES = [
   { name: 'React', version: '19.2', license: 'MIT' },
@@ -37,12 +38,17 @@ export function AppInfoPanel({
   open,
   onClose,
   connected = false,
+  notifications,
 }: {
   open: boolean;
   onClose: () => void;
   // Applying an update reloads the page, which would drop the port and stop the
   // measurement — so while a device is connected there is nothing to check for.
   connected?: boolean;
+  // Notifications are one switch with no settings of their own, so they live
+  // here rather than in a panel of their own (what is notified is documented in
+  // the ScriptRunner API list, next to the calls that raise them).
+  notifications: NotificationsState;
 }) {
   const backend = useRenderBackend();
   const [checking, setChecking] = useState(false);
@@ -134,6 +140,37 @@ export function AppInfoPanel({
               )}
             </div>
           )}
+        </div>
+
+        <div>
+          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Notifications</h4>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+            <label className="flex cursor-pointer items-center justify-between gap-3">
+              <span>
+                <span className="font-semibold">Desktop notifications</span>
+                <span className="block text-xs text-slate-500 dark:text-slate-400">
+                  ScriptRunner start / stop / completion and errors, plus set_notify() messages
+                  from a running script.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                className="h-5 w-5 shrink-0 accent-emerald-500"
+                checked={notifications.enabled}
+                disabled={!notifications.supported || notifications.permission === 'denied'}
+                onChange={(e) => notifications.setEnabled(e.target.checked)}
+              />
+            </label>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              {!notifications.supported
+                ? 'This page has no access to the Notification API (remote monitoring pages served over plain http do not).'
+                : notifications.permission === 'denied'
+                  ? 'Notifications are blocked for this site in the browser settings. Allow them there, then reload.'
+                  : notifications.enabled
+                    ? 'On. Repeated alerts replace each other instead of stacking, and everything notified is also written to the ScriptRunner Output log.'
+                    : 'Off. Events are still written to the ScriptRunner Output log.'}
+            </p>
+          </div>
         </div>
 
         <div>

@@ -158,6 +158,13 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   pyodide.globals.set('set_ai_tare', (ch: number) => {
     postWorkerMessage({ type: 'set_ai_tare', ch: Number(ch) });
   });
+  // Raise an OS notification from the script. The main thread decides whether
+  // anything is actually shown (the user's toggle and the browser permission
+  // both have to allow it — see utils/notifications.ts); the message is written
+  // to the ScriptRunner log either way, so a script never loses what it said.
+  pyodide.globals.set('set_notify', (message: unknown) => {
+    postWorkerMessage({ type: 'notify', message: String(message) });
+  });
   pyodide.globals.set('get_param', (ch: number) => readAiValue(paramShare, Number(ch)));
   pyodide.globals.set('set_param', (ch: number, data: number) => {
     writeParamValue(paramShare, Number(ch), Number(data));

@@ -80,6 +80,7 @@ import { McpPanel } from './components/McpPanel';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
+import { useNotifications } from './hooks/useNotifications';
 import { useMcpBridge, type McpApi } from './hooks/useMcpBridge';
 import {
   useViewerHost,
@@ -689,6 +690,10 @@ function App() {
   }, [applyCalibrationToChannels]);
 
   const scriptRunner = useScriptRunner(setAo, handleTareCalibration);
+  // Only the panel needs this hook; the events themselves call notify() from
+  // utils/notifications directly, which is what lets a worker message handler
+  // raise one without a component in the way.
+  const notifications = useNotifications();
 
   // Mirror AO values into the ScriptRunner share so get_ao() can read them, in
   // volts to match the unit set_ao() takes (AO state is held in millivolts).
@@ -2142,6 +2147,7 @@ function App() {
         open={appInfoPanelOpen}
         onClose={() => setAppInfoPanelOpen(false)}
         connected={connected}
+        notifications={notifications}
       />
 
       <ManualPanel

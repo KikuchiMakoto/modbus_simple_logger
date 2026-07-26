@@ -183,3 +183,19 @@ self.addEventListener('message', (event) => {
     event.ports[0].postMessage({ appVersion: APP_VERSION, cacheVersion: CACHE_VERSION });
   }
 });
+
+// Notifications raised through this registration (the PWA path — the launcher
+// has no Service Worker and uses the Notification constructor instead). The
+// point of the alert is to get the user back to the logger, so clicking it
+// focuses the existing window rather than opening a second copy of the app.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url.includes(BASE_PATH) && 'focus' in client) return client.focus();
+      }
+      return self.clients.openWindow(BASE_PATH);
+    }),
+  );
+});
