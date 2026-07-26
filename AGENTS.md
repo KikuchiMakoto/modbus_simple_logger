@@ -45,7 +45,7 @@ src/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・API 一覧
 │   ├── ManualPanel.tsx              # アプリ内マニュアル
-│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示
+│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
 │   ├── ModbusConfigPanel.tsx        # シリアル設定ウィンドウ
@@ -61,6 +61,7 @@ src/
     ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
+    ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
     ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
 public/
@@ -153,8 +154,10 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - キャッシュ保存時に `request` と `BASE_PATH + 'index.html'` の両方に保存（キー不一致防止）
 - 静的アセット: Stale-While-Revalidate（プリキャッシュ済みアセットの裏での更新用。オフライン時はプリキャッシュから配信）
 - `vite.config.ts` の `server.headers` / `preview.headers` でも COOP/COEP を設定
-- **SW 更新はユーザー承諾ゲート**（計測中断防止・バージョン固定）: `sw.js` の install は `skipWaiting()` を呼ばず、新 SW は **waiting に留まる**（旧バージョンが旧キャッシュのまま配信継続）。`main.tsx` は起動時検出（`registration.waiting`）・セッション中検出（`updatefound`）の**いずれでも** `window.confirm()` 承諾時のみ `SKIP_WAITING` を送信（無確認の自動適用経路は存在しない）→ activate（旧キャッシュ削除）→ `controllerchange` で無条件リロード。辞退時は waiting のまま保持され、次回起動時に再確認される。プロンプトのバージョン表示（`vX → vY`）は waiting ワーカーへの `GET_VERSION` メッセージで取得（500ms タイムアウト。旧ビルドの SW は非応答のためバージョン無し表示へフォールバック）。**activate 後の controllerchange で confirm してはならない**（その時点で旧キャッシュは削除済みのため、拒否すると未読込アセットの取得が壊れる）
-- 定期 update チェックの `setInterval` は `pagehide` でクリーンアップ
+- **SW 更新はユーザー承諾ゲート**（計測中断防止・バージョン固定）: `sw.js` の install は `skipWaiting()` を呼ばず、新 SW は **waiting に留まる**（旧バージョンが旧キャッシュのまま配信継続）。`utils/swUpdate.ts` は `window.confirm()` 承諾時のみ `SKIP_WAITING` を送信（無確認の自動適用経路は存在しない）→ activate（旧キャッシュ削除）→ `controllerchange` で無条件リロード。辞退時は waiting のまま保持され、次の明示チェックで再確認される。プロンプトのバージョン表示（`vX → vY`）は waiting ワーカーへの `GET_VERSION` メッセージで取得（500ms タイムアウト。旧ビルドの SW は非応答のためバージョン無し表示へフォールバック）。**activate 後の controllerchange で confirm してはならない**（その時点で旧キャッシュは削除済みのため、拒否すると未読込アセットの取得が壊れる）
+- **確認ウィンドウは明示チェック限定**（計測中の割り込み禁止）: `confirm()` を出せるのは **起動直後のチェック**と **App Info の「Check for Updates」ボタン**だけ。両者は同じ `checkForAppUpdate()` を呼ぶ（挙動は完全に同一）。判定は `explicitCheckRunning` フラグ（明示チェックの `registration.update()` 実行中のみ true）で行い、`updatefound` はこのフラグが立っているときだけ prompt 対象として adopt する。**セッション中に勝手に確認ウィンドウを出す経路を追加してはならない**
+- 定期 update チェック（60秒 `setInterval`）は**サイレント**: 見つかった新 SW はプロンプト無しで install → waiting に留まる（次の明示チェックがダウンロード待ちなしで提示できる）。`setInterval` は `pagehide` でクリーンアップ
+- 明示チェックの結果（`UpdateCheckResult`）は App Info 内にテキスト表示のみ（別ウィンドウは出さない）。`registration.installing` が既に走っている場合はそれを adopt し、完了時にプロンプトする
 
 ### Float32 内部表現
 - `DataPoint.aiRaw` / `aiPhysical` / `aiVoltage` は `Float32Array`

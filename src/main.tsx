@@ -8,6 +8,7 @@ import App from './App';
 // the system stack in index.css.
 import '@fontsource-variable/jetbrains-mono';
 import './index.css';
+import { setupServiceWorker } from './utils/swUpdate';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -64,140 +65,7 @@ if (rootElement) {
   );
 }
 
-// Launcher (desktop exe) mode is detected purely by hostname: the launcher
-// serves the app from 127.0.0.1 only. Regular deployments never use that host
-// — GitHub Pages is a public domain and `vite preview` serves on `localhost` —
-// so this branch leaves Pages and PWA behaviour completely unchanged.
-//
-// In launcher mode the server itself sends COOP/COEP on every response and
-// disables caching (Cache-Control: no-store), so the Service Worker is neither
-// needed nor wanted: registering it would reintroduce an HTTP-cache-independent
-// cache layer that could serve stale assets after an exe update. We also
-// proactively unregister any SW left behind by a previous PWA visit to the same
-// origin (e.g. a developer who ran `vite preview` on 127.0.0.1 earlier), so no
-// residual precache survives into launcher mode.
-const isLauncherMode = window.location.hostname === '127.0.0.1';
-
-if (isLauncherMode) {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker
-      .getRegistrations()
-      .then((registrations) => {
-        for (const registration of registrations) {
-          registration.unregister();
-        }
-      })
-      .catch((error) => {
-        console.warn('SW unregister failed:', error);
-      });
-  }
-}
-
-// Service Worker registration (PWA)
-else if ('serviceWorker' in navigator) {
-  const currentVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
-
-  // Ask a (waiting) Service Worker which app version it was built from.
-  // sw.js answers GET_VERSION on the transferred MessageChannel port; SWs
-  // built before that handler existed never reply, so time out and fall
-  // back to a version-less prompt rather than hanging.
-  const queryWorkerVersion = (worker: ServiceWorker): Promise<string | null> =>
-    new Promise((resolve) => {
-      const timer = window.setTimeout(() => resolve(null), 500);
-      const channel = new MessageChannel();
-      channel.port1.onmessage = (event) => {
-        window.clearTimeout(timer);
-        resolve(typeof event.data?.appVersion === 'string' ? event.data.appVersion : null);
-      };
-      worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
-    });
-
-  // Every version switch requires explicit user consent — including updates
-  // detected right at startup. sw.js deliberately does NOT call
-  // skipWaiting() during install, so a new version parks in `waiting` while
-  // the current version keeps serving with its cache intact; activation
-  // (old cache deleted + clients claimed) only happens once we post
-  // SKIP_WAITING here. Declining leaves the worker waiting: this session
-  // keeps running the current version in full, and the prompt reappears on
-  // the next launch via the `registration.waiting` branch below.
-  const promptAndActivate = async (worker: ServiceWorker) => {
-    const newVersion = await queryWorkerVersion(worker);
-    const versionInfo =
-      newVersion && currentVersion ? ` (v${currentVersion} → v${newVersion})` : '';
-    const shouldActivate = window.confirm(
-      `A new version of the app is available${versionInfo}. Update and reload now?\n\n` +
-      'Warning: Reloading will stop any active measurement.'
-    );
-    if (shouldActivate) {
-      worker.postMessage({ type: 'SKIP_WAITING' });
-    }
-  };
-
-  window.addEventListener('load', () => {
-    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
-    navigator.serviceWorker
-      .register(swUrl)
-      .then((registration) => {
-        console.log('SW registered:', registration);
-
-        // Prompt once per worker: the `waiting` branch below and the
-        // `updatefound` statechange can both fire for the same worker.
-        let promptedWorker: ServiceWorker | null = null;
-        const promptOnce = (worker: ServiceWorker) => {
-          if (promptedWorker === worker) return;
-          promptedWorker = worker;
-          void promptAndActivate(worker);
-        };
-
-        // A new version left waiting by a previous session (update
-        // declined): ask again now. Only relevant when this page is
-        // SW-controlled — with no controller the waiting worker activates
-        // on its own (first-install path, nothing to lose).
-        if (registration.waiting && navigator.serviceWorker.controller) {
-          promptOnce(registration.waiting);
-        }
-
-        // Listen for new SW installations (found by the update checks
-        // below). The version switch only happens via promptOnce above.
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          if (!newWorker) return;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state !== 'installed' || !navigator.serviceWorker.controller) return;
-            promptOnce(newWorker);
-          });
-        });
-
-        // Check for updates immediately on load
-        registration.update();
-
-        // Periodically check for SW updates (every 60 seconds)
-        const updateInterval = window.setInterval(() => {
-          registration.update().catch((err) => {
-            console.warn('SW update check failed:', err);
-          });
-        }, 60_000);
-
-        // Cleanup interval on pagehide
-        window.addEventListener('pagehide', () => {
-          window.clearInterval(updateInterval);
-        }, { once: true });
-      })
-      .catch((error) => {
-        console.log('SW registration failed:', error);
-      });
-  });
-
-  // Reload the page when a new SW takes over. Activation is consent-gated
-  // above (or happens on the very first install, where nothing can be
-  // interrupted), so by the time controllerchange fires the reload has
-  // already been approved — never prompt here: the old cache is gone at
-  // this point, and declining would leave the page running a half-broken
-  // version.
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
-}
+// Service Worker registration + the consent-gated update flow (and, in launcher
+// mode, the unregistration of any leftover SW) live in utils/swUpdate.ts, which
+// App Info's "Check for Updates" button reuses for its check.
+setupServiceWorker();
