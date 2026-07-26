@@ -9,6 +9,7 @@
 // While a device is connected no check runs at all (see
 // setUpdateChecksSuspended): the only thing an update can offer mid-session is
 // a reload that would drop the serial connection and stop the measurement.
+import { isLauncherMode } from './appMode';
 
 export type UpdateCheckResult =
   /** No Service Worker in this context (launcher mode, unsupported browser, registration failed). */
@@ -24,12 +25,11 @@ export type UpdateCheckResult =
   /** The check itself failed (offline, server error). */
   | 'failed';
 
-// Launcher (desktop exe) mode is detected purely by hostname: the launcher
-// serves the app from 127.0.0.1 only. Regular deployments never use that host
-// — GitHub Pages is a public domain and `vite preview` serves on `localhost` —
-// so this leaves Pages and PWA behaviour completely unchanged.
-const isLauncherMode = window.location.hostname === '127.0.0.1';
-
+// Launcher (desktop exe) mode comes from the marker the launcher injects into
+// the index.html it serves (see utils/appMode.ts). Regular deployments carry no
+// marker, so Pages and PWA behaviour is unchanged — and, unlike the hostname
+// test this replaced, a launcher page opened from another PC over the network is
+// still correctly recognised as launcher mode.
 const swAvailable = !isLauncherMode && 'serviceWorker' in navigator;
 
 /** Whether an update check can run at all (false in launcher mode / no SW support). */

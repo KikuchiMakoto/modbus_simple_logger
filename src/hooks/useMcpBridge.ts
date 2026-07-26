@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import type { ScriptLogEntry, ScriptRunInfo } from './useScriptRunner';
+import { isLauncherMode } from '../utils/appMode';
 
 // Page side of the MCP bridge (desktop exe only).
 //
@@ -11,11 +12,8 @@ import type { ScriptLogEntry, ScriptRunInfo } from './useScriptRunner';
 // ScriptRunner uses — so the MCP tools and the Python API are two doors into one
 // implementation rather than two implementations.
 //
-// Launcher mode is detected exactly as in main.tsx: the launcher serves the app
-// from 127.0.0.1 and nothing else does. On GitHub Pages / PWA this hook never
-// opens a socket.
-const isLauncherMode = typeof window !== 'undefined' && window.location.hostname === '127.0.0.1';
-
+// Launcher mode comes from utils/appMode (a marker the launcher injects into the
+// index.html it serves). On GitHub Pages / PWA this hook never opens a socket.
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10000;
 

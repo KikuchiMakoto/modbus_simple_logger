@@ -43,12 +43,31 @@ export const INDEX = `${BASE_PATH}index.html`;
 // app itself, so no cross-origin or COEP considerations apply.
 export const BRIDGE_PATH = `${BASE_PATH}${BRIDGE_PATH_SUFFIX}`;
 
+// The page tells launcher mode apart from a plain web deployment by this marker
+// and nothing else (see src/utils/appMode.ts). It has to be stamped by whoever
+// serves the page, because the client-side signal it replaced — hostname ===
+// '127.0.0.1' — stops being true the moment a second PC opens the same app over
+// the network.
+const RUNTIME_MARKER = '<meta name="msl-runtime" content="launcher">';
+
+// Stamp the marker into the <head> of the served index.html. dist/ on disk stays
+// untouched: only the in-memory copy carries it, so `bun run build` output is
+// still byte-for-byte what GitHub Pages gets.
+const stampRuntimeMarker = (html: Uint8Array): Uint8Array => {
+  const text = new TextDecoder().decode(html);
+  const head = text.indexOf('<head>');
+  if (head < 0) throw new Error('Launcher build is incomplete: index.html has no <head>.');
+  const at = head + '<head>'.length;
+  return new TextEncoder().encode(`${text.slice(0, at)}${RUNTIME_MARKER}${text.slice(at)}`);
+};
+
 // Preload every embedded asset into memory once so responses come from an owned
 // Uint8Array with fully controlled headers.
 const loadBodies = async (): Promise<Map<string, Uint8Array>> => {
   const bodies = new Map<string, Uint8Array>();
   for (const [urlPath, ref] of Object.entries(ASSETS)) {
-    bodies.set(urlPath, await Bun.file(ref).bytes());
+    const bytes = await Bun.file(ref).bytes();
+    bodies.set(urlPath, urlPath === INDEX ? stampRuntimeMarker(bytes) : bytes);
   }
   return bodies;
 };
