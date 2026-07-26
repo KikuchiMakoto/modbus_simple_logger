@@ -588,7 +588,7 @@ export function CalibrationWizardPanel({
             onClick={handleApply}
             className="w-full rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Apply to this channel (overwrite a, b, c)
+            Apply (overwrite a,b,c)
           </button>
         </div>
       </div>

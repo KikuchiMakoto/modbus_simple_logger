@@ -5,10 +5,16 @@
 // version found by the periodic background check installs silently and parks in
 // `waiting` — it never interrupts a running measurement with a confirm dialog.
 // The next explicit check picks that waiting worker up and prompts for it.
+//
+// While a device is connected no check runs at all (see
+// setUpdateChecksSuspended): the only thing an update can offer mid-session is
+// a reload that would drop the serial connection and stop the measurement.
 
 export type UpdateCheckResult =
   /** No Service Worker in this context (launcher mode, unsupported browser, registration failed). */
   | 'unsupported'
+  /** Checks are paused because a device is connected. */
+  | 'suspended'
   /** A ready new version was found; the confirm prompt is up. */
   | 'prompted'
   /** A new version is being downloaded; the prompt follows once it is installed. */
@@ -28,6 +34,16 @@ const swAvailable = !isLauncherMode && 'serviceWorker' in navigator;
 
 /** Whether an update check can run at all (false in launcher mode / no SW support). */
 export const isUpdateCheckSupported = () => swAvailable;
+
+// Set from App while a device is connected. Both the explicit checks and the
+// periodic background one stand down: applying an update means reloading, which
+// would drop the port mid-measurement, so there is nothing useful to find out.
+let checksSuspended = false;
+
+/** Pause every update check (App calls this with the device connection state). */
+export function setUpdateChecksSuspended(suspended: boolean) {
+  checksSuspended = suspended;
+}
 
 const currentVersion: string | undefined = import.meta.env.VITE_APP_VERSION;
 
@@ -167,6 +183,7 @@ let checkInFlight: Promise<UpdateCheckResult> | null = null;
  */
 export function checkForAppUpdate(): Promise<UpdateCheckResult> {
   if (!swAvailable) return Promise.resolve('unsupported');
+  if (checksSuspended) return Promise.resolve('suspended');
   if (!checkInFlight) {
     const check = runUpdateCheck();
     checkInFlight = check;
@@ -232,8 +249,11 @@ export function setupServiceWorker() {
 
         // Periodically check for SW updates (every 60 seconds). Silent by
         // design: anything found here installs and parks in `waiting` so the
-        // next explicit check can offer it without a download wait.
+        // next explicit check can offer it without a download wait. Skipped
+        // entirely while a device is connected — no downloads competing with a
+        // running measurement.
         const updateInterval = window.setInterval(() => {
+          if (checksSuspended) return;
           registration.update().catch((err) => {
             console.warn('SW update check failed:', err);
           });

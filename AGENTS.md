@@ -156,6 +156,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - `vite.config.ts` の `server.headers` / `preview.headers` でも COOP/COEP を設定
 - **SW 更新はユーザー承諾ゲート**（計測中断防止・バージョン固定）: `sw.js` の install は `skipWaiting()` を呼ばず、新 SW は **waiting に留まる**（旧バージョンが旧キャッシュのまま配信継続）。`utils/swUpdate.ts` は `window.confirm()` 承諾時のみ `SKIP_WAITING` を送信（無確認の自動適用経路は存在しない）→ activate（旧キャッシュ削除）→ `controllerchange` で無条件リロード。辞退時は waiting のまま保持され、次の明示チェックで再確認される。プロンプトのバージョン表示（`vX → vY`）は waiting ワーカーへの `GET_VERSION` メッセージで取得（500ms タイムアウト。旧ビルドの SW は非応答のためバージョン無し表示へフォールバック）。**activate 後の controllerchange で confirm してはならない**（その時点で旧キャッシュは削除済みのため、拒否すると未読込アセットの取得が壊れる）
 - **確認ウィンドウは明示チェック限定**（計測中の割り込み禁止）: `confirm()` を出せるのは **起動直後のチェック**と **App Info の「Check for Updates」ボタン**だけ。両者は同じ `checkForAppUpdate()` を呼ぶ（挙動は完全に同一）。判定は `explicitCheckRunning` フラグ（明示チェックの `registration.update()` 実行中のみ true）で行い、`updatefound` はこのフラグが立っているときだけ prompt 対象として adopt する。**セッション中に勝手に確認ウィンドウを出す経路を追加してはならない**
+- **Connect 中は更新チェック自体を停止**: `App.tsx` が `connected` を `setUpdateChecksSuspended()` へ流し、定期チェック・明示チェックの**両方**が no-op になる（`checkForAppUpdate()` は `'suspended'` を返し、App Info のボタンは disabled）。更新適用＝リロード＝ポート切断・計測停止のため、接続中は確認する意味がない
 - 定期 update チェック（60秒 `setInterval`）は**サイレント**: 見つかった新 SW はプロンプト無しで install → waiting に留まる（次の明示チェックがダウンロード待ちなしで提示できる）。`setInterval` は `pagehide` でクリーンアップ
 - 明示チェックの結果（`UpdateCheckResult`）は App Info 内にテキスト表示のみ（別ウィンドウは出さない）。`registration.installing` が既に走っている場合はそれを adopt し、完了時にプロンプトする
 

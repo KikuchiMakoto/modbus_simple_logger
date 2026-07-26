@@ -26,13 +26,24 @@ const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'modbus_simple_logger';
 // with no visible outcome reads as broken.
 const UPDATE_STATUS: Record<UpdateCheckResult, string> = {
   unsupported: 'Updates are not managed in this build.',
+  suspended: 'Disconnect the device to check for updates.',
   prompted: 'A new version is available.',
   downloading: 'Downloading a new version… you will be asked to reload when it is ready.',
   'up-to-date': 'You are running the latest version.',
   failed: 'Update check failed. Check your network connection.',
 };
 
-export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AppInfoPanel({
+  open,
+  onClose,
+  connected = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  // Applying an update reloads the page, which would drop the port and stop the
+  // measurement — so while a device is connected there is nothing to check for.
+  connected?: boolean;
+}) {
   const backend = useRenderBackend();
   const [checking, setChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -54,6 +65,12 @@ export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => 
   useEffect(() => {
     if (open && !backend) reportRenderBackend(probeRenderBackend());
   }, [open, backend]);
+
+  // Drop the last check's result on connect: it would otherwise reappear as
+  // stale text once the device is disconnected again.
+  useEffect(() => {
+    if (connected) setUpdateStatus(null);
+  }, [connected]);
 
   return (
     <FloatingWindow open={open} onClose={onClose} title="App Info" defaultWidth={384} defaultHeight={560}>
@@ -104,13 +121,16 @@ export function AppInfoPanel({ open, onClose }: { open: boolean; onClose: () => 
               <button
                 type="button"
                 onClick={() => void handleCheckForUpdates()}
-                disabled={checking}
+                disabled={checking || connected}
+                title={connected ? 'Disconnect the device first — applying an update reloads the app' : undefined}
                 className="w-full rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {checking ? 'Checking…' : 'Check for Updates'}
               </button>
-              {updateStatus && (
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{updateStatus}</p>
+              {(connected || updateStatus) && (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  {connected ? UPDATE_STATUS.suspended : updateStatus}
+                </p>
               )}
             </div>
           )}

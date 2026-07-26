@@ -61,6 +61,7 @@ import {
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
+import { setUpdateChecksSuspended } from './utils/swUpdate';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
 import { CalibrationWizardPanel, DenominatorOption } from './components/CalibrationWizardPanel';
@@ -1232,6 +1233,13 @@ function App() {
     };
   }, [handleDisconnect]);
 
+  // Applying a PWA update reloads the page, which would drop the port and stop
+  // the measurement — so no update check runs at all while a device is
+  // connected (neither the periodic background one nor the App Info button).
+  useEffect(() => {
+    setUpdateChecksSuspended(connected);
+  }, [connected]);
+
   const handleToggleConnection = async () => {
     if (connected) {
       await handleDisconnect();
@@ -1837,6 +1845,7 @@ function App() {
       <AppInfoPanel
         open={appInfoPanelOpen}
         onClose={() => setAppInfoPanelOpen(false)}
+        connected={connected}
       />
 
       <ManualPanel
