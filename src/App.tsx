@@ -91,6 +91,11 @@ const shouldUsePolyfill = isMobileDevice() || !('serial' in navigator);
 const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial : navigator.serial;
 const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 
+// GP8403 full scale. AO state is held in millivolts, so this is both the write
+// clamp and the 100% mark of the AO card's level meter — one constant, so the
+// meter can never disagree with what the hardware will actually accept.
+const AO_FULL_SCALE_MV = 10000;
+
 const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '50 ms', valueMs: 50 },
   { label: '100 ms', valueMs: 100 },
@@ -581,7 +586,7 @@ function App() {
   const clampAoVoltageToMilliVolt = useCallback((voltage: number): number => {
     if (!Number.isFinite(voltage)) return 0;
     const milliVolt = Math.round(voltage * 1000);
-    return Math.min(10000, Math.max(0, milliVolt));
+    return Math.min(AO_FULL_SCALE_MV, Math.max(0, milliVolt));
   }, []);
 
   const applyAoRawValues = useCallback((nextRaw: number[]) => {
@@ -1676,7 +1681,7 @@ function App() {
                   )}
                 </div>
               </div>
-              <div className="flex w-2 items-end overflow-hidden rounded-r-lg">
+              <div className="flex w-1.5 items-end overflow-hidden rounded-r-lg">
                 <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
               </div>
             </div>
@@ -1693,33 +1698,45 @@ function App() {
         </div>
         {!aoCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
-          {aoChannels.map((ch) => (
+          {aoChannels.map((ch) => {
+            // AO is a commanded value, not a measurement: the full scale is the
+            // DAC's own 0-10 V range, and there is no "too high" to warn about.
+            // Hence one flat colour — the AI meter's green/yellow/red would
+            // imply a limit the output does not have.
+            const aoMeterHeight = Math.max(2, Math.min(1, Math.abs(ch.physical) / AO_FULL_SCALE_MV) * 100);
+            return (
             <div
               key={ch.id}
-              className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="flex min-w-0 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
-              <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
-                <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  {ch.label}
-                </span>
-                <input
-                  type="text"
-                  value={aoFreeLabels[ch.id] ?? ''}
-                  onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
-                  placeholder="Label"
-                  className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                />
-              </div>
-              <div className="pt-px text-base leading-none">
-                <div className="flex items-center justify-between leading-none">
-                  <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
-                  <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
-                    {(ch.physical / 1000).toFixed(3)}
+              <div className="min-w-0 flex-1 p-1">
+                <div className="flex items-center gap-1 border-b border-slate-200 pb-px dark:border-slate-700">
+                  <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    {ch.label}
                   </span>
+                  <input
+                    type="text"
+                    value={aoFreeLabels[ch.id] ?? ''}
+                    onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
+                    placeholder="Label"
+                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  />
+                </div>
+                <div className="pt-px text-base leading-none">
+                  <div className="flex items-center justify-between leading-none">
+                    <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
+                    <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+                      {(ch.physical / 1000).toFixed(3)}
+                    </span>
+                  </div>
                 </div>
               </div>
+              <div className="flex w-1.5 items-end overflow-hidden rounded-r-lg">
+                <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
         )}
       </section>
