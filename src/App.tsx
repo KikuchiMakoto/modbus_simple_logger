@@ -1558,19 +1558,60 @@ function App() {
     }
   }, [releaseWakeLock, stopPolling, scriptRunner, setStatus]);
 
+  // Two sources, because only one of them exists on any given platform.
+  //
+  // Native Web Serial fires 'disconnect' on navigator.serial. The WebUSB
+  // polyfill used on Android does not: its Serial class is a plain object with
+  // requestPort()/getPorts() and no EventTarget at all, so the guard below used
+  // to return immediately and nothing ever noticed a device being unplugged
+  // mid-run — the save just sat there. WebUSB has its own disconnect event on
+  // navigator.usb, which is what actually fires on that path.
   useEffect(() => {
-    if (typeof serial.addEventListener !== 'function') return;
-    const onSerialDisconnect = (event: Event) => {
-      const disconnectedPort = (event as { port?: SerialPort }).port;
-      const connectedPort = clientRef.current?.getPort();
-      if (!connectedPort) return;
-      if (disconnectedPort && disconnectedPort !== connectedPort) return;
-      console.warn('[App] USB disconnect event received for active port');
-      void handleDisconnect();
-    };
-    serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
+    const cleanups: Array<() => void> = [];
+
+    if (typeof serial.addEventListener === 'function') {
+      const onSerialDisconnect = (event: Event) => {
+        const disconnectedPort = (event as { port?: SerialPort }).port;
+        const connectedPort = clientRef.current?.getPort();
+        if (!connectedPort) return;
+        if (disconnectedPort && disconnectedPort !== connectedPort) return;
+        console.warn('[App] Web Serial disconnect event received for active port');
+        void handleDisconnect();
+      };
+      serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
+      cleanups.push(() => serial.removeEventListener('disconnect', onSerialDisconnect as EventListener));
+    }
+
+    if (typeof navigator.usb?.addEventListener === 'function') {
+      const onUsbDisconnect = (event: Event) => {
+        const connectedPort = clientRef.current?.getPort();
+        if (!connectedPort) return;
+
+        // Match by USB vendor/product id via the port's own getInfo(), rather
+        // than by reaching into the polyfill's private device_ field, which a
+        // minified build is free to rename. navigator.usb only fires for
+        // devices this origin already has permission for, so on the rare tie
+        // (two identical adapters paired) the worst case is tearing down a run
+        // the user was about to lose anyway.
+        const info = connectedPort.getInfo?.();
+        const device = (event as { device?: USBDevice }).device;
+        if (
+          info && device &&
+          info.usbVendorId !== undefined && info.usbProductId !== undefined &&
+          (info.usbVendorId !== device.vendorId || info.usbProductId !== device.productId)
+        ) {
+          return;
+        }
+
+        console.warn('[App] WebUSB disconnect event received for active port');
+        void handleDisconnect();
+      };
+      navigator.usb.addEventListener('disconnect', onUsbDisconnect as EventListener);
+      cleanups.push(() => navigator.usb.removeEventListener('disconnect', onUsbDisconnect as EventListener));
+    }
+
     return () => {
-      serial.removeEventListener('disconnect', onSerialDisconnect as EventListener);
+      for (const cleanup of cleanups) cleanup();
     };
   }, [handleDisconnect]);
 
