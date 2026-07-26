@@ -96,9 +96,28 @@ export interface FileSystemFileHandle {
   createWritable(): Promise<FileSystemWritableFileStream>;
 }
 
+/**
+ * Synchronous OPFS access handle, used by the TSV writer worker for the crash
+ * recovery mirror. @types/wicg-file-system-access predates it, and it is
+ * deliberately absent from the picked-file path: createSyncAccessHandle() is
+ * available on OPFS files only, and only inside a Worker.
+ */
+export interface FileSystemSyncAccessHandle {
+  read(buffer: BufferSource, options?: { at?: number }): number;
+  write(buffer: BufferSource, options?: { at?: number }): number;
+  truncate(newSize: number): void;
+  getSize(): number;
+  flush(): void;
+  close(): void;
+}
+
 declare global {
   interface Window {
     showSaveFilePicker(options?: SaveFilePickerOptions): Promise<FileSystemFileHandle>;
     showOpenFilePicker(options?: OpenFilePickerOptions): Promise<FileSystemFileHandle[]>;
+  }
+
+  interface FileSystemFileHandle {
+    createSyncAccessHandle(): Promise<FileSystemSyncAccessHandle>;
   }
 }

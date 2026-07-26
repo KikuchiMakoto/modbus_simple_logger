@@ -63,6 +63,13 @@ import {
   StoredDataPoint,
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
+import {
+  discardRecoveredRun,
+  downloadRecoveredRun,
+  formatRunSize,
+  listRecoverableRuns,
+  requestPersistentStorage,
+} from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import {
@@ -308,6 +315,11 @@ function CollapseButton({
   );
 }
 
+// Module scope, not a ref: StrictMode mounts the app twice in development, and
+// the recovery prompt is a blocking dialog the user would have to dismiss twice
+// for every leftover run.
+let recoveryPromptStarted = false;
+
 function App() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const {
@@ -451,6 +463,57 @@ function App() {
       setStatus('IndexedDB initialization failed');
     });
   }, [setStatus]);
+
+  // Offer back any run whose picked file never closed cleanly. Blocking
+  // window.confirm() rather than in-app UI: this has to be settled before the
+  // user can start a new run, and at startup there is no transient user
+  // activation to open a save picker with, so recovery is a download.
+  //
+  // No path here deletes data the user has not confirmed receiving. Cancelling
+  // either dialog keeps the copy for the next startup, which is the whole
+  // reason the feature is not advertised anywhere in the UI: it either
+  // silently works, or it is silently unavailable, and nothing has promised
+  // the user that it will be there.
+  useEffect(() => {
+    // Viewer windows mirror a host's data and never own a save file.
+    if (isViewerMode || recoveryPromptStarted) return;
+    recoveryPromptStarted = true;
+
+    const run = async () => {
+      // Keeps a long recording's mirror from being evicted under storage
+      // pressure. Best effort — a refusal changes nothing else.
+      requestPersistentStorage().catch(() => {});
+
+      const keepNote = 'Cancel keeps it and offers it again next time.';
+      for (const found of await listRecoverableRuns()) {
+        const started = new Date(found.startedAt).toLocaleString();
+        const offer =
+          `An unsaved recording was found.\n\n` +
+          `File: ${found.originalName}\n` +
+          `Started: ${started}\n` +
+          `Size: ${formatRunSize(found.size)}\n\n` +
+          `OK downloads it now. ${keepNote}`;
+        if (!window.confirm(offer)) continue;
+
+        try {
+          await downloadRecoveredRun(found);
+        } catch (err) {
+          window.alert(
+            `Could not recover ${found.originalName}.\n\n${(err as Error).message}\n\n` +
+              `The copy has been kept.`,
+          );
+          continue;
+        }
+
+        const cleanup =
+          `${found.originalName} was sent to your downloads.\n\n` +
+          `OK deletes the recovery copy. ${keepNote}`;
+        if (window.confirm(cleanup)) await discardRecoveredRun(found);
+      }
+    };
+
+    run().catch((err) => console.warn('TSV recovery check failed:', err));
+  }, []);
 
   useEffect(() => {
     pollingRateRef.current = pollingRate.valueMs;
@@ -1558,19 +1621,60 @@ function App() {
     }
   }, [releaseWakeLock, stopPolling, scriptRunner, setStatus]);
 
+  // Two sources, because only one of them exists on any given platform.
+  //
+  // Native Web Serial fires 'disconnect' on navigator.serial. The WebUSB
+  // polyfill used on Android does not: its Serial class is a plain object with
+  // requestPort()/getPorts() and no EventTarget at all, so the guard below used
+  // to return immediately and nothing ever noticed a device being unplugged
+  // mid-run — the save just sat there. WebUSB has its own disconnect event on
+  // navigator.usb, which is what actually fires on that path.
   useEffect(() => {
-    if (typeof serial.addEventListener !== 'function') return;
-    const onSerialDisconnect = (event: Event) => {
-      const disconnectedPort = (event as { port?: SerialPort }).port;
-      const connectedPort = clientRef.current?.getPort();
-      if (!connectedPort) return;
-      if (disconnectedPort && disconnectedPort !== connectedPort) return;
-      console.warn('[App] USB disconnect event received for active port');
-      void handleDisconnect();
-    };
-    serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
+    const cleanups: Array<() => void> = [];
+
+    if (typeof serial.addEventListener === 'function') {
+      const onSerialDisconnect = (event: Event) => {
+        const disconnectedPort = (event as { port?: SerialPort }).port;
+        const connectedPort = clientRef.current?.getPort();
+        if (!connectedPort) return;
+        if (disconnectedPort && disconnectedPort !== connectedPort) return;
+        console.warn('[App] Web Serial disconnect event received for active port');
+        void handleDisconnect();
+      };
+      serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
+      cleanups.push(() => serial.removeEventListener('disconnect', onSerialDisconnect as EventListener));
+    }
+
+    if (typeof navigator.usb?.addEventListener === 'function') {
+      const onUsbDisconnect = (event: Event) => {
+        const connectedPort = clientRef.current?.getPort();
+        if (!connectedPort) return;
+
+        // Match by USB vendor/product id via the port's own getInfo(), rather
+        // than by reaching into the polyfill's private device_ field, which a
+        // minified build is free to rename. navigator.usb only fires for
+        // devices this origin already has permission for, so on the rare tie
+        // (two identical adapters paired) the worst case is tearing down a run
+        // the user was about to lose anyway.
+        const info = connectedPort.getInfo?.();
+        const device = (event as { device?: USBDevice }).device;
+        if (
+          info && device &&
+          info.usbVendorId !== undefined && info.usbProductId !== undefined &&
+          (info.usbVendorId !== device.vendorId || info.usbProductId !== device.productId)
+        ) {
+          return;
+        }
+
+        console.warn('[App] WebUSB disconnect event received for active port');
+        void handleDisconnect();
+      };
+      navigator.usb.addEventListener('disconnect', onUsbDisconnect as EventListener);
+      cleanups.push(() => navigator.usb.removeEventListener('disconnect', onUsbDisconnect as EventListener));
+    }
+
     return () => {
-      serial.removeEventListener('disconnect', onSerialDisconnect as EventListener);
+      for (const cleanup of cleanups) cleanup();
     };
   }, [handleDisconnect]);
 
@@ -1906,15 +2010,39 @@ function App() {
                   >
                     {connected ? 'Disconnect' : 'Connect'}
                   </button>
-                  {!tsvWriterRef.current ? (
-                    <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
-                      Start Save
-                    </button>
-                  ) : (
-                    <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave}>
-                      Stop Save
-                    </button>
-                  )}
+                  {/* The file the picker creates stays 0 bytes until the writer
+                      closes it: a FileSystemWritableFileStream buffers into a
+                      swap file and only swings it onto the target on close().
+                      Nothing warns about that anywhere else — setStatus() is a
+                      no-op and the header has no room for a permanent notice —
+                      so it is said here, on the two buttons that bracket the
+                      run. No portal/tooltip library: the sticky header (z-10,
+                      positioned) is the nearest stacking context and clips
+                      nothing, so a plain absolute box paints over the page.
+                      Keep the last sentence as-is even once a crash-recovery
+                      mirror exists: promising recovery here would have people
+                      rely on it, and the promise still breaks under storage
+                      eviction or a write that never landed. A rescue path
+                      should announce itself only when it actually has
+                      something to restore. */}
+                  <div className="group relative">
+                    {!tsvWriterRef.current ? (
+                      <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected} aria-describedby="save-file-note">
+                        Start Save
+                      </button>
+                    ) : (
+                      <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave} aria-describedby="save-file-note">
+                        Stop Save
+                      </button>
+                    )}
+                    <div
+                      id="save-file-note"
+                      role="tooltip"
+                      className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-64 rounded border border-amber-400 bg-amber-50 p-2 text-left text-[0.7rem] font-normal leading-snug text-amber-800 shadow-lg group-hover:block group-focus-within:block dark:border-amber-500/60 dark:bg-slate-800 dark:text-amber-200"
+                    >
+                      The file is written when you press <strong>Stop Save</strong>. It stays 0 bytes while recording, and data is lost if the browser closes first.
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setHamburgerMenuOpen(true)}

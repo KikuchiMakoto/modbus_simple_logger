@@ -53,6 +53,39 @@ type ReadOutcome =
 /** Minimum spacing between automatic port-reopen attempts after a dead stream. */
 const REOPEN_THROTTLE_MS = 2000;
 
+/**
+ * Cap on each individual teardown step in disconnect().
+ *
+ * A device that was physically unplugged may never settle reader.cancel(),
+ * writer.close() or port.close(): behind the WebUSB polyfill the endpoint
+ * source has no cancel hook (see readChunk()), and the underlying transfers
+ * belong to a device that is simply gone. Awaiting those unbounded strands the
+ * whole app — the caller's disconnect handler never reaches its cleanup, so the
+ * UI stays "connected", saving never stops, and Connect cannot be used again.
+ *
+ * Short, because by the time this runs the port is already being abandoned;
+ * every step here is best-effort tidying, not something whose result is used.
+ */
+const TEARDOWN_STEP_TIMEOUT_MS = 1500;
+
+/**
+ * Wait for `promise` to settle, or give up after `ms`.
+ *
+ * Both handlers are attached immediately, so a promise abandoned by the timeout
+ * that rejects later is still considered handled and never surfaces as an
+ * unhandled rejection.
+ */
+function settleWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(true), ms);
+    const settled = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    promise.then(settled, settled);
+  });
+}
+
 export class WebSerialModbusClient {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -230,14 +263,14 @@ export class WebSerialModbusClient {
 
     if (this.reader) {
       console.info(`${this.debugPrefix} cancelling reader`);
-      try { await this.reader.cancel(); } catch (err) { console.warn(`${this.debugPrefix} reader cancel failed`, err); }
+      await this.teardownStep('reader cancel', () => this.reader!.cancel());
       try { this.reader.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} reader releaseLock failed`, err); }
       this.reader = null;
     }
 
     if (this.writer) {
       console.info(`${this.debugPrefix} closing writer`);
-      try { await this.writer.close(); } catch (err) { console.warn(`${this.debugPrefix} writer close failed`, err); }
+      await this.teardownStep('writer close', () => this.writer!.close());
       // close() finishes the stream but keeps the writer's lock; port.close()
       // throws on a still-locked writable, which would leave the USB device
       // claimed and make the next Connect fail.
@@ -247,7 +280,7 @@ export class WebSerialModbusClient {
 
     if (this.port) {
       console.info(`${this.debugPrefix} closing port`);
-      try { await this.port.close(); } catch (err) { console.warn(`${this.debugPrefix} port close failed`, err); }
+      await this.teardownStep('port close', () => this.port!.close());
       this.port = null;
     }
 
@@ -255,6 +288,31 @@ export class WebSerialModbusClient {
     this.streamDead = false;
     this.disconnecting = false;
     console.info(`${this.debugPrefix} disconnect() complete`);
+  }
+
+  /**
+   * Run one best-effort teardown step, giving up after TEARDOWN_STEP_TIMEOUT_MS.
+   *
+   * Takes a thunk rather than a promise so a synchronous throw from the call
+   * itself is caught here too. Never rethrows: disconnect() must always run to
+   * completion, and a step that failed or hung has nothing left to report that
+   * the caller could act on.
+   */
+  private async teardownStep(label: string, start: () => Promise<unknown>): Promise<void> {
+    let pending: Promise<unknown>;
+    try {
+      pending = start();
+    } catch (err) {
+      console.warn(`${this.debugPrefix} ${label} threw`, err);
+      return;
+    }
+    if (await settleWithin(pending, TEARDOWN_STEP_TIMEOUT_MS)) {
+      // Expected when the device was unplugged: the transfer belongs to
+      // hardware that is gone. The handle is dropped either way — on a removed
+      // device there is nothing left to leak, and on a live one the next
+      // Connect re-requests the port from scratch.
+      console.warn(`${this.debugPrefix} ${label} timed out after ${TEARDOWN_STEP_TIMEOUT_MS} ms; abandoning it`);
+    }
   }
 
   getPort(): SerialPort | null {
