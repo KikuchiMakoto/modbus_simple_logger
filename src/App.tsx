@@ -63,6 +63,13 @@ import {
   StoredDataPoint,
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
+import {
+  discardRecoveredRun,
+  downloadRecoveredRun,
+  formatRunSize,
+  listRecoverableRuns,
+  requestPersistentStorage,
+} from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import {
@@ -308,6 +315,11 @@ function CollapseButton({
   );
 }
 
+// Module scope, not a ref: StrictMode mounts the app twice in development, and
+// the recovery prompt is a blocking dialog the user would have to dismiss twice
+// for every leftover run.
+let recoveryPromptStarted = false;
+
 function App() {
   const { theme, isDarkMode, toggleTheme } = useTheme();
   const {
@@ -451,6 +463,57 @@ function App() {
       setStatus('IndexedDB initialization failed');
     });
   }, [setStatus]);
+
+  // Offer back any run whose picked file never closed cleanly. Blocking
+  // window.confirm() rather than in-app UI: this has to be settled before the
+  // user can start a new run, and at startup there is no transient user
+  // activation to open a save picker with, so recovery is a download.
+  //
+  // No path here deletes data the user has not confirmed receiving. Cancelling
+  // either dialog keeps the copy for the next startup, which is the whole
+  // reason the feature is not advertised anywhere in the UI: it either
+  // silently works, or it is silently unavailable, and nothing has promised
+  // the user that it will be there.
+  useEffect(() => {
+    // Viewer windows mirror a host's data and never own a save file.
+    if (isViewerMode || recoveryPromptStarted) return;
+    recoveryPromptStarted = true;
+
+    const run = async () => {
+      // Keeps a long recording's mirror from being evicted under storage
+      // pressure. Best effort — a refusal changes nothing else.
+      requestPersistentStorage().catch(() => {});
+
+      const keepNote = 'Cancel keeps it and offers it again next time.';
+      for (const found of await listRecoverableRuns()) {
+        const started = new Date(found.startedAt).toLocaleString();
+        const offer =
+          `An unsaved recording was found.\n\n` +
+          `File: ${found.originalName}\n` +
+          `Started: ${started}\n` +
+          `Size: ${formatRunSize(found.size)}\n\n` +
+          `OK downloads it now. ${keepNote}`;
+        if (!window.confirm(offer)) continue;
+
+        try {
+          await downloadRecoveredRun(found);
+        } catch (err) {
+          window.alert(
+            `Could not recover ${found.originalName}.\n\n${(err as Error).message}\n\n` +
+              `The copy has been kept.`,
+          );
+          continue;
+        }
+
+        const cleanup =
+          `${found.originalName} was sent to your downloads.\n\n` +
+          `OK deletes the recovery copy. ${keepNote}`;
+        if (window.confirm(cleanup)) await discardRecoveredRun(found);
+      }
+    };
+
+    run().catch((err) => console.warn('TSV recovery check failed:', err));
+  }, []);
 
   useEffect(() => {
     pollingRateRef.current = pollingRate.valueMs;
