@@ -334,8 +334,11 @@ function App() {
   const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
-  const [aoCollapsed, setAoCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ao_collapsed') ?? false);
-  const [paramCollapsed, setParamCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('param_collapsed') ?? false);
+  // AO and Parameter start collapsed: AI is what a session is normally watching,
+  // and the other two are only opened when they are actually being driven. The
+  // stored value still wins, so a user who expands them keeps them expanded.
+  const [aoCollapsed, setAoCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ao_collapsed') ?? true);
+  const [paramCollapsed, setParamCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('param_collapsed') ?? true);
 
   const clientRef = useRef<WebSerialModbusClient | null>(null);
   const aiRawSourceRef = useRef<number[]>(Array(AI_CHANNELS).fill(0));
@@ -1620,7 +1623,7 @@ function App() {
       <div className="space-y-1 p-1.5">
         <section className="card card-tight">
         <div className="mb-px flex items-center justify-between">
-          <h2 className="text-sm font-semibold leading-none">Analog Input (16)</h2>
+          <h2 className="text-lg font-semibold leading-none">Analog Input (16)</h2>
           <div className="flex items-center gap-2">
             <div className="text-right leading-tight text-slate-500 dark:text-slate-400">
               <p className="text-[0.65rem]">
@@ -1686,7 +1689,7 @@ function App() {
                   )}
                 </div>
               </div>
-              <div className="flex w-1.5 items-end overflow-hidden rounded-r">
+              <div className="flex w-1 items-end overflow-hidden rounded-r">
                 <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
               </div>
             </div>
@@ -1698,7 +1701,7 @@ function App() {
 
       <section className="card card-tight">
         <div className="mb-px flex items-center justify-between">
-          <h2 className="text-sm font-semibold leading-none">Analog Output (8)</h2>
+          <h2 className="text-lg font-semibold leading-none">Analog Output (8)</h2>
           <CollapseButton collapsed={aoCollapsed} onToggle={() => setAoCollapsed((v) => !v)} label="Analog Output" />
         </div>
         {!aoCollapsed && (
@@ -1736,7 +1739,7 @@ function App() {
                   </div>
                 </div>
               </div>
-              <div className="flex w-1.5 items-end overflow-hidden rounded-r">
+              <div className="flex w-1 items-end overflow-hidden rounded-r">
                 <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
               </div>
             </div>
@@ -1748,7 +1751,7 @@ function App() {
 
       <section className="card card-tight">
         <div className="mb-px flex items-center justify-between">
-          <h2 className="text-sm font-semibold leading-none">Parameter (16)</h2>
+          <h2 className="text-lg font-semibold leading-none">Parameter (16)</h2>
           <CollapseButton collapsed={paramCollapsed} onToggle={() => setParamCollapsed((v) => !v)} label="Parameter" />
         </div>
         {!paramCollapsed && (
