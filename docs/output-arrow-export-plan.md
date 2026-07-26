@@ -65,7 +65,7 @@
 | 17-32 | `ai_phy_00` 〜 `ai_phy_15` | `Float32` | キャリブレーション後の物理量（TSV の 3桁丸めを捨てる） |
 | 33-40 | `ao_raw_00` 〜 `ao_raw_07` | `Float32` | AO 出力生値（mV） |
 | 41-56 | `ai_vlt_00` 〜 `ai_vlt_15` | `Float32` | AI 電圧表示値（mV/V または V、`VoltageMode` 設定に基づく） |
-| 57-72 | `param_00` 〜 `param_15` | `Float32` | Parameter 値（スクリプト実行中の派生値等） |
+| 57-72 | `par_00` 〜 `par_15` | `Float32` | Parameter 値（スクリプト実行中の派生値等） |
 
 すべて `nullable=false`。
 

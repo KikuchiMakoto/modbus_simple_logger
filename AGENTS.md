@@ -137,7 +137,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - `init()` は冪等（複数回呼び出し安全）
   - `StoredDataPoint` に `seq` 連番を付与（重複検出・TSV 整合性）
 - **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
-  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `param_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
+  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
   - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は Normal（i16）では `toString()` の整数、Extended（f32）では init の `aiRawAsFloat` により浮動小数フォーマッタを通す
   - `Float32Array` / `number[]` の両方を受け付ける

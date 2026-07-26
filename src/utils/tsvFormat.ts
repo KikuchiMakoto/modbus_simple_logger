@@ -25,7 +25,7 @@ export function formatTimestamp(timestamp: number): string {
 
 /**
  * Create TSV header row for AI/AO/Parameter channel data
- * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tai_vlt_00\t...\tao_raw_00\t...\tparam_00\t...
+ * Format: timestamp\tai_raw_00\t...\tai_phy_00\t...\tai_vlt_00\t...\tao_raw_00\t...\tpar_00\t...
  * @param aiChannels - Number of AI channels
  * @param aoChannels - Number of AO channels
  * @param paramChannels - Number of Parameter channels (default: 0)
@@ -40,7 +40,7 @@ export function createTsvHeader(aiChannels: number, aoChannels: number, paramCha
     ...ch('ai_phy_', aiChannels),
     ...ch('ai_vlt_', aiChannels),
     ...ch('ao_raw_', aoChannels),
-    ...ch('param_', paramChannels),
+    ...ch('par_', paramChannels),
   ].join('\t') + '\n';
 }
 
