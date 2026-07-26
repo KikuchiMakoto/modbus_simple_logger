@@ -10,15 +10,29 @@
 // socket is exposed on the loopback app server only, so "the page" always means
 // the local host window, never a remote viewer.
 import { viewerHub, type ViewerSample, type ViewerState } from './viewerHub';
+import type { ViewerMode } from './viewerServer';
 
 /** What the page is told about remote monitoring, whenever it changes. */
 export type ViewerStatus = {
   running: boolean;
+  /** Which way it is published, when running. */
+  mode: ViewerMode | null;
   /** URLs another PC can open, once running. Empty while off. */
   urls: string[];
   /** Why the last enable attempt failed, or null. */
   error: string | null;
   viewers: number;
+  /** True while a tunnel is being provisioned — it takes a few seconds. */
+  starting: boolean;
+};
+
+export const OFF_STATUS: ViewerStatus = {
+  running: false,
+  mode: null,
+  urls: [],
+  error: null,
+  viewers: 0,
+  starting: false,
 };
 
 type FeedSocket = {
@@ -26,12 +40,14 @@ type FeedSocket = {
   close(code?: number, reason?: string): void;
 };
 
-type ControlHandler = (action: 'enable' | 'disable') => Promise<ViewerStatus>;
+type ControlAction = { type: 'enable'; mode: ViewerMode } | { type: 'disable' };
+
+type ControlHandler = (action: ControlAction) => Promise<ViewerStatus>;
 
 class HostFeed {
   private socket: FeedSocket | null = null;
   private control: ControlHandler | null = null;
-  private lastStatus: ViewerStatus = { running: false, urls: [], error: null, viewers: 0 };
+  private lastStatus: ViewerStatus = OFF_STATUS;
 
   get connected(): boolean {
     return this.socket !== null;
@@ -67,7 +83,7 @@ class HostFeed {
   }
 
   handleMessage(raw: string): void {
-    let frame: { type?: string; state?: ViewerState; samples?: ViewerSample[] };
+    let frame: { type?: string; state?: ViewerState; samples?: ViewerSample[]; mode?: ViewerMode };
     try {
       frame = JSON.parse(raw);
     } catch {
@@ -84,25 +100,27 @@ class HostFeed {
         viewerHub.publishReset();
         break;
       case 'enable':
+        void this.runControl({ type: 'enable', mode: frame.mode === 'tunnel' ? 'tunnel' : 'lan' });
+        break;
       case 'disable':
-        void this.runControl(frame.type);
+        void this.runControl({ type: 'disable' });
         break;
       default:
         break;
     }
   }
 
-  private async runControl(action: 'enable' | 'disable'): Promise<void> {
+  private async runControl(action: ControlAction): Promise<void> {
     if (!this.control) return;
+    // A tunnel takes several seconds to provision, so say so before starting:
+    // otherwise the toggle sits there looking broken.
+    if (action.type === 'enable' && action.mode === 'tunnel') {
+      this.pushStatus({ ...OFF_STATUS, starting: true });
+    }
     try {
       this.pushStatus(await this.control(action));
     } catch (err) {
-      this.pushStatus({
-        running: false,
-        urls: [],
-        error: (err as Error).message ?? String(err),
-        viewers: 0,
-      });
+      this.pushStatus({ ...OFF_STATUS, error: (err as Error).message ?? String(err) });
     }
   }
 

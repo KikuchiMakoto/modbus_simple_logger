@@ -53,7 +53,8 @@ src/
 │   ├── VoltageConfigPanel.tsx       # 電圧表示モード設定（チャネルタイプ別フィルタ）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー（MCP 項目は exe 限定で表示）
 │   ├── McpPanel.tsx                 # MCP 状態表示＋書込み許可トグル（exe 限定）
-│   ├── RemoteViewerPanel.tsx        # リモート監視の公開トグル＋閲覧 URL 表示（exe 限定）
+│   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
+│   ├── QrCode.tsx                   # QR をインライン SVG で描画（qrcode-generator・1 path に集約）
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/
@@ -142,11 +143,17 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### リモート監視（`launcher/viewerServer.ts` + `viewerHub.ts` + `hostFeed.ts` + `useViewerFeed.ts`）
 - **デスクトップ版（exe）限定・既定 OFF**。ホストページの Remote Monitoring パネルのトグルで起動し、他 PC のブラウザから**閲覧のみ**できる
-- **サーバーは2本に分ける**。アプリサーバー（`127.0.0.1`・ランダムポート）はハードウェアを持つホストページ用で `__bridge`（MCP）と `__feed`（監視アップリンク＋公開トグル）を持つ。ビューアサーバー（`0.0.0.0:8766`）は静的アセットと push 専用の `__viewer` しか持たない。**MCP エンドポイント（書込みツールを持つ）は 127.0.0.1 のままにすること**
+- **サーバーは2本に分ける**。アプリサーバー（`127.0.0.1`・ランダムポート）はハードウェアを持つホストページ用で `__bridge`（MCP）と `__feed`（監視アップリンク＋公開トグル）を持つ。ビューアサーバー（`:8766`）は静的アセットと push 専用の `__viewer` しか持たない。**MCP エンドポイント（書込みツールを持つ）は 127.0.0.1 のままにすること**
+- **公開方法は2モード**（`ViewerMode`）。`lan` は `0.0.0.0` を bind して LAN から直接（インターネット不要）、`tunnel` は `127.0.0.1` のみ bind し Cloudflare Quick Tunnel（`tunnel.ts`）が HTTPS で公開する。**tunnel モードでは LAN に何も listen していない**（cloudflared がローカルに繋ぐだけ）。モード切替は必ずサーバーを作り直すこと（bind 先が違うため使い回せない）
 - **read-only はトランスポートの性質であって UI の性質ではない**。ビューアが受け取るバンドルはホストと同一の JavaScript なので、ボタンを隠すことは根拠にならない。`viewerServer.ts` の `websocket.message` は**意図的に空**で、ビューアが送るフレームは一切パースされない。ここを実装で埋めないこと
-- **アクセス範囲は CIDR で先に切る**（`viewerServer.ts` の `ALLOWED_CIDRS`）。既定は `192.168.0.0/16` + ループバックのみで、範囲外はパスに関係なく 403（ポートの背後に何があるか漏らさないため）。`viewerUrls()` も同じ判定でフィルタする（弾かれる URL を案内するとファイアウォール問題と誤認させるため）
-- URL の `?k=` トークンは**WS upgrade のみ**を守り、静的アセットは守らない。アセットは計測データを含まない外殻で、そこまで守ると全チャンク・フォント・wasm にトークンが要る。プロセス起動ごとに再生成されるため古いリンクは自然に失効する
+- **アクセス範囲は CIDR で先に切る**（`viewerServer.ts` の `ALLOWED_CIDRS`・モード別）。`lan` は `192.168.0.0/16` + ループバック、`tunnel` はループバックのみ。範囲外はパスに関係なく 403（ポートの背後に何があるか漏らさないため）。`lanViewerUrls()` も同じ判定でフィルタする（弾かれる URL を案内するとファイアウォール問題と誤認させるため）
+- **`?k=` トークンは全パスを守る**（HTML も含む）。tunnel モードでは URL が公開インターネット上にあるため、無権限の訪問者に「これが Modbus ロガーである」ことすら見せない。ただしトークンが URL に要るのは**最初の1リクエストだけ**で、以降は `HttpOnly` Cookie（`msl_viewer`）が代理する — 全アセットに `?k=` を付けるにはバンドル内の URL を書き換える必要があり、ページ内にトークンを埋めれば DOM から読めるものになってしまう。Cookie は tunnel モードでのみ `Secure`（LAN は平文 HTTP なので付けると落とされる）。トークンはプロセス起動ごとに再生成され、古いリンクと古い QR は自然に失効する
+- **`serveStatic` の `/` リダイレクトに `Response.redirect()` を使わないこと**。返るレスポンスはヘッダーが immutable で `Set-Cookie` を追加できず、かつクエリを落とすためトークンが消える
 - **ホストは pull されない**。送信はチャート flush（`flushPendingDataPoints`）の副作用で、送るのは**実際にプロットした点だけ**（Save 中は間引き後）。したがって帯域はサンプリングレートではなくチャート予算で決まり、100Hz 計測が 100Hz のソケットにならない。ビューアが増えても取得ループの負荷は変わらない
+- **トンネルは Cloudflare Quick Tunnel**（`tunnel.ts`）。cloudflared のバイナリは `bun build --compile` で exe に埋め込むため、実行 PC に何もインストールされていなくても動く。**Tailscale は採用不可** — `tailscale.exe` は単体では動作せず `tailscaled` デーモン＋TUN ドライバ＋アカウントログインが必要で、同梱＝インストーラ同梱になる。cloudflared の Quick Tunnel はアカウント不要なので「QR を撮れば開く」が成立する
+- **cloudflared はビルド時に取得しハッシュ検証する**（`fetch-cloudflared.ts`）。バージョンと SHA256 を固定すること: 「latest」を引くと同一コミットのビルドが再現しなくなり、**埋め込んで実行するバイナリ**をネットワーク任せにすることになる。取得は `build.ts` の先頭で行う（`tunnel.ts` の静的 import がビルド時にファイルの存在を要求するため）
+- **埋め込みバイナリは temp へ実体化してから spawn する**。コンパイル済み exe の中では仮想パスであり、そのままでは exec できない。ファイル名にバージョンを含めて、古いビルドの残骸を拾わないようにすること
+- Quick Tunnel は**アカウント無し・稼働保証無し・毎回ランダムなホスト名**。最後の性質はここでは利点で、トークンと同じく古いリンクを自動失効させる。UI にはこの制約を明示すること
 - ラベル・キャリブレーション・電圧モード・ヘッダー状態は**1秒周期でまるごと再送**（差分を取らない）。この頻度で差分計算をするより安く、途中参加のビューアが1フレームで完全な状態を得られる
 - 途中参加用に `viewerHub` が直近 2048 点（`CHART_MAX_POINTS` と同値）のバックログを保持する。**ビューアのチャートは「直近 N 点」でホストの「全区間を間引いた図」とは一致しない** — 完全な記録はホストが書く TSV であり、この差は仕様
 - ビューア側の受信は**ホストと同じ `pendingDataPoints` → `flushPendingDataPoints` を通す**（描画経路を二重に持たない）。`flushPendingDataPoints` の viewer 分岐は IndexedDB 書込みを行わない（監視は記録ではない）
@@ -232,7 +239,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと**（import・localStorage キー・`FloatingWindow` のジオメトリキーに波及するだけで利得がない）。ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
 - **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
-- **`launcher/` は `.gitignore` 対象**。`launcher/mcp.ts`・`launcher/bridge.ts` のような新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）
+- **`launcher/` は `.gitignore` 対象**。`launcher/mcp.ts`・`launcher/bridge.ts` のような新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe と cloudflared バイナリ（54MB）は**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isViewerMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため、**別 PC から LAN アドレスで開いた瞬間に web 版と誤認して Service Worker を登録し**、no-store ヘッダーで排除したはずのキャッシュ層を復活させる。マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - **MCP ツールを追加する場合は3箇所を揃える**: `launcher/mcp.ts` の `registerTool`（zod スキーマ）、`useMcpBridge.ts` の `dispatch`（実処理・書込みゲート）、`McpPanel.tsx` のツール一覧。実処理は既存のコールバック / SAB を経由させ、新しい状態を作らないこと
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する

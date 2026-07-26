@@ -122,7 +122,13 @@ export const serveStatic = (assets: Assets, path: string, req: Request, runtime:
     return new Response(body, { headers: baseHeaders(contentType(urlPath)) });
   };
 
-  if (path === '/') return Response.redirect(BASE_PATH, 302);
+  // Built by hand rather than with Response.redirect(): that returns a response
+  // with immutable headers (the viewer server appends Set-Cookie), and it would
+  // drop the query string, which is where the viewer's token lives.
+  if (path === '/') {
+    const location = `${BASE_PATH}${new URL(req.url).search}`;
+    return new Response(null, { status: 302, headers: { Location: location } });
+  }
   if (!path.startsWith(BASE_PATH)) return notFound();
 
   const key = path === BASE_PATH ? INDEX : path;

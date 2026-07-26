@@ -49,15 +49,18 @@ export type ViewerStatePayload = {
   serial: string;
 };
 
+/** How remote monitoring is published. Mirrors ViewerMode in launcher/viewerServer.ts. */
+export type ViewerMode = 'lan' | 'tunnel';
+
 /** What the launcher reports about the viewer server. Mirrors ViewerStatus in launcher/hostFeed.ts. */
 export type ViewerServerStatus = {
   running: boolean;
+  mode: ViewerMode | null;
   urls: string[];
   error: string | null;
   viewers: number;
+  starting: boolean;
 };
-
-const OFFLINE_STATUS: ViewerServerStatus = { running: false, urls: [], error: null, viewers: 0 };
 
 const socketUrl = (suffix: string, query = ''): string => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -67,7 +70,8 @@ const socketUrl = (suffix: string, query = ''): string => {
 export type ViewerHostHandle = {
   /** Null until the launcher answers, so the UI can tell "off" from "not known yet". */
   status: ViewerServerStatus | null;
-  setEnabled: (enabled: boolean) => void;
+  /** Turn sharing on in a given mode, or off. Switching mode re-enables. */
+  setEnabled: (enabled: boolean, mode?: ViewerMode) => void;
   /** Push the samples just added to the chart buffer. No-op when monitoring is off. */
   publishSamples: (samples: ViewerSample[]) => void;
   /** Push the current configuration/status snapshot. */
@@ -139,7 +143,8 @@ export const useViewerHost = (): ViewerHostHandle => {
   }, []);
 
   const setEnabled = useCallback(
-    (enabled: boolean) => send({ type: enabled ? 'enable' : 'disable' }),
+    (enabled: boolean, mode: ViewerMode = 'lan') =>
+      send(enabled ? { type: 'enable', mode } : { type: 'disable' }),
     [send],
   );
 

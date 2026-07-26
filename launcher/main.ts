@@ -9,8 +9,9 @@ import { createServer, loadAssets, BASE_PATH } from './server';
 import { findBrowser, launchBrowser, type BrowserInfo } from './browser';
 import { startMcpServer, MCP_PORT, MCP_PATH, type McpHandle } from './mcp';
 import { bridge } from './bridge';
-import { hostFeed } from './hostFeed';
-import { startViewerServer, viewerUrls, type ViewerServerHandle } from './viewerServer';
+import { hostFeed, OFF_STATUS } from './hostFeed';
+import { startViewerServer, lanViewerUrls, viewerUrl, type ViewerServerHandle } from './viewerServer';
+import { startTunnel, type TunnelHandle } from './tunnel';
 import { viewerHub } from './viewerHub';
 
 const isWindows = process.platform === 'win32';
@@ -47,14 +48,41 @@ const server = await createServer(assets).catch((err: Error) =>
 // `__feed` socket carrying the request is loopback-only — so "the page" is
 // always the local window, never a viewer.
 let viewer: ViewerServerHandle | null = null;
+let tunnel: TunnelHandle | null = null;
+
+const stopSharing = () => {
+  tunnel?.stop();
+  tunnel = null;
+  viewer?.stop();
+  viewer = null;
+};
+
 hostFeed.setControlHandler(async (action) => {
-  if (action === 'disable') {
-    viewer?.stop();
-    viewer = null;
-    return { running: false, urls: [], error: null, viewers: 0 };
+  // Always start from a clean stop, including on enable: the two modes bind
+  // differently, so switching between them has to tear the old server down
+  // rather than reuse it.
+  stopSharing();
+  if (action.type === 'disable') return OFF_STATUS;
+
+  viewer = startViewerServer(assets, action.mode);
+  try {
+    const urls =
+      action.mode === 'tunnel'
+        ? [viewerUrl((tunnel = await startTunnel(viewer.port)).url)]
+        : lanViewerUrls(viewer.port);
+    return {
+      ...OFF_STATUS,
+      running: true,
+      mode: action.mode,
+      urls,
+      viewers: viewerHub.viewerCount,
+    };
+  } catch (err) {
+    // A tunnel that never came up leaves a loopback-only server listening for
+    // nobody; don't leave that behind just because the URL failed.
+    stopSharing();
+    throw err;
   }
-  if (!viewer) viewer = startViewerServer(assets);
-  return { running: true, urls: viewerUrls(viewer.port), error: null, viewers: viewerHub.viewerCount };
 });
 
 const appUrl = `http://127.0.0.1:${server.port}${BASE_PATH}`;
@@ -105,7 +133,7 @@ const shutdown = (code: number) => {
     // already stopped
   }
   try {
-    viewer?.stop();
+    stopSharing();
   } catch {
     // already stopped
   }

@@ -5,6 +5,11 @@
 // package.json so the same script works on Windows and Linux.
 import { existsSync, mkdirSync, openSync, readSync, writeSync, closeSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { ensureCloudflared } from './fetch-cloudflared';
+
+// tunnel.ts imports the cloudflared binary as an embedded asset, so it has to be
+// on disk (and hash-verified) before `bun build --compile` resolves that import.
+await ensureCloudflared();
 
 const isWindows = process.platform === 'win32';
 const entry = resolve(import.meta.dir, 'main.ts');
