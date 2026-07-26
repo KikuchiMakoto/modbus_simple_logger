@@ -76,6 +76,15 @@ import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
 import { useMcpBridge, type McpApi } from './hooks/useMcpBridge';
+import {
+  useViewerHost,
+  useViewerClient,
+  type ViewerHostHandle,
+  type ViewerSample,
+  type ViewerStatePayload,
+} from './hooks/useViewerFeed';
+import { RemoteViewerPanel } from './components/RemoteViewerPanel';
+import { isViewerMode } from './utils/appMode';
 import { serial as serialPolyfill } from 'web-serial-polyfill';
 
 function isMobileDevice(): boolean {
@@ -382,6 +391,17 @@ function App() {
   const pollingRateRef = useRef(pollingRate.valueMs);
   const voltageConfigRef = useRef<VoltageMode[]>(voltageConfig);
 
+  // Remote monitoring (see hooks/useViewerFeed.ts). Held in a ref because the
+  // publish calls happen inside the chart-flush path, whose useCallback is
+  // deliberately dependency-free: routing them through a ref keeps this feature
+  // from re-creating the hottest callback in the file. The hook itself is called
+  // further down, once the values it reports on exist.
+  const viewerHostRef = useRef<ViewerHostHandle | null>(null);
+  const [remoteViewerPanelOpen, setRemoteViewerPanelOpen] = useState(false);
+  // A viewer renders the host's serial line; it has no port of its own to
+  // describe, and the local DEFAULT_SERIAL_SETTINGS would be a fiction.
+  const [remoteSerialLabel, setRemoteSerialLabel] = useState('');
+
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
       setCalibrationPanelOpen(true);
@@ -401,6 +421,8 @@ function App() {
       setScriptRunnerPanelOpen(true);
     } else if (item === 'mcp') {
       setMcpPanelOpen(true);
+    } else if (item === 'remoteViewer') {
+      setRemoteViewerPanelOpen(true);
     }
   };
 
@@ -496,7 +518,21 @@ function App() {
     pendingDataPoints.current = [];
     const buffer = dataBufferRef.current;
 
-    if (tsvWriterRef.current) {
+    // What remote viewers are shown: exactly the points this host decided to
+    // plot, not every captured point. During a save that means the decimated
+    // stream, so the feed's bandwidth is bounded by the chart budget rather than
+    // by the sampling rate — a 100 Hz capture does not become a 100 Hz socket.
+    const published: DataPoint[] = [];
+
+    if (isViewerMode) {
+      // A viewer's points arrive already decimated by the host and already
+      // bounded by the hub's backlog, so there is nothing to decide here: keep
+      // the most recent chart budget and drop the rest. Notably this skips the
+      // IndexedDB write below — a monitor is not a recorder, and the complete
+      // record lives on the host's TSV.
+      for (const p of pointsToAdd) buffer.push(p);
+      if (buffer.length > CHART_MAX_POINTS) buffer.splice(0, buffer.length - CHART_MAX_POINTS);
+    } else if (tsvWriterRef.current) {
       // Saving: keep the chart bounded by downsampling the WHOLE capture
       // (save-start → now) to ~CHART_MAX_POINTS. Add 1 of every `stride` raw
       // points, and when the buffer doubles, re-decimate by 2 and double the
@@ -505,6 +541,7 @@ function App() {
       for (const p of pointsToAdd) {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
+          published.push(p);
         }
         saveRawCounterRef.current++;
       }
@@ -523,6 +560,7 @@ function App() {
     } else {
       // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
       for (const p of pointsToAdd) buffer.push(p);
+      published.push(...pointsToAdd);
       const cutoff = Date.now() - NON_SAVING_CHART_WINDOW_MS;
       let drop = 0;
       while (drop < buffer.length && buffer[drop].timestamp < cutoff) drop++;
@@ -552,6 +590,14 @@ function App() {
           console.error('Error trimming data points:', err);
         });
       }
+    }
+
+    // Push to remote viewers, if any. publishSamples short-circuits while remote
+    // monitoring is off, so this costs one branch on the normal path.
+    if (published.length > 0) {
+      viewerHostRef.current?.publishSamples(
+        published.map((p) => [p.seq, p.timestamp, Array.from(p.aiRaw), Array.from(p.aiPhysical), Array.from(p.param)]),
+      );
     }
 
     // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
@@ -734,6 +780,131 @@ function App() {
     },
   };
   const mcpBridge = useMcpBridge(mcpApiRef, mcpWriteEnabled);
+
+  // --- Remote monitoring (desktop exe only) ------------------------------
+  //
+  // Host side. The per-sample feed is tapped off the chart flush above; what is
+  // left is the slow-moving half — labels, calibration, voltage modes and the
+  // header's status line — which is republished on a timer rather than on every
+  // change. A second's latency on a label is invisible, and a timer cannot be
+  // forgotten the way an extra publish call at each of a dozen setState sites
+  // would eventually be.
+  const viewerHost = useViewerHost();
+  viewerHostRef.current = viewerHost;
+
+  // Rebuilt every render (like mcpApiRef above) so the timer below always reads
+  // current values without owning them as dependencies.
+  const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
+  viewerStateRef.current = () => ({
+    aiLabels: Array.from({ length: AI_CHANNELS }, (_, i) => aiFreeLabels[i] ?? ''),
+    aoLabels: Array.from({ length: AO_CHANNELS }, (_, i) => aoFreeLabels[i] ?? ''),
+    paramLabels: Array.from({ length: PARAM_CHANNELS }, (_, i) => paramFreeLabels[i] ?? ''),
+    voltageConfig: voltageConfig.slice(0, AI_CHANNELS),
+    calibration: aiCalibration.slice(0, AI_CHANNELS).map(({ a, b, c }) => ({ a, b, c })),
+    aoMilliVolts: aoChannels.map((ch) => ch.physical),
+    paramValues: [...paramValues],
+    connected,
+    saving: activeSaveFilename !== '',
+    filename: activeSaveFilename,
+    saveElapsedMs,
+    savePointCount,
+    pollingIntervalMs: pollingRate.valueMs,
+    actualRateHz,
+    serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
+  });
+
+  useEffect(() => {
+    if (isViewerMode) return;
+    const timer = window.setInterval(() => {
+      viewerHostRef.current?.publishState(viewerStateRef.current());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Viewer side. Received samples are pushed through the same buffer and flush
+  // the acquisition loop uses, so the charts and channel cards on a monitor are
+  // drawn by exactly the code that draws them on the host — there is no second
+  // rendering path to keep in step.
+  const ingestRemoteSamples = useCallback(
+    (samples: ViewerSample[]) => {
+      if (samples.length === 0) return;
+      for (const [seq, timestamp, raw, phy, param] of samples) {
+        pendingDataPoints.current.push({
+          seq,
+          timestamp,
+          aiRaw: Float32Array.from(raw),
+          aiPhysical: Float32Array.from(phy),
+          param: Float32Array.from(param),
+        });
+      }
+      // Only the newest sample reaches the channel cards; the rest exist to fill
+      // the chart. Physical values come from the host as sent — recomputing them
+      // from the viewer's own calibration would show a different number from the
+      // one the operator is looking at.
+      const [, , lastRaw, lastPhy] = samples[samples.length - 1];
+      aiRawSourceRef.current = [...lastRaw];
+      setAiChannels((prev) =>
+        prev.map((ch, idx) => {
+          const rawValue = lastRaw[idx] ?? ch.raw;
+          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+          return {
+            ...ch,
+            raw: rawValue,
+            physical: lastPhy[idx] ?? ch.physical,
+            status: getAiStatus(rawValue),
+            voltage,
+            microStrain,
+          };
+        }),
+      );
+      flushPendingDataPoints();
+    },
+    [flushPendingDataPoints],
+  );
+
+  const ingestRemoteState = useCallback((state: ViewerStatePayload) => {
+    // Every setter is a no-op when the value is unchanged, because this runs
+    // once a second and React would otherwise re-render the whole grid on each
+    // tick regardless of whether anything moved.
+    const replaceIfChanged = <T,>(prev: T, next: T): T =>
+      JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+
+    setAiFreeLabels((prev) => replaceIfChanged(prev, state.aiLabels));
+    setAoFreeLabels((prev) => replaceIfChanged(prev, state.aoLabels));
+    setParamFreeLabels((prev) => replaceIfChanged(prev, state.paramLabels));
+    setVoltageConfig((prev) => replaceIfChanged(prev, state.voltageConfig as VoltageMode[]));
+    setAiCalibration((prev) => replaceIfChanged(prev, state.calibration));
+    setParamValues((prev) => replaceIfChanged(prev, state.paramValues));
+    setAoChannels((prev) =>
+      prev.map((ch, idx) => {
+        const physical = state.aoMilliVolts[idx] ?? ch.physical;
+        return physical === ch.physical ? ch : { ...ch, raw: physical, physical };
+      }),
+    );
+    setConnected(state.connected);
+    setActiveSaveFilename(state.filename);
+    setSaveElapsedMs(state.saveElapsedMs);
+    setSavePointCount(state.savePointCount);
+    setActualRateHz(state.actualRateHz);
+    setRemoteSerialLabel(state.serial);
+    setPollingRate((prev) =>
+      prev.valueMs === state.pollingIntervalMs
+        ? prev
+        : POLLING_OPTIONS.find((option) => option.valueMs === state.pollingIntervalMs) ?? prev,
+    );
+  }, []);
+
+  const ingestRemoteReset = useCallback(() => {
+    pendingDataPoints.current = [];
+    dataBufferRef.current = [];
+    setDisplayRevision((v) => v + 1);
+  }, []);
+
+  const viewerClient = useViewerClient({
+    onState: ingestRemoteState,
+    onSamples: ingestRemoteSamples,
+    onReset: ingestRemoteReset,
+  });
 
   const handleScriptEditorKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Tab') return;
@@ -1168,6 +1339,7 @@ function App() {
 
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
+      viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
 
       const client = new WebSerialModbusClient(
@@ -1267,6 +1439,7 @@ function App() {
       setActualRateHz(0);
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
+      viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
       console.info('[App] handleDisconnect data/session cleanup complete');
     } catch (err) {
@@ -1451,6 +1624,7 @@ function App() {
 
         await dataStorage.clearAllData();
         dataBufferRef.current = [];
+        viewerHostRef.current?.publishReset();
         // Restart the whole-capture downsampling from this save start.
         saveDecimationStrideRef.current = 1;
         saveRawCounterRef.current = 0;
@@ -1509,6 +1683,7 @@ function App() {
 
     await dataStorage.clearAllData();
     dataBufferRef.current = [];
+    viewerHostRef.current?.publishReset();
     setDisplayRevision((v) => v + 1);
 
     setStatus('Stopped saving');
@@ -1537,7 +1712,9 @@ function App() {
                 </a>
               </h1>
               <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
-                {serialTransportLabel} - {formatSerialSettings(serialSettings)}
+                {isViewerMode
+                  ? remoteSerialLabel || 'Waiting for the host window…'
+                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`}
               </p>
               <div
                 role="status"
@@ -1583,34 +1760,61 @@ function App() {
                   {isDarkMode ? <MoonIcon className="h-3.5 w-3.5" /> : <SunIcon className="h-3.5 w-3.5" />}
                 </span>
               </button>
-              <button
-                type="button"
-                className={`button-touch min-w-[6rem] ${connected ? 'button-secondary' : 'button-primary'}`}
-                onClick={handleToggleConnection}
-              >
-                {connected ? 'Disconnect' : 'Connect'}
-              </button>
-              {!tsvWriterRef.current ? (
-                <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
-                  Start Save
-                </button>
+              {/* A viewer gets no controls at all — not disabled ones. Every
+                  action here (connect, save, and everything behind the menu)
+                  acts on hardware this machine does not have, so offering them
+                  greyed out would only invite the question of how to enable
+                  them. The badge says why they are missing. The restriction
+                  itself is enforced by the transport, not by this branch: see
+                  launcher/viewerHub.ts. */}
+              {isViewerMode ? (
+                <span
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                    viewerClient.hostGone
+                      ? 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-amber-300'
+                      : viewerClient.connected
+                        ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-500/60 dark:bg-emerald-500/10 dark:text-emerald-300'
+                        : 'border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                  }`}
+                >
+                  {viewerClient.hostGone
+                    ? 'Monitor - host window closed'
+                    : viewerClient.connected
+                      ? 'Monitor (read-only)'
+                      : 'Monitor - reconnecting…'}
+                </span>
               ) : (
-                <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave}>
-                  Stop Save
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className={`button-touch min-w-[6rem] ${connected ? 'button-secondary' : 'button-primary'}`}
+                    onClick={handleToggleConnection}
+                  >
+                    {connected ? 'Disconnect' : 'Connect'}
+                  </button>
+                  {!tsvWriterRef.current ? (
+                    <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
+                      Start Save
+                    </button>
+                  ) : (
+                    <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave}>
+                      Stop Save
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setHamburgerMenuOpen(true)}
+                    className="button-secondary button-compact flex items-center justify-center"
+                    aria-label="Open menu"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                      <line x1="3" y1="6" x2="21" y2="6" />
+                      <line x1="3" y1="12" x2="21" y2="12" />
+                      <line x1="3" y1="18" x2="21" y2="18" />
+                    </svg>
+                  </button>
+                </>
               )}
-              <button
-                type="button"
-                onClick={() => setHamburgerMenuOpen(true)}
-                className="button-secondary button-compact flex items-center justify-center"
-                aria-label="Open menu"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                  <line x1="3" y1="6" x2="21" y2="6" />
-                  <line x1="3" y1="12" x2="21" y2="12" />
-                  <line x1="3" y1="18" x2="21" y2="18" />
-                </svg>
-              </button>
             </div>
           </header>
         </div>
@@ -1661,6 +1865,7 @@ function App() {
                     value={aiFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
+                    readOnly={isViewerMode}
                     className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
@@ -1727,6 +1932,7 @@ function App() {
                     value={aoFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
+                    readOnly={isViewerMode}
                     className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
@@ -1770,6 +1976,7 @@ function App() {
                   value={paramFreeLabels[idx] ?? ''}
                   onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
                   placeholder="Label"
+                  readOnly={isViewerMode}
                   className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
@@ -1844,6 +2051,7 @@ function App() {
         onClose={() => setHamburgerMenuOpen(false)}
         onSelectItem={handleMenuSelect}
         showMcp={mcpBridge.bridgeConnected || mcpBridge.mcpEnabled}
+        showRemoteViewer={viewerHost.status !== null}
       />
 
       <ModbusConfigPanel
@@ -1939,6 +2147,13 @@ function App() {
         bridge={mcpBridge}
         writeEnabled={mcpWriteEnabled}
         onWriteEnabledChange={setMcpWriteEnabled}
+      />
+
+      <RemoteViewerPanel
+        open={remoteViewerPanelOpen}
+        onClose={() => setRemoteViewerPanelOpen(false)}
+        status={viewerHost.status}
+        onEnabledChange={viewerHost.setEnabled}
       />
     </div>
   );

@@ -1,7 +1,16 @@
-// Static file server for the launcher: serves the embedded (built) web app on
-// 127.0.0.1 with cross-origin isolation and a hard no-cache policy.
+// Static file server for the launcher: serves the embedded (built) web app with
+// cross-origin isolation and a hard no-cache policy.
+//
+// Two servers are built from the same assets:
+//   - the app server, on 127.0.0.1, where the hardware-owning host page runs;
+//   - the viewer server (viewerServer.ts), optional and bound to every
+//     interface, where read-only remote monitors connect.
+// They differ only in the runtime marker stamped into index.html and in which
+// WebSocket endpoints they expose, so the static handling below is shared.
 import { ASSETS, BASE_PATH } from './embedded.generated';
 import { bridge, BRIDGE_PATH_SUFFIX } from './bridge';
+import { HOST_FEED_PATH_SUFFIX } from './viewerHub';
+import { hostFeed } from './hostFeed';
 
 export { BASE_PATH };
 
@@ -42,51 +51,99 @@ export const INDEX = `${BASE_PATH}index.html`;
 // WebSocket endpoint the page uses to serve MCP tool calls. Same origin as the
 // app itself, so no cross-origin or COEP considerations apply.
 export const BRIDGE_PATH = `${BASE_PATH}${BRIDGE_PATH_SUFFIX}`;
+// WebSocket endpoint the host page pushes remote-monitoring frames up. Only
+// exposed on the loopback app server: it is the *source* of the viewer feed and
+// carries the control frames that switch remote monitoring on and off, so it
+// must never be reachable from another machine.
+export const HOST_FEED_PATH = `${BASE_PATH}${HOST_FEED_PATH_SUFFIX}`;
+
+/** Which of the two pages an index.html copy identifies itself as. */
+export type ServedRuntime = 'launcher' | 'viewer';
 
 // The page tells launcher mode apart from a plain web deployment by this marker
 // and nothing else (see src/utils/appMode.ts). It has to be stamped by whoever
 // serves the page, because the client-side signal it replaced — hostname ===
 // '127.0.0.1' — stops being true the moment a second PC opens the same app over
 // the network.
-const RUNTIME_MARKER = '<meta name="msl-runtime" content="launcher">';
+//
+// The same marker carries the role: a page served by the viewer server is told
+// it is a viewer, so the role is decided by which port the request arrived on
+// and cannot be changed by editing the URL.
+const runtimeMarker = (runtime: ServedRuntime) => `<meta name="msl-runtime" content="${runtime}">`;
 
-// Stamp the marker into the <head> of the served index.html. dist/ on disk stays
-// untouched: only the in-memory copy carries it, so `bun run build` output is
+// Stamp the marker into the <head> of a served index.html. dist/ on disk stays
+// untouched: only the in-memory copies carry it, so `bun run build` output is
 // still byte-for-byte what GitHub Pages gets.
-const stampRuntimeMarker = (html: Uint8Array): Uint8Array => {
+const stampRuntimeMarker = (html: Uint8Array, runtime: ServedRuntime): Uint8Array => {
   const text = new TextDecoder().decode(html);
   const head = text.indexOf('<head>');
   if (head < 0) throw new Error('Launcher build is incomplete: index.html has no <head>.');
   const at = head + '<head>'.length;
-  return new TextEncoder().encode(`${text.slice(0, at)}${RUNTIME_MARKER}${text.slice(at)}`);
+  return new TextEncoder().encode(`${text.slice(0, at)}${runtimeMarker(runtime)}${text.slice(at)}`);
+};
+
+export type Assets = {
+  /** Every embedded file. index.html here is the launcher-stamped copy. */
+  bodies: Map<string, Uint8Array>;
+  /** The viewer-stamped index.html — the only asset that differs by role. */
+  viewerIndex: Uint8Array;
 };
 
 // Preload every embedded asset into memory once so responses come from an owned
-// Uint8Array with fully controlled headers.
-const loadBodies = async (): Promise<Map<string, Uint8Array>> => {
+// Uint8Array with fully controlled headers. Only index.html is held twice (it is
+// a couple of kB); Pyodide and the fonts are shared between both servers.
+export const loadAssets = async (): Promise<Assets> => {
   const bodies = new Map<string, Uint8Array>();
+  let viewerIndex: Uint8Array | null = null;
   for (const [urlPath, ref] of Object.entries(ASSETS)) {
     const bytes = await Bun.file(ref).bytes();
-    bodies.set(urlPath, urlPath === INDEX ? stampRuntimeMarker(bytes) : bytes);
+    if (urlPath === INDEX) {
+      bodies.set(urlPath, stampRuntimeMarker(bytes, 'launcher'));
+      viewerIndex = stampRuntimeMarker(bytes, 'viewer');
+    } else {
+      bodies.set(urlPath, bytes);
+    }
   }
-  return bodies;
+  if (!viewerIndex) throw new Error('Launcher build is incomplete: index.html was not embedded.');
+  return { bodies, viewerIndex };
 };
 
-export const createServer = async () => {
-  const bodies = await loadBodies();
-  if (!bodies.has(INDEX)) {
-    throw new Error('Launcher build is incomplete: index.html was not embedded.');
-  }
-
+/**
+ * Serve an embedded asset for `path`, or null when the path is not a static
+ * request this server should answer (the caller has already had its chance to
+ * claim WebSocket endpoints).
+ */
+export const serveStatic = (assets: Assets, path: string, req: Request, runtime: ServedRuntime): Response => {
   const notFound = (): Response =>
     new Response('Not Found', { status: 404, headers: baseHeaders('text/plain; charset=utf-8') });
 
-  const send = (urlPath: string): Response =>
-    new Response(bodies.get(urlPath)!, { headers: baseHeaders(contentType(urlPath)) });
+  const send = (urlPath: string): Response => {
+    const body = urlPath === INDEX && runtime === 'viewer' ? assets.viewerIndex : assets.bodies.get(urlPath)!;
+    return new Response(body, { headers: baseHeaders(contentType(urlPath)) });
+  };
 
-  return Bun.serve({
-    // 127.0.0.1 only — never bind a public interface. main.tsx keys launcher
-    // mode (skip Service Worker) on exactly this hostname.
+  if (path === '/') return Response.redirect(BASE_PATH, 302);
+  if (!path.startsWith(BASE_PATH)) return notFound();
+
+  const key = path === BASE_PATH ? INDEX : path;
+  if (assets.bodies.has(key)) return send(key);
+
+  // SPA fallback: unknown paths under the app sub-path resolve to index.html,
+  // but only for navigations (Accept: text/html) or extensionless paths — a
+  // missing .js/.wasm stays a 404 rather than being masked as HTML.
+  const accept = req.headers.get('accept') ?? '';
+  const hasExtension = /\.[a-z0-9]+$/i.test(path);
+  if (accept.includes('text/html') || !hasExtension) return send(INDEX);
+  return notFound();
+};
+
+/** What a `__feed` socket is carrying, so the two upgrade paths stay apart. */
+type SocketRole = { role: 'bridge' } | { role: 'feed' };
+
+export const createServer = async (assets: Assets) => {
+  return Bun.serve<SocketRole, {}>({
+    // 127.0.0.1 only — never bind a public interface. Remote monitoring is
+    // served by a separate server (viewerServer.ts) that exposes strictly less.
     hostname: '127.0.0.1',
     port: 0,
     // The bridge socket is idle whenever no MCP client is asking for anything,
@@ -99,34 +156,36 @@ export const createServer = async () => {
       // the same origin) is refused rather than displacing the live connection.
       if (path === BRIDGE_PATH) {
         if (bridge.connected) return new Response('Bridge already connected', { status: 409 });
-        if (srv.upgrade(req)) return undefined;
+        if (srv.upgrade(req, { data: { role: 'bridge' } })) return undefined;
         return new Response('Expected a WebSocket upgrade', { status: 426 });
       }
 
-      if (path === '/') return Response.redirect(BASE_PATH, 302);
-      if (!path.startsWith(BASE_PATH)) return notFound();
+      // Remote-monitoring uplink from the host page. Same first-wins rule, and
+      // for the same reason: exactly one page owns the hardware.
+      if (path === HOST_FEED_PATH) {
+        if (hostFeed.connected) return new Response('Feed already connected', { status: 409 });
+        if (srv.upgrade(req, { data: { role: 'feed' } })) return undefined;
+        return new Response('Expected a WebSocket upgrade', { status: 426 });
+      }
 
-      const key = path === BASE_PATH ? INDEX : path;
-      if (bodies.has(key)) return send(key);
-
-      // SPA fallback: unknown paths under the app sub-path resolve to
-      // index.html, but only for navigations (Accept: text/html) or
-      // extensionless paths — a missing .js/.wasm stays a 404 rather than being
-      // masked as HTML.
-      const accept = req.headers.get('accept') ?? '';
-      const hasExtension = /\.[a-z0-9]+$/i.test(path);
-      if (accept.includes('text/html') || !hasExtension) return send(INDEX);
-      return notFound();
+      return serveStatic(assets, path, req, 'launcher');
     },
     websocket: {
       open(ws) {
+        if (ws.data.role === 'feed') {
+          hostFeed.attach(ws);
+          return;
+        }
         if (!bridge.attach(ws)) ws.close(1013, 'Bridge already connected');
       },
       message(ws, message) {
-        if (typeof message === 'string') bridge.handleMessage(message);
+        if (typeof message !== 'string') return;
+        if (ws.data.role === 'feed') hostFeed.handleMessage(message);
+        else bridge.handleMessage(message);
       },
       close(ws) {
-        bridge.detach(ws);
+        if (ws.data.role === 'feed') hostFeed.detach(ws);
+        else bridge.detach(ws);
       },
     },
   });

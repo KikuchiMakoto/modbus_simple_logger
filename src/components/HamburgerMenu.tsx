@@ -6,6 +6,8 @@ type HamburgerMenuProps = {
   onSelectItem: (item: string) => void;
   /** MCP is a desktop-launcher feature; the entry is hidden in the web build. */
   showMcp?: boolean;
+  /** Remote monitoring is likewise launcher-only. */
+  showRemoteViewer?: boolean;
 };
 
 const MENU_ITEMS = [
@@ -16,6 +18,7 @@ const MENU_ITEMS = [
   { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
   { key: 'scriptRunner', label: 'ScriptRunner', icon: '📜', wip: false },
   { key: 'mcp', label: 'MCP Access', icon: '🤖', wip: false },
+  { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
 ];
@@ -25,8 +28,13 @@ export function HamburgerMenu({
   onClose,
   onSelectItem,
   showMcp = false,
+  showRemoteViewer = false,
 }: HamburgerMenuProps) {
-  const items = MENU_ITEMS.filter((item) => item.key !== 'mcp' || showMcp);
+  const items = MENU_ITEMS.filter((item) => {
+    if (item.key === 'mcp') return showMcp;
+    if (item.key === 'remoteViewer') return showRemoteViewer;
+    return true;
+  });
 
   return (
     <SlidePanel open={open} onClose={onClose} title="Menu" maxWidth="max-w-xs">

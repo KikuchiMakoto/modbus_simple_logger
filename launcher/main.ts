@@ -5,10 +5,13 @@
 // there is no network dependency and no caching layer (see server.ts headers),
 // so an exe rebuilt with new dist/ content always shows the new content on the
 // next launch.
-import { createServer, BASE_PATH } from './server';
+import { createServer, loadAssets, BASE_PATH } from './server';
 import { findBrowser, launchBrowser, type BrowserInfo } from './browser';
 import { startMcpServer, MCP_PORT, MCP_PATH, type McpHandle } from './mcp';
 import { bridge } from './bridge';
+import { hostFeed } from './hostFeed';
+import { startViewerServer, viewerUrls, type ViewerServerHandle } from './viewerServer';
+import { viewerHub } from './viewerHub';
 
 const isWindows = process.platform === 'win32';
 
@@ -31,9 +34,28 @@ const fatal = (message: string): never => {
   process.exit(1);
 };
 
-const server = await createServer().catch((err: Error) =>
+const assets = await loadAssets().catch((err: Error) =>
   fatal(`${err.message}\nRun \`bun run launcher:build\` again.`),
 );
+
+const server = await createServer(assets).catch((err: Error) =>
+  fatal(`${err.message}\nRun \`bun run launcher:build\` again.`),
+);
+
+// Read-only remote monitoring, off until the host page asks for it. The switch
+// is in the page because the packaged exe has no console to put it in, and the
+// `__feed` socket carrying the request is loopback-only — so "the page" is
+// always the local window, never a viewer.
+let viewer: ViewerServerHandle | null = null;
+hostFeed.setControlHandler(async (action) => {
+  if (action === 'disable') {
+    viewer?.stop();
+    viewer = null;
+    return { running: false, urls: [], error: null, viewers: 0 };
+  }
+  if (!viewer) viewer = startViewerServer(assets);
+  return { running: true, urls: viewerUrls(viewer.port), error: null, viewers: viewerHub.viewerCount };
+});
 
 const appUrl = `http://127.0.0.1:${server.port}${BASE_PATH}`;
 
@@ -79,6 +101,11 @@ const shutdown = (code: number) => {
   }
   try {
     mcp?.stop();
+  } catch {
+    // already stopped
+  }
+  try {
+    viewer?.stop();
   } catch {
     // already stopped
   }

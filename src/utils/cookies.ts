@@ -1,3 +1,5 @@
+import { isViewerMode } from './appMode';
+
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -20,8 +22,14 @@ export const readJsonStorage = <T extends JsonValue>(key: string): T | null => {
   }
 };
 
+// Single chokepoint for every persisted setting (writeJsonCookie delegates
+// here), which is why the viewer guard lives at this level rather than being
+// repeated at each call site: a remote monitor is fed the host's labels,
+// calibration and voltage modes about once a second, and letting those land in
+// the viewer PC's localStorage would silently overwrite that machine's own
+// logger settings with someone else's.
 export const writeJsonStorage = (key: string, value: JsonValue): void => {
-  if (!isBrowser) return;
+  if (!isBrowser || isViewerMode) return;
   try {
     localStorage.setItem(getKey(key), JSON.stringify(value));
   } catch (err) {
