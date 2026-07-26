@@ -116,7 +116,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **ステータス更新は ref 経由で直接 DOM を更新**（不要な React 再レンダリングを抑制）
 
 ### バックグラウンド時のタイマー抑制回避（`timerWorker.ts` + `utils/backgroundTimer.ts`）
-- **計測経路のタイマーは必ず `setBackgroundTimeout` / `setBackgroundInterval` を使う**（ポーリングループ、`batchUpdateTimer`、TSV の `flushTimerRef`）。Chromium は非表示ウィンドウのタイマーを 1Hz へ、さらに数分後には intensive throttling で **1分に1回**へ落とすため、`window.setTimeout` のままでは最小化した瞬間に 200ms 周期が「1分の欠測」に化ける
+- **計測経路のタイマーは必ず `setBackgroundTimeout` / `setBackgroundInterval` を使う**（ポーリングループ、`batchUpdateTimer`、TSV の `flushTimerRef`、`waitMs` のリトライ待ち、**`webserialClient.ts` のフレーム間隔待ちと受信タイムアウト**）。特に後者2つは `transfer()` のミューテックス内なので、抑制されると 10ms の最小間隔が最大1分の停止に化け、ポーリングだけ Worker 化しても意味がなくなる。Chromium は非表示ウィンドウのタイマーを 1Hz へ、さらに数分後には intensive throttling で **1分に1回**へ落とすため、`window.setTimeout` のままでは最小化した瞬間に 200ms 周期が「1分の欠測」に化ける
 - 逆に**画面表示だけのタイマーは `window.setTimeout` のままにする**（保存経過時間、コピー完了表示、チャート再描画デバウンス）。見ていない画面の時計が止まっても誰も困らず、Worker 往復を足す意味がない
 - 仕組みはタイマーの**スケジュールだけ**を専用 Worker が持つ形（Worker のタイマーは抑制対象外）。コールバックは従来どおり主スレッドで走る。**ブラウザにページごと凍結された場合は救えない** — そこはスリープ抑制（下記）と Wake Lock の担当
 - Worker が落ちた場合は全 live タイマーを `window` タイマーへ張り直す（`fallBackToWindowTimers`）。残り時間は分からないので**元の delay で再スタート**する。1回遅れる方が、ループが二度と回らないより遥かにマシという判断

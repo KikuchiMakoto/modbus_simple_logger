@@ -1037,9 +1037,11 @@ function App() {
     }
   }, [flushPendingDataPoints]);
 
+  // Retry backoff between failed Modbus reads/writes — part of the acquisition
+  // path, so it gets the same throttling-proof timer as the loop itself.
   const waitMs = useCallback(async (ms: number) => {
     if (ms <= 0) return;
-    await new Promise((resolve) => window.setTimeout(resolve, ms));
+    await new Promise<void>((resolve) => setBackgroundTimeout(resolve, ms));
   }, []);
 
   const pruneFailuresInWindow = useCallback((timestampsRef: { current: number[] }, windowMs: number) => {

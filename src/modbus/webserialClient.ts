@@ -4,6 +4,11 @@
  */
 import { crc16 } from '../utils/crc16';
 import { SerialSettings } from '../types';
+// Both timers below sit inside a transfer, holding the mutex: a throttled
+// window timer would stretch a 10 ms inter-frame gap or a 1 s read deadline to
+// a whole minute the moment the window stops being visible (see
+// utils/backgroundTimer.ts).
+import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
 
 /**
  * Simple async mutex implementation for exclusive access control
@@ -334,15 +339,15 @@ export class WebSerialModbusClient {
     }
     const pending = this.pendingRead;
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutId: number | undefined;
     const outcome = await Promise.race<ReadOutcome | null>([
       pending,
       new Promise<null>((resolve) => {
-        timeoutId = setTimeout(() => resolve(null), Math.max(0, timeoutMs));
+        timeoutId = setBackgroundTimeout(() => resolve(null), Math.max(0, timeoutMs));
       }),
     ]);
     if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
+      clearBackgroundTimer(timeoutId);
     }
 
     // Deadline hit first: leave `pendingRead` in place so the bytes are not
@@ -507,7 +512,7 @@ export class WebSerialModbusClient {
           waitTime,
           minMessageIntervalMs: this.minMessageIntervalMs,
         });
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+        await new Promise<void>(resolve => setBackgroundTimeout(resolve, waitTime));
       }
 
       // Write frame
