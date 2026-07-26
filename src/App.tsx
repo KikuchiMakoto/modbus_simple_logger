@@ -1577,7 +1577,7 @@ function App() {
           </div>
         </div>
         {!aiCollapsed && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
           {aiChannels.map((ch) => {
             const mode = voltageConfig[ch.id];
             const display = rawToDisplayValue(ch.raw, mode);
@@ -1604,16 +1604,16 @@ function App() {
                     className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
-                <div className="space-y-0 pt-px text-lg leading-none">
+                <div className="space-y-0 pt-px text-base leading-none">
                   <div className="flex justify-between items-center leading-none">
                     <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
-                    <span className={`text-2xl font-bold leading-none tabular-nums ${aiTextColor}`}>
+                    <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
                       {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
                     <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
-                    <span className={`text-2xl font-bold leading-none tabular-nums ${aiTextColor}`}>
+                    <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
@@ -1622,7 +1622,7 @@ function App() {
                     <span className="text-slate-600 font-medium dark:text-slate-300 leading-none">
                       {display.unit}
                     </span>
-                    <span className="text-2xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+                    <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
                       {display.value.toFixed(3)}
                     </span>
                   </div>
@@ -1645,7 +1645,7 @@ function App() {
           <CollapseButton collapsed={aoCollapsed} onToggle={() => setAoCollapsed((v) => !v)} label="Analog Output" />
         </div>
         {!aoCollapsed && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
           {aoChannels.map((ch) => (
             <div
               key={ch.id}
@@ -1663,10 +1663,10 @@ function App() {
                   className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
-              <div className="pt-px text-lg leading-none">
+              <div className="pt-px text-base leading-none">
                 <div className="flex items-center justify-between leading-none">
                   <span className="font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
-                  <span className="text-2xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+                  <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
                     {(ch.physical / 1000).toFixed(3)}
                   </span>
                 </div>
@@ -1683,7 +1683,7 @@ function App() {
           <CollapseButton collapsed={paramCollapsed} onToggle={() => setParamCollapsed((v) => !v)} label="Parameter" />
         </div>
         {!paramCollapsed && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
           {paramValues.map((value, idx) => (
             <div
               key={idx}
@@ -1701,10 +1701,10 @@ function App() {
                   className="min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
-              <div className="pt-px text-lg leading-none">
+              <div className="pt-px text-base leading-none">
                 <div className="flex items-center justify-between leading-none">
                   <span className="font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
-                  <span className="text-2xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400">
+                  <span className="text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400">
                     {value.toFixed(3)}
                   </span>
                 </div>
@@ -1715,7 +1715,7 @@ function App() {
         )}
       </section>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <ChartPanel
           color="#34d399"
           dataPoints={dataBufferRef.current}
