@@ -36,11 +36,13 @@ src/
 ├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
 ├── pyodideWorker.ts                 # Pyodide ScriptRunner 用 Web Worker
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
+├── timerWorker.ts                   # タイマー抑制回避用 Worker（setTimeout/setInterval をワーカースレッドで保持）
 ├── hooks/
 │   ├── useTheme.ts                  # テーマ管理（localStorage 永続化）
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
 │   ├── useScriptRunner.ts           # Pyodide Worker 管理 + SAB 先行確保
 │   ├── useMcpBridge.ts              # MCP ブリッジのページ側（exe 限定・WS ディスパッチ）
+│   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
@@ -64,6 +66,8 @@ src/
     ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
+    ├── backgroundTimer.ts           # timerWorker の主スレッド側（setBackgroundTimeout / Interval / clearBackgroundTimer）
+    ├── notifications.ts             # Web Notification のゲート（トグル永続化＋許可判定）と notify()
     ├── appMode.ts                   # 実行形態の判定（web / launcher / viewer）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
     ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
@@ -97,7 +101,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - AO書込みは `doAoWriteAsync` で独立実行され、`aoWriteInProgressRef` で二重投入を防止する
 
 ### ポーリング（`App.tsx`）
-- 50ms〜5分の定期ポーリング（`App.tsx` の `POLLING_OPTIONS`、既定 200ms。`setTimeout` 再帰スケジュール）
+- 50ms〜5分の定期ポーリング（`App.tsx` の `POLLING_OPTIONS`、既定 200ms。`setBackgroundTimeout` 再帰スケジュール）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ内最大10回）
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
@@ -111,6 +115,22 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **キャリブレーション変更時もポーリングは継続**（`aiCalibrationRef` で最新値を参照）
 - **ステータス更新は ref 経由で直接 DOM を更新**（不要な React 再レンダリングを抑制）
 
+### バックグラウンド時のタイマー抑制回避（`timerWorker.ts` + `utils/backgroundTimer.ts`）
+- **計測経路のタイマーは必ず `setBackgroundTimeout` / `setBackgroundInterval` を使う**（ポーリングループ、`batchUpdateTimer`、TSV の `flushTimerRef`）。Chromium は非表示ウィンドウのタイマーを 1Hz へ、さらに数分後には intensive throttling で **1分に1回**へ落とすため、`window.setTimeout` のままでは最小化した瞬間に 200ms 周期が「1分の欠測」に化ける
+- 逆に**画面表示だけのタイマーは `window.setTimeout` のままにする**（保存経過時間、コピー完了表示、チャート再描画デバウンス）。見ていない画面の時計が止まっても誰も困らず、Worker 往復を足す意味がない
+- 仕組みはタイマーの**スケジュールだけ**を専用 Worker が持つ形（Worker のタイマーは抑制対象外）。コールバックは従来どおり主スレッドで走る。**ブラウザにページごと凍結された場合は救えない** — そこはスリープ抑制（下記）と Wake Lock の担当
+- Worker が落ちた場合は全 live タイマーを `window` タイマーへ張り直す（`fallBackToWindowTimers`）。残り時間は分からないので**元の delay で再スタート**する。1回遅れる方が、ループが二度と回らないより遥かにマシという判断
+- id は自前カウンタで、ブラウザのタイマーハンドルとは別空間。**`window.clearTimeout` に渡さないこと**（必ず `clearBackgroundTimer`）
+- exe 版はさらにブラウザ起動フラグ（`launcher/browser.ts`）で抑制自体を無効化している。**フラグと Worker は独立した対策で、片方だけでは全ケースを覆えない**ため両方残すこと
+
+### 通知（`utils/notifications.ts` + `useNotifications.ts`）
+- 通知の可否は**モジュールレベルの1箇所**（`utils/notifications.ts` の `enabled` + 許可状態）で判定する。`notify()` は Worker のメッセージハンドラなど React の外から呼ばれるため、React state をゲートにしないこと
+- 対象は ScriptRunner の開始 / 停止 / 完了 / エラーと、Python の `set_notify(msg)`。**通知した内容は必ず `scriptLog` にも書く**（通知 OFF や許可なしでも情報が消えないように）
+- **許可要求は起動時に1回**（`useNotifications` の effect、トグル ON かつ `permission === 'default'` のときだけ）。計測は「開始したら人が離れる」使い方なので、失敗した瞬間に許可ダイアログを出しても誰も答えられない。拒否された場合はトグルを自動で OFF にして、UI と実態を合わせる
+- **通知は tag で潰す**（`NOTIFY_TAG`）。`while True:` の中の `set_notify()` でデスクトップが埋まらないようにするため。連投は「最新1件が残る」挙動になる
+- 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
+- UI は **Application Info パネルのトグル1つだけ**。通知専用パネルやメニュー項目を作らないこと（設定が1個しかない）
+
 ### ScriptRunner（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
   - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
@@ -119,6 +139,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
 - **SAB は Worker 生成と切り離して mount 時に先行確保する**（`useScriptRunner` の `ensureShares()`）。SAB は Worker 専用のデータ経路ではなく、ポーリングループが毎周期書き込み、MCP ブリッジが同じメモリを読み書きするため。Worker（重い方）の遅延生成は維持
 - `set_ao()` でメインスレッドへ AO 制御命令を postMessage
+- `set_notify(msg)` は `{ type: 'notify' }` を送るだけで、通知するかどうかはメインスレッドが決める（上記「通知」）。Worker から `Notification` を触らないこと
 - `SharedArrayBuffer` による割込み停止（`interruptBuffer[0] = 2`）
 - **COOP/COEP ヘッダー必須**（`SharedArrayBuffer` 利用のため）
 - Worker init 失敗時は `initPromise` をリセットし再試行可能。メインスレッドは `init` を Worker 生成時に1度しか送らないため、Worker 側は `initArgs` を保持して `run` 受信時に**自力で再 init する**
@@ -140,6 +161,15 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **スクリプトの失敗は「ツールのエラー」ではなく「結果のデータ」として返す**。投入した Python は別ワーカーで非同期に走るので、ツール呼び出し自体は必ず成功してしまう。そのため `run_script` は `wait_ms`（既定 3000ms・最大 60s・0 で即時）だけ完了を待ち、`{ outcome, error, traceback, log }` を返す。起動直後に落ちる失敗（構文エラー等）をここで捕まえるのが目的で、走り続けるループは `outcome: "running"` で返るのが正常。**「起動したら `started: true` だけ返す」形へ戻さないこと**（エラーが一切見えなくなる）
 - `dispatch` は **Promise を返してよい**（`run_script` の待機）。WS ハンドラ側で resolve してから応答フレームを送る。launcher 側の `bridge.call` タイムアウトは `wait_ms + RUN_SCRIPT_HEADROOM_MS` を渡すこと（待機時間を超えると待機自体がタイムアウトになる）
 - 実行中・実行後の出力は `get_script_log(n)`、直近の実行結果は `get_script()` の `lastRun` から取れる。同じログを `ScriptRunnerPanel` の Output 欄が表示する（UI と MCP で同一データ）
+
+### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
+- **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
+- ポートが埋まっていても**それが自分たちのロックか確認してから諦める**（`LOCK_MARKER` を返すかどうか）。無関係なソフトが 8764 を握っているだけで起動不能になる方が、二重起動より重大な障害のため
+- ロックは**他の一切より先に取る**（サーバー bind もブラウザ起動もしない状態で判定する）
+- **スリープ抑制は launcher プロセスの `SetThreadExecutionState`（`bun:ffi` で kernel32 を直接呼ぶ）**。`ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED` を立て、解除は `ES_CONTINUOUS` 単体。実行状態はスレッド単位なので、**プロセスが生きている限り生きている launcher の主スレッドから呼ぶこと**
+- **要求を出すのはページ**（`__feed` の `keepawake` フレーム。`acquiring || scriptRunning` で判定）。launcher 側の常時 ON にしないこと — アプリを開いているだけのノート PC を一晩中起こしておくことになる。ページが切れたら `hostFeed.detach` で必ず解除し、再接続時はページが状態を送り直す（`keepAwakeRef`）
+- ページ側の Wake Lock（`requestWakeLock`）は**表示中しか効かない**（非表示になるとブラウザが解放し、戻しても自動復帰しない）ため、`visibilitychange` で取り直している。最小化状態を守れるのは exe 版の OS 要求だけ、という役割分担
+- Windows 専用。Linux の抑制はセッションのインヒビタ（logind / GNOME / KDE）依存になるため実装しない（exe は Windows 成果物）
 
 ### リモート監視（`launcher/viewerServer.ts` + `viewerHub.ts` + `hostFeed.ts` + `useViewerFeed.ts`）
 - **デスクトップ版（exe）限定・既定 OFF**。ホストページの Remote Monitoring パネルのトグルで起動し、他 PC のブラウザから**閲覧のみ**できる
