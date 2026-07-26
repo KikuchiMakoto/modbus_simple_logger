@@ -109,6 +109,23 @@ export const launchBrowser = (browser: BrowserInfo, url: string) => {
       `--user-data-dir=${dir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      // Timer throttling, off. Chromium slows timers in a window it considers
+      // background — 1 Hz when hidden, 1/min under the intensive policy after a
+      // few minutes — which would turn the polling loop into a gap in the
+      // measurement the moment the window is minimised or covered.
+      //
+      // The web build cannot pass flags and works around this with a timer
+      // worker (src/timerWorker.ts); here the flags remove the problem at the
+      // source, for every timer on the page rather than only the ones that were
+      // moved. Both are in play in the exe, which is intentional — they are
+      // independent, and neither one alone covers every case.
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      // CalculateNativeWinOcclusion: Windows-specific detection that treats a
+      // fully covered window as invisible and backgrounds the renderer even
+      // with the flags above. IntensiveWakeUpThrottling: the 1/min policy.
+      '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling',
     ],
     { stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' },
   );

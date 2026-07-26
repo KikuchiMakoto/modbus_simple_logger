@@ -1,8 +1,9 @@
 // Launcher side of the host page's `__feed` socket.
 //
-// Two things travel over it, both initiated by the page:
+// Three things travel over it, all initiated by the page:
 //   - the monitoring feed (state / samples / reset), forwarded to viewerHub;
-//   - control frames that switch the viewer server on and off.
+//   - control frames that switch the viewer server on and off;
+//   - the keep-awake request, raised while the page is actually measuring.
 //
 // Control lives here rather than on a launcher-side setting because the switch
 // belongs to the person at the machine, and the only UI they have is the page
@@ -11,6 +12,7 @@
 // the local host window, never a remote viewer.
 import { viewerHub, type ViewerSample, type ViewerState } from './viewerHub';
 import type { ViewerMode } from './viewerServer';
+import { setKeepAwake } from './keepAwake';
 
 /** What the page is told about remote monitoring, whenever it changes. */
 export type ViewerStatus = {
@@ -66,6 +68,10 @@ class HostFeed {
   detach(socket: FeedSocket): void {
     if (this.socket !== socket) return;
     this.socket = null;
+    // Nothing is measuring once the page is gone, and a reload re-raises the
+    // request within a second. Holding the machine awake on behalf of a window
+    // that no longer exists is how a laptop ends up flat in the morning.
+    setKeepAwake(false);
     // The window that owns the hardware is gone: viewers must be told rather
     // than left staring at a chart frozen at the last sample, which looks
     // exactly like a stalled sensor.
@@ -83,7 +89,13 @@ class HostFeed {
   }
 
   handleMessage(raw: string): void {
-    let frame: { type?: string; state?: ViewerState; samples?: ViewerSample[]; mode?: ViewerMode };
+    let frame: {
+      type?: string;
+      state?: ViewerState;
+      samples?: ViewerSample[];
+      mode?: ViewerMode;
+      active?: boolean;
+    };
     try {
       frame = JSON.parse(raw);
     } catch {
@@ -104,6 +116,11 @@ class HostFeed {
         break;
       case 'disable':
         void this.runControl({ type: 'disable' });
+        break;
+      // Sleep suppression, owned by the page because only the page knows
+      // whether a measurement is in progress (see launcher/keepAwake.ts).
+      case 'keepawake':
+        setKeepAwake(frame.active === true);
         break;
       default:
         break;

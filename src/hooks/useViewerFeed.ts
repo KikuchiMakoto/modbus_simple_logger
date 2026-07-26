@@ -72,6 +72,13 @@ export type ViewerHostHandle = {
   status: ViewerServerStatus | null;
   /** Turn sharing on in a given mode, or off. Switching mode re-enables. */
   setEnabled: (enabled: boolean, mode?: ViewerMode) => void;
+  /**
+   * Ask the launcher to suppress OS sleep while a measurement is running. The
+   * page's own Screen Wake Lock only holds while the window is visible, so this
+   * is what covers a minimised window (see launcher/keepAwake.ts). No-op
+   * outside the desktop exe.
+   */
+  setKeepAwake: (active: boolean) => void;
   /** Push the samples just added to the chart buffer. No-op when monitoring is off. */
   publishSamples: (samples: ViewerSample[]) => void;
   /** Push the current configuration/status snapshot. */
@@ -86,6 +93,11 @@ export const useViewerHost = (): ViewerHostHandle => {
   // Mirrors `status.running` for the send path, which runs from the chart flush
   // and must not re-subscribe to React state to know whether to serialise.
   const runningRef = useRef(false);
+  // The launcher forgets the keep-awake request when the socket drops (it has
+  // to: a page that is gone cannot be measuring). Remembering it here is what
+  // restores sleep suppression after a reconnect without the app having to
+  // notice that anything happened.
+  const keepAwakeRef = useRef(false);
 
   useEffect(() => {
     if (!isLauncherMode) return;
@@ -100,6 +112,7 @@ export const useViewerHost = (): ViewerHostHandle => {
 
       socket.onopen = () => {
         attempt = 0;
+        if (keepAwakeRef.current) socket.send(JSON.stringify({ type: 'keepawake', active: true }));
       };
       socket.onmessage = (event) => {
         try {
@@ -148,6 +161,14 @@ export const useViewerHost = (): ViewerHostHandle => {
     [send],
   );
 
+  const setKeepAwake = useCallback(
+    (active: boolean) => {
+      keepAwakeRef.current = active;
+      send({ type: 'keepawake', active });
+    },
+    [send],
+  );
+
   // The three publish paths short-circuit while monitoring is off, so the
   // acquisition loop pays nothing at all — not even the JSON serialisation —
   // for a feature that is not switched on.
@@ -172,7 +193,7 @@ export const useViewerHost = (): ViewerHostHandle => {
     send({ type: 'reset' });
   }, [send]);
 
-  return { status, setEnabled, publishSamples, publishState, publishReset };
+  return { status, setEnabled, setKeepAwake, publishSamples, publishState, publishReset };
 };
 
 export type ViewerClientCallbacks = {

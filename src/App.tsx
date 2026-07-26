@@ -831,6 +831,17 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  // Sleep suppression while there is something to lose by sleeping: a live
+  // acquisition, or a script driving outputs. The page's own Screen Wake Lock
+  // (requestWakeLock) covers the display while the window is visible; this asks
+  // the launcher process to hold the *system* awake, which is the part a
+  // minimised window cannot do for itself. Outside the exe the call is a no-op.
+  const keepAwakeWanted = acquiring || scriptRunner.scriptRunning;
+  const setKeepAwake = viewerHost.setKeepAwake;
+  useEffect(() => {
+    setKeepAwake(keepAwakeWanted);
+  }, [keepAwakeWanted, setKeepAwake]);
+
   // Viewer side. Received samples are pushed through the same buffer and flush
   // the acquisition loop uses, so the charts and channel cards on a monitor are
   // drawn by exactly the code that draws them on the host — there is no second
@@ -1325,6 +1336,12 @@ function App() {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
       if (!acquiringRef.current) return;
+      // The browser drops a screen wake lock whenever the page stops being
+      // visible and never gives it back on its own, so a window that was
+      // minimised once during a capture would spend the rest of the run with
+      // nothing holding the display awake. Re-take it here; requestWakeLock()
+      // is a no-op when one is already held.
+      void requestWakeLock();
       if (pollTimer.current === undefined || pollingInProgressRef.current) return;
       scheduleImmediatePoll();
     };
@@ -1335,7 +1352,7 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pageshow', handleVisibilityChange);
     };
-  }, [scheduleImmediatePoll]);
+  }, [scheduleImmediatePoll, requestWakeLock]);
 
   const handleConnect = async () => {
     if (connectInProgressRef.current || disconnectInProgressRef.current) return;

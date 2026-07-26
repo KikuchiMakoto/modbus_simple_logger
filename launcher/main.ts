@@ -13,13 +13,15 @@ import { hostFeed, OFF_STATUS } from './hostFeed';
 import { startViewerServer, lanViewerUrls, viewerUrl, type ViewerServerHandle } from './viewerServer';
 import { startTunnel, type TunnelHandle } from './tunnel';
 import { viewerHub } from './viewerHub';
+import { acquireInstanceLock, type InstanceLock } from './singleInstance';
+import { setKeepAwake } from './keepAwake';
 
 const isWindows = process.platform === 'win32';
 
-// Show a fatal error to the user. On Windows the console is hidden
+// Tell the user something. On Windows the console is hidden
 // (--windows-hide-console), so route through a GUI message box; elsewhere
 // stderr is fine (the process is normally started from a terminal).
-const fatal = (message: string): never => {
+const notice = (message: string): void => {
   if (isWindows) {
     Bun.spawnSync(
       [
@@ -32,14 +34,37 @@ const fatal = (message: string): never => {
       ],
       // Same reason as the tunnel: a GUI-subsystem parent spawning a console
       // program gets a console window for free. Here it would flash up behind
-      // the error dialog.
+      // the dialog.
       { windowsHide: true },
     );
   } else {
     console.error(message);
   }
+};
+
+/** Show a fatal error and give up. */
+const fatal = (message: string): never => {
+  notice(message);
   process.exit(1);
 };
+
+// Single instance. A second copy would open a second window onto the same one
+// serial port, lose the race for the MCP endpoint and fight over the browser
+// profile — and it is nearly always an accidental double-click of the exe or of
+// a taskbar icon. Claimed before anything else is started so the loser exits
+// without having bound a port or spawned a browser.
+const lock = await acquireInstanceLock();
+if (!lock.held) {
+  notice(
+    'Modbus Simple Logger is already running.\n\n' +
+      'Switch to the window that is already open. If you cannot find it, close it from ' +
+      'Task Manager and start again.',
+  );
+  // Not a failure: the app the user wanted is running, it just is not this
+  // process.
+  process.exit(0);
+}
+const instanceLock: InstanceLock | null = lock.lock;
 
 const assets = await loadAssets().catch((err: Error) =>
   fatal(`${err.message}\nRun \`bun run launcher:build\` again.`),
@@ -160,6 +185,19 @@ const shutdown = (code: number) => {
     server.stop(true);
   } catch {
     // already stopped
+  }
+  // The execution state dies with the process anyway; clearing it explicitly
+  // keeps the "who is keeping this PC awake" answer honest during the moments
+  // between the window closing and the process exiting.
+  try {
+    setKeepAwake(false);
+  } catch {
+    // never armed
+  }
+  try {
+    instanceLock?.release();
+  } catch {
+    // already released
   }
   process.exit(code);
 };
