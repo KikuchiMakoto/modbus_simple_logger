@@ -48,7 +48,7 @@ body {
 }
 
 .card {
-  @apply rounded-xl bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
+  @apply rounded-md bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
 }
 
 /* The AI / AO / Parameter sections are grids of small cards, so the section's

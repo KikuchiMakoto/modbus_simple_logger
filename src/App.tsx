@@ -1614,8 +1614,10 @@ function App() {
       </div>
 
       {/* AI / AO / Parameter / Plot are read at a glance side by side: the gap
-          between the groups is kept tight so more channels stay on one screen. */}
-      <div className="space-y-1.5 p-2">
+          between the groups is kept tight so more channels stay on one screen.
+          It matches the gap between the cards inside a group (gap-1), so the
+          page reads as one grid rather than four stacked panels. */}
+      <div className="space-y-1 p-1.5">
         <section className="card card-tight">
         <div className="mb-px flex items-center justify-between">
           <h2 className="text-sm font-semibold leading-none">Analog Input (16)</h2>
@@ -1644,7 +1646,7 @@ function App() {
             <div
               key={ch.id}
               translate="no"
-              className="flex min-w-0 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="min-w-0 flex-1 px-1 py-0.5">
                 <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
@@ -1684,7 +1686,7 @@ function App() {
                   )}
                 </div>
               </div>
-              <div className="flex w-1.5 items-end overflow-hidden rounded-r-lg">
+              <div className="flex w-1.5 items-end overflow-hidden rounded-r">
                 <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
               </div>
             </div>
@@ -1710,7 +1712,7 @@ function App() {
             return (
             <div
               key={ch.id}
-              className="flex min-w-0 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="min-w-0 flex-1 px-1 py-0.5">
                 <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
@@ -1734,7 +1736,7 @@ function App() {
                   </div>
                 </div>
               </div>
-              <div className="flex w-1.5 items-end overflow-hidden rounded-r-lg">
+              <div className="flex w-1.5 items-end overflow-hidden rounded-r">
                 <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
               </div>
             </div>
@@ -1754,7 +1756,7 @@ function App() {
           {paramValues.map((value, idx) => (
             <div
               key={idx}
-              className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
+              className="min-w-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
             >
               <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
                 <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
