@@ -8,6 +8,8 @@ const PYODIDE_BASE_URL = new URL(`${import.meta.env.BASE_URL}pyodide/`, self.loc
 
 type PyodideLike = {
   setInterruptBuffer: (buffer: Uint8Array) => void;
+  setStdout: (options: { batched: (text: string) => void }) => void;
+  setStderr: (options: { batched: (text: string) => void }) => void;
   runPython: (code: string) => unknown;
   runPythonAsync: (code: string) => Promise<unknown>;
   globals: {
@@ -75,6 +77,48 @@ const readAiValue = (buffer: Float32Array | null, ch: number): number => {
   return buffer[ch] ?? 0;
 };
 
+// Everything Python prints is forwarded to the main thread instead of the
+// worker console: the ScriptRunner panel shows it, and — the reason this exists
+// — an MCP client has no console to look at, so print() and tracebacks would
+// otherwise be invisible to whoever submitted the script.
+const postOutput = (stream: 'stdout' | 'stderr', text: string) => {
+  if (text === '') return;
+  postWorkerMessage({ type: 'output', stream, text });
+};
+
+// Pyodide raises PythonError whose `message` is the whole formatted traceback.
+// That is what a human needs, but the *last* line ("NameError: x is not
+// defined") is what a caller wants as a one-line summary, so send both and let
+// each consumer pick.
+// A traceback from eval_code_async carries four frames of Pyodide plumbing
+// (_pyodide/_base.py and the _runner_run wrapper above) around the one frame
+// that matters — the user's own line. Drop the plumbing: what is left is
+// `File "<exec>", line N`, which is the line number in the submitted script.
+const cleanTraceback = (text: string): string => {
+  const lines = text.split('\n');
+  const kept: string[] = [];
+  let skipping = false;
+  for (const line of lines) {
+    const isFrameHeader = /^\s{2}File "/.test(line);
+    if (isFrameHeader) {
+      skipping = line.includes('/_pyodide/') || line.includes(', in _runner_run');
+      if (skipping) continue;
+    } else if (skipping) {
+      // Source / caret lines belonging to a dropped frame are indented further.
+      if (/^\s{3,}/.test(line)) continue;
+      skipping = false;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
+};
+
+const summarizeError = (text: string): string => {
+  const lines = text.split('\n').map((line) => line.trimEnd()).filter((line) => line !== '');
+  const last = lines[lines.length - 1];
+  return last === undefined || last === '' ? text : last;
+};
+
 const writeParamValue = (buffer: Float32Array | null, ch: number, data: number): void => {
   if (!buffer) return;
   if (!Number.isInteger(ch) || ch < 0 || ch >= buffer.length) return;
@@ -92,6 +136,9 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
 
   const { loadPyodide } = await import(/* @vite-ignore */ `${PYODIDE_BASE_URL}pyodide.mjs`);
   pyodide = (await loadPyodide({ indexURL: PYODIDE_BASE_URL })) as PyodideLike;
+
+  pyodide.setStdout({ batched: (text) => postOutput('stdout', text) });
+  pyodide.setStderr({ batched: (text) => postOutput('stderr', text) });
 
   pyodide.runPython(RUNNER_SETUP);
   pyodide.globals.set('get_ai_raw', (ch: number) => readAiValue(aiRawShare, Number(ch)));
@@ -221,7 +268,14 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
         // a clean script end, not an error.
         postWorkerMessage({ type: 'done', message: 'Completed' });
       } else {
-        postWorkerMessage({ type: 'error', message: text });
+        // `message` is the one-line summary the status bar shows; `traceback`
+        // is the full Python traceback, kept in the run log so the user (or an
+        // MCP client) can see which line failed.
+        postWorkerMessage({
+          type: 'error',
+          message: summarizeError(text),
+          traceback: cleanTraceback(text),
+        });
       }
     } finally {
       running = false;

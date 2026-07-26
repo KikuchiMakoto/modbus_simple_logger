@@ -43,7 +43,7 @@ src/
 │   └── useMcpBridge.ts              # MCP ブリッジのページ側（exe 限定・WS ディスパッチ）
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
-│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・API 一覧
+│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
 │   ├── ManualPanel.tsx              # アプリ内マニュアル
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
@@ -118,6 +118,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - `SharedArrayBuffer` による割込み停止（`interruptBuffer[0] = 2`）
 - **COOP/COEP ヘッダー必須**（`SharedArrayBuffer` 利用のため）
 - Worker init 失敗時は `initPromise` をリセットし再試行可能。メインスレッドは `init` を Worker 生成時に1度しか送らないため、Worker 側は `initArgs` を保持して `run` 受信時に**自力で再 init する**
+- **stdout/stderr は `pyodide.setStdout/setStderr`（batched）でメインスレッドへ転送する**（`{ type: 'output' }`）。Worker のコンソールに出しても UI にも MCP クライアントにも届かないため。エラー時は `{ type: 'error', message, traceback }` で**要約1行と完全なトレースバックの両方**を送る（ステータス表示は要約、ログはトレースバック）
+- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と `scriptLog` に記録する**。ログは実行開始時にクリアし直近 300 行（`SCRIPT_LOG_MAX`）を保持。両者は **ref にもミラーする**（MCP ブリッジは WS ハンドラ＝React のレンダリング外から読むため、state だけでは直前の失敗を取り逃す）
 - **`pyodide.setInterruptBuffer()` は init の最後に呼ぶこと**。Pyodide は `runPython()` のたびに割込みバッファを見るため、Pyodide ロード中に Stop された状態（`interruptBuffer[0] === 2`）で先に arm すると `RUNNER_SETUP` 実行時に KeyboardInterrupt が飛び、**init 自体が失敗して Worker が再起動まで使えなくなる**
 
 ### MCP サーバー（`launcher/mcp.ts` + `launcher/bridge.ts` + `useMcpBridge.ts`）
@@ -131,6 +133,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **MCP ハンドシェイクのバージョンは `package.json` から取得する**（`launcher/mcp.ts` の `import pkg from '../package.json' with { type: 'json' }`）。Bun がビルド時に解決し `bun build --compile` が exe へインライン化する。**バージョン文字列を直書きに戻さないこと**（v3.5 以前は直書きで、実際に 3.3 のまま取り残されていた）
 - **`get_labels` は MCP 専用**（ScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`ScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
 - `run_script` はエディタ内容を上書きするため、直前のコードを `scriptRunnerCodeBackup` へ退避し UI の「Restore」で戻せるようにしてある
+- **スクリプトの失敗は「ツールのエラー」ではなく「結果のデータ」として返す**。投入した Python は別ワーカーで非同期に走るので、ツール呼び出し自体は必ず成功してしまう。そのため `run_script` は `wait_ms`（既定 3000ms・最大 60s・0 で即時）だけ完了を待ち、`{ outcome, error, traceback, log }` を返す。起動直後に落ちる失敗（構文エラー等）をここで捕まえるのが目的で、走り続けるループは `outcome: "running"` で返るのが正常。**「起動したら `started: true` だけ返す」形へ戻さないこと**（エラーが一切見えなくなる）
+- `dispatch` は **Promise を返してよい**（`run_script` の待機）。WS ハンドラ側で resolve してから応答フレームを送る。launcher 側の `bridge.call` タイムアウトは `wait_ms + RUN_SCRIPT_HEADROOM_MS` を渡すこと（待機時間を超えると待機自体がタイムアウトになる）
+- 実行中・実行後の出力は `get_script_log(n)`、直近の実行結果は `get_script()` の `lastRun` から取れる。同じログを `ScriptRunnerPanel` の Output 欄が表示する（UI と MCP で同一データ）
 
 ### データ保存
 - **IndexedDB**: セッション中の全データポイントを蓄積（`keepLatestPoints` で自動トリム）

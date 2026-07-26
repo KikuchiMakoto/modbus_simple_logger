@@ -9,6 +9,48 @@ const SCRIPT_RUNNER_BACKUP_KEY = 'scriptRunnerCodeBackup';
 // editor contents when it runs a script, so the UI needs to say so.
 export type ScriptSource = 'user' | 'mcp';
 
+// How many log lines are kept. A `while True:` loop that prints every iteration
+// would grow without bound otherwise; the log is a tail, not a transcript.
+const SCRIPT_LOG_MAX = 300;
+
+export type ScriptLogEntry = {
+  /** Epoch ms. */
+  t: number;
+  stream: 'stdout' | 'stderr' | 'system';
+  text: string;
+};
+
+export type ScriptOutcome = 'idle' | 'running' | 'completed' | 'stopped' | 'error';
+
+/**
+ * Result of the current (or most recent) run. This exists mainly for the MCP
+ * bridge: run_script hands the script to a worker and returns immediately, so
+ * without a record of how the run ended, a failing script looked exactly like a
+ * successful one to the caller. `runId` lets a caller tell its own run from a
+ * later one started by someone else.
+ */
+export type ScriptRunInfo = {
+  runId: number;
+  source: ScriptSource;
+  outcome: ScriptOutcome;
+  startedAt: number | null;
+  endedAt: number | null;
+  /** One-line summary, e.g. "NameError: foo is not defined". */
+  error: string | null;
+  /** Full Python traceback when the failure came from the script itself. */
+  traceback: string | null;
+};
+
+const IDLE_RUN: ScriptRunInfo = {
+  runId: 0,
+  source: 'user',
+  outcome: 'idle',
+  startedAt: null,
+  endedAt: null,
+  error: null,
+  traceback: null,
+};
+
 export function useScriptRunner(
   setAo: (ch: number, data: number) => void,
   onAiCalibTare: (ch: number) => void,
@@ -28,7 +70,15 @@ export function useScriptRunner(
       ? 'Idle'
       : 'Unavailable: requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
   );
+  const [scriptLog, setScriptLog] = useState<ScriptLogEntry[]>([]);
+  const [scriptRun, setScriptRun] = useState<ScriptRunInfo>(IDLE_RUN);
   const scriptExecutingRef = useRef(false);
+  // Mirrored in refs because the MCP bridge reads them from a WebSocket handler,
+  // outside React's render cycle, and must never see a stale render's copy.
+  const scriptLogRef = useRef<ScriptLogEntry[]>([]);
+  const scriptRunRef = useRef<ScriptRunInfo>(IDLE_RUN);
+  const runIdRef = useRef(0);
+  const runWaitersRef = useRef<{ resolve: (info: ScriptRunInfo) => void; timer: number }[]>([]);
   const pyWorkerRef = useRef<Worker | null>(null);
   const interruptBufferRef = useRef<Uint8Array | null>(null);
   const aiRawShareRef = useRef<Float32Array | null>(null);
@@ -37,6 +87,79 @@ export function useScriptRunner(
   const paramShareRef = useRef<Float32Array | null>(null);
   const scriptCodeRef = useRef(scriptCode);
   scriptCodeRef.current = scriptCode;
+
+  const appendLog = useCallback((stream: ScriptLogEntry['stream'], text: string) => {
+    const trimmed = text.replace(/\s+$/, '');
+    if (trimmed === '') return;
+    const next = [...scriptLogRef.current, { t: Date.now(), stream, text: trimmed }];
+    if (next.length > SCRIPT_LOG_MAX) next.splice(0, next.length - SCRIPT_LOG_MAX);
+    scriptLogRef.current = next;
+    setScriptLog(next);
+  }, []);
+
+  const clearScriptLog = useCallback(() => {
+    scriptLogRef.current = [];
+    setScriptLog([]);
+  }, []);
+
+  // A run ends exactly once. Every waiter (an MCP run_script asked to wait for
+  // the outcome) is released here, so a script that crashes one millisecond in
+  // reports the crash instead of timing out.
+  const settleRun = useCallback(
+    (outcome: Exclude<ScriptOutcome, 'idle' | 'running'>, error: string | null = null, traceback: string | null = null) => {
+      const info: ScriptRunInfo = {
+        ...scriptRunRef.current,
+        outcome,
+        endedAt: Date.now(),
+        error,
+        traceback,
+      };
+      scriptRunRef.current = info;
+      setScriptRun(info);
+      const waiters = runWaitersRef.current;
+      runWaitersRef.current = [];
+      for (const waiter of waiters) {
+        window.clearTimeout(waiter.timer);
+        waiter.resolve(info);
+      }
+    },
+    [],
+  );
+
+  const beginRun = useCallback((source: ScriptSource): ScriptRunInfo => {
+    runIdRef.current += 1;
+    const info: ScriptRunInfo = {
+      runId: runIdRef.current,
+      source,
+      outcome: 'running',
+      startedAt: Date.now(),
+      endedAt: null,
+      error: null,
+      traceback: null,
+    };
+    scriptRunRef.current = info;
+    setScriptRun(info);
+    return info;
+  }, []);
+
+  /**
+   * Resolve when the current run finishes, or after `timeoutMs` with the run
+   * still marked 'running' (a control loop is supposed to keep going — that is
+   * an answer, not a failure).
+   */
+  const waitForScriptRun = useCallback((timeoutMs: number): Promise<ScriptRunInfo> => {
+    if (scriptRunRef.current.outcome !== 'running') return Promise.resolve(scriptRunRef.current);
+    return new Promise<ScriptRunInfo>((resolve) => {
+      const entry = {
+        resolve,
+        timer: window.setTimeout(() => {
+          runWaitersRef.current = runWaitersRef.current.filter((w) => w !== entry);
+          resolve(scriptRunRef.current);
+        }, timeoutMs),
+      };
+      runWaitersRef.current.push(entry);
+    });
+  }, []);
 
   // Allocate the shared buffers up front, independently of the Pyodide worker.
   //
@@ -90,33 +213,44 @@ export function useScriptRunner(
         | { type: 'set_ao'; ch: number; data: number }
         | { type: 'set_ai_tare'; ch: number }
         | { type: 'status'; message: string }
+        | { type: 'output'; stream: 'stdout' | 'stderr'; text: string }
         | { type: 'done'; message?: string }
         | { type: 'interrupted'; message?: string }
-        | { type: 'error'; message: string };
+        | { type: 'error'; message: string; traceback?: string };
       if (message.type === 'set_ao') {
         setAo(message.ch, message.data);
       } else if (message.type === 'set_ai_tare') {
         onAiCalibTare(message.ch);
       } else if (message.type === 'status') {
         setScriptRunnerStatus(message.message);
+      } else if (message.type === 'output') {
+        appendLog(message.stream, message.text);
       } else if (message.type === 'done') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Completed');
+        appendLog('system', message.message ?? 'Completed');
+        settleRun('completed');
       } else if (message.type === 'interrupted') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Stopped');
+        appendLog('system', message.message ?? 'Stopped');
+        settleRun('stopped');
       } else if (message.type === 'error') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(`Error: ${message.message}`);
+        appendLog('stderr', message.traceback ?? message.message);
+        settleRun('error', message.message, message.traceback ?? null);
       }
     };
     worker.onerror = (event) => {
       scriptExecutingRef.current = false;
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${event.message}`);
+      appendLog('stderr', event.message);
+      settleRun('error', event.message);
     };
 
     worker.postMessage({
@@ -130,22 +264,31 @@ export function useScriptRunner(
 
     pyWorkerRef.current = worker;
     return worker;
-  }, [scriptRunnerSupported, setAo, onAiCalibTare]);
+  }, [scriptRunnerSupported, setAo, onAiCalibTare, appendLog, settleRun]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
     if (interruptBufferRef.current) {
       interruptBufferRef.current[0] = 2;
       pyWorkerRef.current?.postMessage({ type: 'interrupt' });
     }
+    const wasRunning = scriptExecutingRef.current;
     scriptExecutingRef.current = false;
     setScriptRunning(false);
     setScriptRunnerStatus(nextStatus);
-  }, []);
+    if (wasRunning) {
+      appendLog('system', nextStatus);
+      settleRun('stopped');
+    }
+  }, [appendLog, settleRun]);
 
   // `codeOverride` exists because a caller that has just set new code cannot
   // rely on the `scriptCode` state having been applied yet (see runScriptFromMcp).
-  const startScriptRunner = useCallback(async (codeOverride?: string) => {
-    if (scriptExecutingRef.current) return;
+  const startScriptRunner = useCallback((source: ScriptSource, codeOverride?: string): ScriptRunInfo => {
+    if (scriptExecutingRef.current) return scriptRunRef.current;
+    // Each run starts from a clean log: mixing the output of two runs is how a
+    // caller ends up reading a stale error as if it were its own.
+    clearScriptLog();
+    const info = beginRun(source);
     try {
       const worker = ensureWorkerReady();
       if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;
@@ -153,12 +296,17 @@ export function useScriptRunner(
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
       worker.postMessage({ type: 'run', code: codeOverride ?? scriptCodeRef.current });
+      return info;
     } catch (err) {
+      const text = (err as Error).message;
       scriptExecutingRef.current = false;
       setScriptRunning(false);
-      stopScriptRunner(`Error: ${(err as Error).message}`);
+      setScriptRunnerStatus(`Error: ${text}`);
+      appendLog('stderr', text);
+      settleRun('error', text);
+      return scriptRunRef.current;
     }
-  }, [ensureWorkerReady, stopScriptRunner]);
+  }, [ensureWorkerReady, beginRun, clearScriptLog, appendLog, settleRun]);
 
   const toggleScriptRunner = useCallback(() => {
     if (scriptRunning) {
@@ -166,13 +314,13 @@ export function useScriptRunner(
       return;
     }
     setScriptSource('user');
-    void startScriptRunner();
+    startScriptRunner('user');
   }, [scriptRunning, startScriptRunner, stopScriptRunner]);
 
   // Run code submitted over the MCP bridge. The editor is a single shared
   // buffer, so the user's code is saved to a backup slot first and can be
   // restored from the ScriptRunner panel.
-  const runScriptFromMcp = useCallback((code: string) => {
+  const runScriptFromMcp = useCallback((code: string): ScriptRunInfo => {
     if (scriptExecutingRef.current) {
       throw new Error('A script is already running. Call stop_script first.');
     }
@@ -181,7 +329,7 @@ export function useScriptRunner(
     scriptCodeRef.current = code;
     setScriptCode(code);
     setScriptSource('mcp');
-    void startScriptRunner(code);
+    return startScriptRunner('mcp', code);
   }, [startScriptRunner]);
 
   const restoreScriptBackup = useCallback(() => {
@@ -215,6 +363,12 @@ export function useScriptRunner(
     scriptRunning,
     scriptSource,
     scriptRunnerStatus,
+    scriptLog,
+    scriptLogRef,
+    clearScriptLog,
+    scriptRun,
+    scriptRunRef,
+    waitForScriptRun,
     toggleScriptRunner,
     stopScriptRunner,
     clearScriptCode,

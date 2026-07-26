@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { FloatingWindow } from './FloatingWindow';
@@ -45,6 +45,11 @@ const buildAiPrompt = (channelLabels: ChannelLabels): string =>
     'Task: <your request here>',
   ].join('\n');
 
+const formatLogTime = (t: number): string => {
+  const d = new Date(t);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+};
+
 export function ScriptRunnerPanel({
   open,
   onClose,
@@ -53,6 +58,14 @@ export function ScriptRunnerPanel({
   channelLabels,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const { scriptLog } = scriptRunner;
+
+  // Follow the tail: a script that prints while it runs is only useful if the
+  // newest line is the one on screen.
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [scriptLog]);
 
   const copyAiPrompt = (event: MouseEvent<HTMLButtonElement>) => {
     // Inside <summary>: keep the click from toggling the <details>.
@@ -123,6 +136,60 @@ export function ScriptRunnerPanel({
           className="min-h-[180px] w-full flex-1 resize-none rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           spellCheck={false}
         />
+        {/* print() output and Python tracebacks. Before this existed a failing
+            script left only a one-line status, and a script started over MCP
+            left nothing the caller could read at all. */}
+        <details
+          className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+          open
+        >
+          <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <span>
+              Output
+              {scriptRunner.scriptRun.outcome === 'error' && (
+                <span className="ml-2 rounded bg-rose-500 px-1.5 py-0.5 text-xs font-semibold text-rose-50">
+                  Error
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              className="button-secondary py-0.5 text-xs"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                scriptRunner.clearScriptLog();
+              }}
+              title="Clear the output log"
+            >
+              Clear
+            </button>
+          </summary>
+          <div className="max-h-40 min-h-[3rem] overflow-auto px-3 pb-2 font-mono text-xs">
+            {scriptLog.length === 0 ? (
+              <p className="py-1 text-slate-400 dark:text-slate-500">
+                No output. print() goes here, along with errors and tracebacks.
+              </p>
+            ) : (
+              scriptLog.map((entry, index) => (
+                <div
+                  key={`${entry.t}-${index}`}
+                  className={
+                    entry.stream === 'stderr'
+                      ? 'whitespace-pre-wrap break-words text-rose-600 dark:text-rose-400'
+                      : entry.stream === 'system'
+                        ? 'whitespace-pre-wrap break-words text-slate-400 dark:text-slate-500'
+                        : 'whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200'
+                  }
+                >
+                  <span className="mr-2 text-slate-400 dark:text-slate-600">{formatLogTime(entry.t)}</span>
+                  {entry.text}
+                </div>
+              ))
+            )}
+            <div ref={logEndRef} />
+          </div>
+        </details>
         <details className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
           <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             API Reference

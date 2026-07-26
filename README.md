@@ -84,8 +84,8 @@ claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
 
 | 種別 | ツール |
 |------|--------|
-| 読取り（常時可） | `get_status` / `get_labels()` / `get_ai_raw(ch)` / `get_ai_phy(ch)` / `get_ao(ch)` / `get_param(ch)` / `read_recent(n)` / `get_script()` |
-| 書込み（要許可） | `set_ao(ch, volt)` / `set_param(ch, value)` / `set_ai_tare(ch)` / `run_script(code)` / `stop_script()` |
+| 読取り（常時可） | `get_status` / `get_labels()` / `get_ai_raw(ch)` / `get_ai_phy(ch)` / `get_ao(ch)` / `get_param(ch)` / `read_recent(n)` / `get_script()` / `get_script_log(n)` |
+| 書込み（要許可） | `set_ao(ch, volt)` / `set_param(ch, value)` / `set_ai_tare(ch)` / `run_script(code, wait_ms)` / `stop_script()` |
 
 `get_labels()` は各チャネルカードに入力した自由記述ラベルを `{ ai, ao, param }`（index = ch）で返します。チャネル番号だけでは分からない「何を測っているか」を AI 側が把握するためのもので、ScriptRunner の Python API には含みません（制御ループ内では不要なため）。
 
@@ -98,6 +98,7 @@ claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
 - **直接書込みはスクリプト実行中は拒否**されます（制御ループと外部書込みの競合を防ぐため）。停止は `stop_script` で行えます。
 - **多重起動は先勝ち**。2つ目以降のインスタンスはポートを取得できないため MCP 無効で通常起動します（アプリ自体は問題なく動作します）。
 - 高速な制御ループは MCP の往復では回せません。`run_script` で Python をハードウェア側に投入してください。
+- **スクリプトのエラーは結果として返ります**。投入した Python は別ワーカーで走るため、失敗しても MCP のツール呼び出し自体は成功します。そこで `run_script` は既定で最大 3 秒（`wait_ms` で変更、0 で即時復帰）だけ完了を待ち、`{ outcome, error, traceback, log }` を返します。起動直後に落ちるスクリプト（構文エラー・NameError・import 失敗など）はこの時点でトレースバックごと返り、制御ループのように走り続けるものは `outcome: "running"` で返ります。実行中・実行後の `print()` 出力とトレースバックは `get_script_log(n)` で取得でき、最後の実行の結果は `get_script()` の `lastRun` にも入ります。ログは実行ごとにクリアされ、直近 300 行を保持します。同じ内容は ScriptRunner パネルの **Output** 欄にも表示されます。
 
 ---
 

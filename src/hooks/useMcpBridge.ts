@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
+import type { ScriptLogEntry, ScriptRunInfo } from './useScriptRunner';
 
 // Page side of the MCP bridge (desktop exe only).
 //
@@ -59,12 +60,20 @@ export type McpApi = {
   getStatus: () => McpStatus;
   getLabels: () => McpLabels;
   readRecent: (n: number) => McpRecentSample[];
-  getScript: () => { code: string; status: string; running: boolean; source: string };
+  getScript: () => {
+    code: string;
+    status: string;
+    running: boolean;
+    source: string;
+    lastRun: ScriptRunInfo;
+  };
+  getScriptLog: (n: number) => ScriptLogEntry[];
+  waitForScript: (timeoutMs: number) => Promise<ScriptRunInfo>;
   setAo: (ch: number, volt: number) => void;
   setParam: (ch: number, value: number) => void;
   setAiTare: (ch: number) => void;
-  runScript: (code: string) => void;
-  stopScript: () => void;
+  runScript: (code: string) => ScriptRunInfo;
+  stopScript: () => ScriptRunInfo;
 };
 
 export type McpBridgeState = {
@@ -93,6 +102,34 @@ const requireFinite = (value: unknown, what: string): number => {
   return value;
 };
 
+// How long run_script waits for the script to finish before answering
+// "still running". Long enough that a syntax error, a bad channel number or a
+// failed import — the failures that happen within milliseconds — come back in
+// the tool result instead of having to be chased through a second call.
+const DEFAULT_RUN_WAIT_MS = 3000;
+const MAX_RUN_WAIT_MS = 60000;
+// Log lines returned alongside a run outcome. Enough to carry a traceback plus
+// the prints leading up to it without flooding a tool result.
+const RUN_RESULT_LOG_LINES = 40;
+
+/**
+ * The answer to "what happened to my script?" — outcome, the error and the
+ * captured output, in one object. run_script, stop_script and get_script_log
+ * all return this shape so a client never has to correlate calls.
+ */
+const describeRun = (api: McpApi, info: ScriptRunInfo, logLines: number) => ({
+  runId: info.runId,
+  outcome: info.outcome,
+  running: info.outcome === 'running',
+  source: info.source,
+  startedAt: info.startedAt,
+  endedAt: info.endedAt,
+  durationMs: info.startedAt === null ? null : (info.endedAt ?? Date.now()) - info.startedAt,
+  error: info.error,
+  traceback: info.traceback,
+  log: api.getScriptLog(logLines),
+});
+
 export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean) {
   const [state, setState] = useState<McpBridgeState>({
     bridgeConnected: false,
@@ -105,7 +142,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
   // Write tools are gated here rather than in the launcher so there is one
   // source of truth (the UI toggle) and no way to reach the hardware around it.
   const dispatch = useCallback(
-    (method: string, params: Record<string, unknown>): unknown => {
+    (method: string, params: Record<string, unknown>): unknown | Promise<unknown> => {
       const api = apiRef.current;
       const requireWrite = () => {
         if (!writeEnabledRef.current) {
@@ -136,6 +173,11 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
           return api.readRecent(Math.max(1, requireInt(params.n, 201, 'n')));
         case 'get_script':
           return api.getScript();
+        case 'get_script_log':
+          return {
+            ...describeRun(api, api.getScript().lastRun, requireInt(params.n ?? 100, 301, 'n')),
+            status: api.getScript().status,
+          };
         case 'set_ao': {
           requireWrite();
           const ch = requireInt(params.ch, AO_CHANNELS, 'ch');
@@ -165,15 +207,21 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
           if (typeof params.code !== 'string' || params.code.trim() === '') {
             throw new Error('code must be a non-empty string.');
           }
-          api.runScript(params.code);
-          return { started: true };
+          const waitMs = params.wait_ms === undefined
+            ? DEFAULT_RUN_WAIT_MS
+            : Math.min(requireFinite(params.wait_ms, 'wait_ms'), MAX_RUN_WAIT_MS);
+          const started = api.runScript(params.code);
+          // Wait briefly for the outcome. A script that fails on line 1 reports
+          // its traceback here; one that settles into a control loop is still
+          // 'running' when the wait expires, which is the correct answer for it.
+          if (waitMs <= 0) return describeRun(api, started, RUN_RESULT_LOG_LINES);
+          return api.waitForScript(waitMs).then((info) => describeRun(api, info, RUN_RESULT_LOG_LINES));
         }
         case 'stop_script': {
           if (!writeEnabledRef.current) {
             throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
           }
-          api.stopScript();
-          return { stopped: true };
+          return { stopped: true, ...describeRun(api, api.stopScript(), RUN_RESULT_LOG_LINES) };
         }
         default:
           throw new Error(`Unknown method "${method}".`);
@@ -213,11 +261,22 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
         }
         const request = message as BridgeRequest;
         if (typeof request.id !== 'number' || typeof request.method !== 'string') return;
+        // Most methods answer synchronously; run_script may hold its answer back
+        // until the script settles, so a promised result is resolved here rather
+        // than serialized as an empty object.
+        const reply = (frame: Record<string, unknown>) => socket?.send(JSON.stringify(frame));
         try {
           const result = dispatch(request.method, request.params ?? {});
-          socket?.send(JSON.stringify({ id: request.id, result }));
+          if (result instanceof Promise) {
+            void result.then(
+              (value) => reply({ id: request.id, result: value }),
+              (err: Error) => reply({ id: request.id, error: err.message }),
+            );
+          } else {
+            reply({ id: request.id, result });
+          }
         } catch (err) {
-          socket?.send(JSON.stringify({ id: request.id, error: (err as Error).message }));
+          reply({ id: request.id, error: (err as Error).message });
         }
       };
 

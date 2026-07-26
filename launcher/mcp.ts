@@ -31,9 +31,12 @@ const AO_CH = z.number().int().min(0).max(7).describe('AO channel, 0-7');
 const PARAM_CH = z.number().int().min(0).max(15).describe('Parameter channel, 0-15');
 
 // Scripts can take a while to hand off to the worker on its first run (Pyodide
-// boots lazily), so run_script gets a longer budget than the default. It still
-// only waits for the script to *start*, never for it to finish.
-const RUN_SCRIPT_TIMEOUT_MS = 20000;
+// boots lazily), and run_script additionally holds its answer back for up to
+// `wait_ms` so a script that fails immediately reports the failure in its own
+// result. The bridge budget is that wait plus the boot headroom.
+const RUN_SCRIPT_HEADROOM_MS = 20000;
+const DEFAULT_RUN_WAIT_MS = 3000;
+const MAX_RUN_WAIT_MS = 60000;
 
 const text = (value: unknown): CallToolResult => ({
   content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
@@ -68,7 +71,10 @@ const createMcpServer = (): McpServer => {
         'each one measures. Read tools always work; write tools require the user to enable ' +
         '"MCP write access" in the app menu. For closed-loop or timed control, submit Python via ' +
         'run_script instead of polling set_ao in a loop — MCP round-trips are far too slow for ' +
-        'control timing, and the in-app ScriptRunner runs the loop next to the hardware.',
+        'control timing, and the in-app ScriptRunner runs the loop next to the hardware. ' +
+        'A submitted script runs in a Python worker, so its failures surface as data, not as tool ' +
+        'errors: check outcome/error in the run_script result and call get_script_log for print() ' +
+        'output and the full traceback.',
     },
   );
 
@@ -160,10 +166,36 @@ const createMcpServer = (): McpServer => {
     'get_script',
     {
       title: 'Get ScriptRunner state',
-      description: 'The Python code currently in the ScriptRunner editor, its run state and who started it.',
+      description:
+        'The Python code currently in the ScriptRunner editor, its run state, who started it, and ' +
+        'how the last run ended (lastRun.outcome is idle / running / completed / stopped / error, ' +
+        'with lastRun.error and lastRun.traceback when it failed).',
       annotations: { readOnlyHint: true },
     },
     async () => relay('get_script'),
+  );
+
+  server.registerTool(
+    'get_script_log',
+    {
+      title: 'Get ScriptRunner output',
+      description:
+        'Captured print() output, Python tracebacks and run events for the current or most recent ' +
+        'script run, newest last, each entry { t, stream: stdout|stderr|system, text }. This is how ' +
+        'you see why a script failed or what a long-running loop is reporting — the log is cleared ' +
+        'at the start of every run, and keeps the last 300 lines.',
+      inputSchema: {
+        n: z
+          .number()
+          .int()
+          .min(1)
+          .max(300)
+          .optional()
+          .describe('How many of the most recent log lines to return (default 100)'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ n }) => relay('get_script_log', n === undefined ? {} : { n }),
   );
 
   server.registerTool(
@@ -208,19 +240,39 @@ const createMcpServer = (): McpServer => {
       description:
         'Load Python into the ScriptRunner editor and run it. The API is get_ai_raw(ch) / get_ai_phy(ch) / ' +
         'get_ao(ch) / set_ao(ch, volt) / get_param(ch) / set_param(ch, val) / set_ai_tare(ch); wait only with ' +
-        '`await asyncio.sleep(s)`, never time.sleep(). Returns as soon as the script starts, not when it ' +
-        'finishes — poll get_script for status. This replaces the editor contents; the previous code is ' +
-        'backed up and restorable from the app UI.',
-      inputSchema: { code: z.string().describe('Python source to run') },
+        '`await asyncio.sleep(s)`, never time.sleep(). Waits up to wait_ms for the script to finish and ' +
+        'returns { outcome, error, traceback, log }: a script that fails on startup reports its traceback ' +
+        'here, while a control loop is still running when the wait expires — call get_script_log for its ' +
+        'later output. This replaces the editor contents; the previous code is backed up and restorable ' +
+        'from the app UI.',
+      inputSchema: {
+        code: z.string().describe('Python source to run'),
+        wait_ms: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_RUN_WAIT_MS)
+          .optional()
+          .describe(
+            `How long to wait for the script to finish before returning, ms (default ${DEFAULT_RUN_WAIT_MS}; 0 returns immediately)`,
+          ),
+      },
     },
-    async ({ code }) => relay('run_script', { code }, RUN_SCRIPT_TIMEOUT_MS),
+    async ({ code, wait_ms: waitMs }) =>
+      relay(
+        'run_script',
+        waitMs === undefined ? { code } : { code, wait_ms: waitMs },
+        (waitMs ?? DEFAULT_RUN_WAIT_MS) + RUN_SCRIPT_HEADROOM_MS,
+      ),
   );
 
   server.registerTool(
     'stop_script',
     {
       title: 'Stop ScriptRunner',
-      description: 'Interrupt the running script.',
+      description:
+        'Interrupt the running script. Returns how the run ended plus its captured output, so a loop ' +
+        'that had already died of an error reports that error rather than a bare "stopped".',
     },
     async () => relay('stop_script'),
   );

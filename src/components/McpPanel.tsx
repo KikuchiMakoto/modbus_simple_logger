@@ -18,15 +18,16 @@ const READ_TOOLS = [
   { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
   { name: 'get_param(ch)', desc: 'Parameter scratch value. ch: 0-15.' },
   { name: 'read_recent(n)', desc: 'Up to 200 recent samples from the chart buffer.' },
-  { name: 'get_script()', desc: 'Editor contents, run state and who started it.' },
+  { name: 'get_script()', desc: 'Editor contents, run state and how the last run ended.' },
+  { name: 'get_script_log(n)', desc: 'print() output, tracebacks and run events of the last run.' },
 ];
 
 const WRITE_TOOLS = [
   { name: 'set_ao(ch, volt)', desc: 'Set AO voltage [V], clamped to 0-10.' },
   { name: 'set_param(ch, value)', desc: 'Set a Parameter scratch value.' },
   { name: 'set_ai_tare(ch)', desc: 'Tare AI ch (offset c only).' },
-  { name: 'run_script(code)', desc: 'Load Python into ScriptRunner and run it.' },
-  { name: 'stop_script()', desc: 'Interrupt the running script.' },
+  { name: 'run_script(code, wait_ms)', desc: 'Run Python in ScriptRunner; returns its outcome and errors.' },
+  { name: 'stop_script()', desc: 'Interrupt the running script; returns the outcome.' },
 ];
 
 export function McpPanel({ open, onClose, bridge, writeEnabled, onWriteEnabledChange }: McpPanelProps) {

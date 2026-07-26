@@ -659,7 +659,14 @@ function App() {
       status: scriptRunner.scriptRunnerStatus,
       running: scriptRunner.scriptRunning,
       source: scriptRunner.scriptSource,
+      // How the last run ended. Read from the ref, not the rendered value: the
+      // bridge answers from a socket handler that can run before React has
+      // re-rendered, and a caller polling right after a crash must not be told
+      // the run is still fine.
+      lastRun: scriptRunner.scriptRunRef.current,
     }),
+    getScriptLog: (n) => scriptRunner.scriptLogRef.current.slice(-n),
+    waitForScript: scriptRunner.waitForScriptRun,
     setAo,
     setParam: (ch, value) => {
       const share = scriptRunner.paramShareRef.current;
@@ -668,7 +675,10 @@ function App() {
     },
     setAiTare: handleTareCalibration,
     runScript: scriptRunner.runScriptFromMcp,
-    stopScript: () => scriptRunner.stopScriptRunner('Stopped by MCP'),
+    stopScript: () => {
+      scriptRunner.stopScriptRunner('Stopped by MCP');
+      return scriptRunner.scriptRunRef.current;
+    },
   };
   const mcpBridge = useMcpBridge(mcpApiRef, mcpWriteEnabled);
 
