@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "3.15",
+  "version": "3.16",
   "private": true,
   "type": "module",
   "scripts": {
@@ -32,7 +32,7 @@
     "@types/wicg-file-system-access": "^2023.10.7",
     "@vitejs/plugin-react": "^6.0.4",
     "autoprefixer": "^10.5.4",
-    "postcss": "^8.5.22",
+    "postcss": "^8.5.23",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.5"
