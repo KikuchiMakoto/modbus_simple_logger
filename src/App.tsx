@@ -1523,7 +1523,7 @@ function App() {
         <div className="px-2 py-1">
           <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0">
-              <h1 className="text-base font-bold leading-tight">
+              <h1 className="text-lg font-bold leading-tight">
                 <a
                   href="https://github.com/KikuchiMakoto/modbus_simple_logger"
                   target="_blank"
@@ -1545,14 +1545,17 @@ function App() {
                   File: {activeSaveFilename || '-'}
                 </span>
                 <span className="tabular-nums">
-                  Total: {formatElapsedTime(saveElapsedMs)} / #: {savePointCount}
+                  Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
                 </span>
                 <span className="tabular-nums">
                   Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz({actualRateHz.toFixed(1)})
                 </span>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-1">
+            {/* ml-auto, not just justify-end: once the header wraps, this group
+                becomes the only item on its own line and would otherwise sit at
+                the left edge, away from the window controls it belongs with. */}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
               <button
                 type="button"
                 role="switch"
@@ -1579,17 +1582,17 @@ function App() {
               </button>
               <button
                 type="button"
-                className={`button-compact min-w-[5.5rem] ${connected ? 'button-secondary' : 'button-primary'}`}
+                className={`button-touch min-w-[6rem] ${connected ? 'button-secondary' : 'button-primary'}`}
                 onClick={handleToggleConnection}
               >
                 {connected ? 'Disconnect' : 'Connect'}
               </button>
               {!tsvWriterRef.current ? (
-                <button type="button" className={`button-compact ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
+                <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
                   Start Save
                 </button>
               ) : (
-                <button type="button" className="button-stop-save-pulse button-compact" onClick={handleStopSave}>
+                <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave}>
                   Stop Save
                 </button>
               )}

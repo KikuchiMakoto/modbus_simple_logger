@@ -118,6 +118,15 @@ body {
   @apply px-2.5 py-1 text-xs;
 }
 
+/* Connect / Start Save are the two buttons that get hit under time pressure,
+   often on a laptop trackpad next to a running test. They stay a size up from
+   .button-compact: the header saves its height on the labels and the icons, not
+   on the hit area of the controls that matter. Must also come after .button-*
+   for the same unlayered-CSS reason as .button-compact. */
+.button-touch {
+  @apply px-3 py-1 text-sm;
+}
+
 .input-compact {
   @apply w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm font-semibold text-slate-900 text-right dark:border-slate-800 dark:bg-slate-800 dark:text-slate-100;
 }
