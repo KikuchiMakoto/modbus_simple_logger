@@ -267,10 +267,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 大規模変更(主観でいいです)ではメジャーバージョンをインクリメント
 - メジャーバージョンのインクリメント時は、マイナーをゼロに
 
-## 「push」と言われたときの絶対的なルール
+## 「push」「リリース」と言われたときの絶対的なルール
 
-ユーザーが「push」「minor version update with tag and push」と言った場合、単なる `git push` ではなく
-**リリース操作**として以下を一括で実行する。
+ユーザーが「push」「リリース」「Release」「minor version update with tag and push」と言った場合、
+単なる `git push` ではなく**リリース操作**として以下を一括で実行する。
+
+**手順の詳細・コマンド・落とし穴は `.claude/skills/release/SKILL.md` が一次情報源**（Claude Code なら
+`/release` で読み込まれる）。exe 生成と GitHub Release 作成まで含めた完全な手順はそちらにある。
+以下はその要約:
 
 1. 上記ルールに従って `package.json` の `version` を更新（小規模変更ならマイナーをインクリメント）。
    バージョンはビルド時に `vite.config.ts` から `VITE_APP_VERSION` / `sw.js` の `APP_VERSION` へ
@@ -281,6 +285,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
    `git tag --sort=-v:refname | head` で確認し、番号を採番する）
 5. ブランチとタグの両方を push（`git push origin <branch>` + `git push origin v3.4`）
 6. 作業がフィーチャーブランチ上なら、この流れの中で `main` へ**マージコミット付きでマージ**する
+7. `bun run launcher:build` で exe を生成する（成果物は `launcher/bin/modbus_simple_logger.exe`）
+8. GitHub Release を作成し、その exe を **`modbus_simple_logger.exe` という名前で**添付する
+   （`gh release create <tag> launcher/bin/modbus_simple_logger.exe --title <tag> --generate-notes
+   --notes-start-tag <前バージョンタグ> --latest`）
 
 バージョン更新とタグを伴わない push は、デプロイ済み PWA の Application Info が古いバージョンを表示し続ける
-ため不可。
+ため不可。また、タグだけ打って GitHub Release と exe が欠けた状態も未完了とみなす（v2.14 以降は
+全バージョンに exe 付き Release が揃っている状態を維持する）。
