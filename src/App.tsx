@@ -62,6 +62,11 @@ import {
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
+import {
+  clearBackgroundTimer,
+  setBackgroundInterval,
+  setBackgroundTimeout,
+} from './utils/backgroundTimer';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
 import { CalibrationWizardPanel, DenominatorOption } from './components/CalibrationWizardPanel';
@@ -1000,12 +1005,16 @@ function App() {
 
     if (pendingDataPoints.current.length >= BATCH_FLUSH_THRESHOLD) {
       if (batchUpdateTimer.current !== undefined) {
-        window.clearTimeout(batchUpdateTimer.current);
+        clearBackgroundTimer(batchUpdateTimer.current);
         batchUpdateTimer.current = undefined;
       }
       flushPendingDataPoints();
     } else if (batchUpdateTimer.current === undefined) {
-      batchUpdateTimer.current = window.setTimeout(() => {
+      // Background timer: this is the path that moves captured points into the
+      // chart buffer and IndexedDB. Left on a window timer it would stall to
+      // one flush a minute behind a hidden window, so points would sit in
+      // `pendingDataPoints` unsaved.
+      batchUpdateTimer.current = setBackgroundTimeout(() => {
         batchUpdateTimer.current = undefined;
         flushPendingDataPoints();
       }, BATCH_FLUSH_INTERVAL_MS);
@@ -1236,7 +1245,11 @@ function App() {
       }
       const delay = Math.max(0, idealScheduleRef.current - now);
 
-      pollTimer.current = window.setTimeout(() => {
+      // Scheduled on the timer worker, not on window: a hidden or minimised
+      // window has its own timers throttled to 1 Hz and then to 1/min, which
+      // would turn a 200 ms polling loop into a minute-long gap in the data
+      // (see utils/backgroundTimer.ts).
+      pollTimer.current = setBackgroundTimeout(() => {
         void runPollingLoop();
       }, delay);
     }
@@ -1244,10 +1257,10 @@ function App() {
 
   const scheduleImmediatePoll = useCallback(() => {
     if (pollTimer.current !== undefined) {
-      window.clearTimeout(pollTimer.current);
+      clearBackgroundTimer(pollTimer.current);
     }
     idealScheduleRef.current = 0;
-    pollTimer.current = window.setTimeout(() => {
+    pollTimer.current = setBackgroundTimeout(() => {
       void runPollingLoop();
     }, 0);
   }, [runPollingLoop]);
@@ -1258,12 +1271,12 @@ function App() {
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current !== undefined) {
-      window.clearTimeout(pollTimer.current);
+      clearBackgroundTimer(pollTimer.current);
       pollTimer.current = undefined;
     }
     pollingInProgressRef.current = false;
     if (batchUpdateTimer.current !== undefined) {
-      window.clearTimeout(batchUpdateTimer.current);
+      clearBackgroundTimer(batchUpdateTimer.current);
       batchUpdateTimer.current = undefined;
     }
     flushPendingDataPoints();
@@ -1408,7 +1421,7 @@ function App() {
     acquiringRef.current = false;
     setAcquiring(false);
     stopPolling();
-    window.clearInterval(flushTimerRef.current);
+    clearBackgroundTimer(flushTimerRef.current);
     flushTimerRef.current = undefined;
     const writerToClose = tsvWriterRef.current;
     tsvWriterRef.current = null;
@@ -1631,7 +1644,10 @@ function App() {
         setDisplayRevision((v) => v + 1);
 
         tsvWriterRef.current = writer;
-        flushTimerRef.current = window.setInterval(() => {
+        // Background timer, for the same reason as the polling loop: a throttled
+        // flush would leave captured rows sitting in the worker's buffer instead
+        // of on disk, which is the one place a crash must not cost data.
+        flushTimerRef.current = setBackgroundInterval(() => {
           // Fire-and-forget: the worker owns the buffer and reports failures via
           // the onError callback above; this just asks it to flush periodically.
           tsvWriterRef.current?.flush();
@@ -1664,7 +1680,7 @@ function App() {
     const writerToClose = tsvWriterRef.current;
     if (!writerToClose) return;
     tsvWriterRef.current = null;
-    window.clearInterval(flushTimerRef.current);
+    clearBackgroundTimer(flushTimerRef.current);
     flushTimerRef.current = undefined;
     setActiveSaveFilename('');
     setSaveStartedAt(null);
