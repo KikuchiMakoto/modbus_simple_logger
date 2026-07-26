@@ -107,6 +107,17 @@ body {
   }
 }
 
+/* Compact variant for the sticky header, where vertical space is the scarcest
+   thing on the page. It has to be a real class rather than `px-2 py-0.5`
+   utilities in the class attribute: every .button-* rule above is unlayered
+   plain CSS while Tailwind's utilities live in @layer utilities, and unlayered
+   rules always win over layered ones regardless of the order the class names
+   are written in. Keep this LAST — it beats the .button-* paddings (including
+   .button-stop-save-pulse) by source order, and only by that. */
+.button-compact {
+  @apply px-2.5 py-1 text-xs;
+}
+
 .input-compact {
   @apply w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm font-semibold text-slate-900 text-right dark:border-slate-800 dark:bg-slate-800 dark:text-slate-100;
 }

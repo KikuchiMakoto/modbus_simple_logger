@@ -208,6 +208,51 @@ const axisOptions = [
 
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 
+// Sun / moon for the theme switch, drawn as Feather Icons (MIT, (c) Cole Bemis)
+// — the same stroked 24x24 grid as the hamburger and collapse chevrons, so the
+// header reads as one icon set. Inlined rather than pulled from an icon package:
+// the app must precache every asset for offline use, and these are two paths.
+//
+// Not a Unicode glyph (☀ / ☾): those render from whatever font the platform
+// picks — colour emoji on some, a thin outline on others — and would be the one
+// element in the UI not drawn from the bundled Iosevka stack.
+function SunIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 1.5v2M12 20.5v2M3.6 3.6l1.4 1.4M19 19l1.4 1.4M1.5 12h2M20.5 12h2M3.6 20.4 5 19M19 5l1.4-1.4" />
+    </svg>
+  );
+}
+
+function MoonIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
 function CollapseButton({
   collapsed,
   onToggle,
@@ -1464,34 +1509,42 @@ function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
-        <div className="px-3 py-1">
-          <header className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-wrap items-end gap-x-4 gap-y-0.5">
-              <div>
-                <h1 className="text-xl font-bold">
-                  <a
-                    href="https://github.com/KikuchiMakoto/modbus_simple_logger"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-600 hover:underline dark:text-emerald-400"
-                  >
-                    ModbusSimpleLogger
-                  </a>
-                </h1>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  {serialTransportLabel} - {formatSerialSettings(serialSettings)}
-                </p>
-              </div>
-              <div role="status" aria-live="polite" className="text-left text-xs text-slate-600 dark:text-slate-400">
-                <p className="font-semibold text-slate-700 dark:text-slate-300">
+        {/* The header is sticky, so every pixel it takes is a pixel the channel
+            grid never gets back. Title, serial settings and the save status sit
+            on ONE row (wrapping only when the window is too narrow for it)
+            rather than in stacked blocks — that alone takes roughly a third off
+            the bar, without squeezing the type down to the point where the
+            status line stops being readable at a glance. */}
+        <div className="px-2 py-1">
+          <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0">
+              <h1 className="text-base font-bold leading-tight">
+                <a
+                  href="https://github.com/KikuchiMakoto/modbus_simple_logger"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  ModbusSimpleLogger
+                </a>
+              </h1>
+              <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
+                {serialTransportLabel} - {formatSerialSettings(serialSettings)}
+              </p>
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-0 text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400"
+              >
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
-                </p>
-                <p className="tabular-nums">
+                </span>
+                <span className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / #: {savePointCount}
-                </p>
-                <p className="tabular-nums">
+                </span>
+                <span className="tabular-nums">
                   Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz({actualRateHz.toFixed(1)})
-                </p>
+                </span>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-1">
@@ -1501,67 +1554,47 @@ function App() {
                 aria-checked={isDarkMode}
                 aria-label="Toggle dark mode"
                 onClick={toggleTheme}
-                className="relative inline-flex h-8 w-16 items-center rounded-full border border-slate-300 bg-white px-1.5 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
+                className="relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border border-slate-300 bg-white px-1 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
               >
                 <span className="sr-only">Toggle theme</span>
-                <span className="absolute left-2 text-slate-500 dark:text-slate-300" aria-hidden>
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 50 50"
-                    fill="currentColor"
-                    className="h-4 w-4"
-                  >
-                    <path d="M24.906 3.969c-.043.008-.086.02-.125.031-.465.106-.793.523-.782 1V11a1.002 1.002 0 0 0 1.996 0V5c.012-.289-.105-.566-.312-.761a1 1 0 0 0-.777-.27ZM10.656 9.844c-.375.066-.676.34-.781.703-.105.367.004.758.281 1.015l4.25 4.25a1.002 1.002 0 0 0 1.703-.77 1 1 0 0 0-.349-.746l-4.25-4.25c-.207-.222-.508-.336-.813-.312-.031 0-.062 0-.094.01ZM39.031 9.844a.995.995 0 0 0-.594.312l-4.25 4.25a1.002 1.002 0 1 0 1.406 1.406l4.25-4.25c.312-.297.402-.762.218-1.152-.187-.394-.6-.62-1.03-.566ZM24.906 15c-.031.008-.062.02-.094.031-.062.004-.125.016-.188.031l-.03.031C19.29 15.32 15 19.64 15 25c0 5.504 4.496 10 10 10s10-4.497 10-10c0-5.34-4.254-9.645-9.531-9.907-.035 0-.058-.031-.094-.031a2.96 2.96 0 0 0-.312-.062H25c-.031 0-.062 0-.094.01Zm.031 2c.02 0 .043 0 .063 0 .031 0 .062 0 .094 0C29.469 17.05 33 20.613 33 25c0 4.422-3.578 8-8 8-4.418 0-8-3.578-8-8 0-4.398 3.547-7.965 7.938-8ZM4.719 24c-.551.078-.938.59-.86 1.14.078.552.59.938 1.141.86H11a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 11 24H5c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.093 0Zm34 .001c-.551.078-.938.59-.86 1.14.078.552.59.939 1.141.86H45a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 45 24.001h-6c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.094 0ZM15 33.875a1 1 0 0 0-.594.312l-4.25 4.25a.996.996 0 0 0 .348 1.594c.375.086.762-.051 1.004-.348l4.25-4.25a1.003 1.003 0 0 0-.77-1.633c-.031 0-.062 0-.094-.005Zm19.688 0a.995.995 0 0 0-.907.703c-.105.367.004.758.282 1.015l4.25 4.25c.242.297.629.434 1.004.348.371-.086.664-.379.75-.75.086-.375-.051-.762-.348-1.004l-4.25-4.25a.989.989 0 0 0-.718-.312c-.031 0-.062 0-.094.01ZM24.906 37.969c-.043.007-.086.019-.125.03-.465.106-.793.523-.782 1V45a1.002 1.002 0 0 0 1.996 0v-6c.012-.289-.105-.566-.312-.762a1 1 0 0 0-.777-.27Z" />
-                  </svg>
+                <span className="absolute left-1 text-slate-400 dark:text-slate-500" aria-hidden>
+                  <SunIcon className="h-3.5 w-3.5" />
                 </span>
-                <span className="absolute right-2 text-slate-500 dark:text-slate-300" aria-hidden>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
-                    <path d="M18.92 15.42A7 7 0 0 1 11.2 4.59a1 1 0 0 0-1.18-1.18A9 9 0 1 0 19.1 16.6a1 1 0 0 0-.18-1.18Z" />
-                  </svg>
+                <span className="absolute right-1 text-slate-400 dark:text-slate-500" aria-hidden>
+                  <MoonIcon className="h-3.5 w-3.5" />
                 </span>
+                {/* The knob covers whichever side icon is active, so the pair
+                    below reads as "current mode" rather than duplicating it. */}
                 <span
-                  className={`flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-6' : 'translate-x-0'}`}
+                  className={`flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-[26px]' : 'translate-x-0'}`}
                   aria-hidden
                 >
-                  {isDarkMode ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
-                      <path d="M21.64 13a1 1 0 0 0-1.05-.14A8 8 0 0 1 11.1 4.41 1 1 0 0 0 9.76 3a10 10 0 1 0 12.3 10Z" />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 50 50"
-                      fill="currentColor"
-                      className="h-4 w-4"
-                    >
-                      <path d="M24.906 3.969c-.043.008-.086.02-.125.031-.465.106-.793.523-.782 1V11a1.002 1.002 0 0 0 1.996 0V5c.012-.289-.105-.566-.312-.761a1 1 0 0 0-.777-.27ZM10.656 9.844c-.375.066-.676.34-.781.703-.105.367.004.758.281 1.015l4.25 4.25a1.002 1.002 0 0 0 1.703-.77 1 1 0 0 0-.349-.746l-4.25-4.25c-.207-.222-.508-.336-.813-.312-.031 0-.062 0-.094.01ZM39.031 9.844a.995.995 0 0 0-.594.312l-4.25 4.25a1.002 1.002 0 1 0 1.406 1.406l4.25-4.25c.312-.297.402-.762.218-1.152-.187-.394-.6-.62-1.03-.566ZM24.906 15c-.031.008-.062.02-.094.031-.062.004-.125.016-.188.031l-.03.031C19.29 15.32 15 19.64 15 25c0 5.504 4.496 10 10 10s10-4.497 10-10c0-5.34-4.254-9.645-9.531-9.907-.035 0-.058-.031-.094-.031a2.96 2.96 0 0 0-.312-.062H25c-.031 0-.062 0-.094.01Zm.031 2c.02 0 .043 0 .063 0 .031 0 .062 0 .094 0C29.469 17.05 33 20.613 33 25c0 4.422-3.578 8-8 8-4.418 0-8-3.578-8-8 0-4.398 3.547-7.965 7.938-8ZM4.719 24c-.551.078-.938.59-.86 1.14.078.552.59.938 1.141.86H11a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 11 24H5c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.093 0Zm34 .001c-.551.078-.938.59-.86 1.14.078.552.59.939 1.141.86H45a1.003 1.003 0 0 0 .879-1.504A1.004 1.004 0 0 0 45 24.001h-6c-.031 0-.062 0-.094 0s-.062 0-.094 0-.062 0-.094 0ZM15 33.875a1 1 0 0 0-.594.312l-4.25 4.25a.996.996 0 0 0 .348 1.594c.375.086.762-.051 1.004-.348l4.25-4.25a1.003 1.003 0 0 0-.77-1.633c-.031 0-.062 0-.094-.005Zm19.688 0a.995.995 0 0 0-.907.703c-.105.367.004.758.282 1.015l4.25 4.25c.242.297.629.434 1.004.348.371-.086.664-.379.75-.75.086-.375-.051-.762-.348-1.004l-4.25-4.25a.989.989 0 0 0-.718-.312c-.031 0-.062 0-.094.01ZM24.906 37.969c-.043.007-.086.019-.125.03-.465.106-.793.523-.782 1V45a1.002 1.002 0 0 0 1.996 0v-6c.012-.289-.105-.566-.312-.762a1 1 0 0 0-.777-.27Z" />
-                    </svg>
-                  )}
+                  {isDarkMode ? <MoonIcon className="h-3.5 w-3.5" /> : <SunIcon className="h-3.5 w-3.5" />}
                 </span>
               </button>
               <button
                 type="button"
-                className={`min-w-[7rem] ${connected ? 'button-secondary' : 'button-primary'}`}
+                className={`button-compact min-w-[5.5rem] ${connected ? 'button-secondary' : 'button-primary'}`}
                 onClick={handleToggleConnection}
               >
                 {connected ? 'Disconnect' : 'Connect'}
               </button>
               {!tsvWriterRef.current ? (
-                <button type="button" className={connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
+                <button type="button" className={`button-compact ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected}>
                   Start Save
                 </button>
               ) : (
-                <button type="button" className="button-stop-save-pulse" onClick={handleStopSave}>
+                <button type="button" className="button-stop-save-pulse button-compact" onClick={handleStopSave}>
                   Stop Save
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => setHamburgerMenuOpen(true)}
-                className="button-secondary flex items-center justify-center p-1.5"
+                className="button-secondary button-compact flex items-center justify-center"
                 aria-label="Open menu"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
                   <line x1="3" y1="6" x2="21" y2="6" />
                   <line x1="3" y1="12" x2="21" y2="12" />
                   <line x1="3" y1="18" x2="21" y2="18" />
