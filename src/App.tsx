@@ -25,6 +25,7 @@ import {
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
+  CHART_REDRAW_INTERVAL_SAVING_MS,
   READOUT_PUBLISH_INTERVAL_MS,
   CHANNEL_CARD_MIN_INTERVAL_MS,
   NON_SAVING_CHART_WINDOW_MS,
@@ -559,17 +560,24 @@ function App() {
         }
         saveRawCounterRef.current++;
       }
-      if (buffer.length > 2 * CHART_MAX_POINTS) {
+      // Re-decimate at CHART_MAX_POINTS, not at twice it. The old 2x headroom
+      // let the buffer oscillate between 2048 and 4096 points, averaging ~3000 —
+      // two and a half times what the non-saving window holds at 20 Hz, on four
+      // charts, rebuilt several times a second. That is why a 20 Hz capture
+      // decayed to 17-18 Hz a few minutes into a save and then held there: the
+      // buffer had reached its steady size, and the redraw cost with it. The
+      // chart still spans the whole capture; it just carries the same point
+      // budget the rest of the app already assumes.
+      if (buffer.length > CHART_MAX_POINTS) {
         const decimated: DataPoint[] = [];
         for (let i = 0; i < buffer.length; i += 2) decimated.push(buffer[i]);
         dataBufferRef.current = decimated;
         saveDecimationStrideRef.current *= 2;
-        // Re-decimation replaces the whole trace anyway (half the points are
-        // dropped), so it is the least disruptive moment for a full chart
-        // rebuild. ChartPanel releases the outgoing WebGL context explicitly on
-        // this swap (releaseWebglContext), so the rebuild no longer leaks one —
-        // which is why the old timed purge could be dropped in v3.1.
-        setChartEpoch((v) => v + 1);
+        // Deliberately NOT bumping chartEpoch here. Remounting all four plots
+        // mid-capture costs a purge plus four fresh WebGL contexts — the same
+        // periodic-rebuild anti-pattern v3.1 removed — and halving the buffer
+        // twice as often as before would have doubled how often that stall
+        // landed. The redraw triggered below already draws the new trace.
       }
     } else {
       // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
@@ -620,11 +628,19 @@ function App() {
     // burst of flushes into one redraw showing the latest buffer. Reset paths
     // (connect/disconnect/start/stop-save) still bump setDisplayRevision directly
     // for an immediate redraw.
+    // While saving, the chart is the whole capture downsampled to a fixed point
+    // budget: each new sample moves a handful of pixels at most, so redrawing
+    // 5x/s buys nothing a slower rate does not. The interval is the one knob
+    // that scales the chart's competition with the acquisition loop, and during
+    // a save is exactly when that competition matters.
+    const redrawIntervalMs = tsvWriterRef.current
+      ? CHART_REDRAW_INTERVAL_SAVING_MS
+      : CHART_REDRAW_INTERVAL_MS;
     if (chartRedrawTimerRef.current === undefined) {
       chartRedrawTimerRef.current = window.setTimeout(() => {
         chartRedrawTimerRef.current = undefined;
         setDisplayRevision((v) => v + 1);
-      }, CHART_REDRAW_INTERVAL_MS);
+      }, redrawIntervalMs);
     }
   }, []);
 
@@ -1422,6 +1438,11 @@ function App() {
       dataBufferRef.current = [];
       viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
+      // The one place a full plot rebuild is free: no measurement is running
+      // yet, and the charts are empty. Bounding WebGL/regl accumulation per
+      // session is all the purge was ever for — doing it mid-capture (as the
+      // save-path re-decimation used to) paid for it out of the sampling rate.
+      setChartEpoch((v) => v + 1);
 
       const client = new WebSerialModbusClient(
         slaveId,

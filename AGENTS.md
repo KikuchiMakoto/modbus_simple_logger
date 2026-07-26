@@ -107,7 +107,10 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
 - **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
   - 非保存時: 直近 `NON_SAVING_CHART_WINDOW_MS`（60s）のスライディング時間窓
-  - 保存時: 保存開始〜現在の全期間を `CHART_MAX_POINTS`(2048) へストライド間引き（`saveDecimationStrideRef`/`saveRawCounterRef`、バッファが 2×超で偶数 index 再間引き＆stride 倍化 → メモリ一定）
+  - 保存時: 保存開始〜現在の全期間を `CHART_MAX_POINTS`(2048) へストライド間引き（`saveDecimationStrideRef`/`saveRawCounterRef`、バッファが `CHART_MAX_POINTS` 超で偶数 index 再間引き＆stride 倍化 → メモリ一定）
+  - **再間引きのしきい値を `2 × CHART_MAX_POINTS` に戻さないこと**。2倍の余裕を持たせるとバッファは 2048〜4096 を往復し平均 3000 点になる（20Hz 非保存時の 1200 点の 2.5 倍）。これを4枚のチャートが毎秒数回 O(n) で再構築するため、**保存開始から数分で 20Hz が 17〜18Hz へ落ちて安定する**（v3.19 で観測・v3.20 で修正）。バッファが定常サイズに達した時点で劣化も頭打ちになるのが特徴的な症状
+  - **再間引きで `chartEpoch`（purge + remount）を bump しないこと**。計測中に4枚を作り直すのは v3.1 で廃止した定期パージと同じ悪手で、しきい値を下げた分だけ発生頻度が上がる。purge が必要なのは WebGL コンテキスト蓄積の抑制だけなので、**接続時（チャートが空でタイミングが問題にならない唯一の瞬間）に1回だけ**行う
+  - 保存中のチャート再描画間隔は `CHART_REDRAW_INTERVAL_SAVING_MS`(500ms)。全期間を間引いた表示は連続する再描画でほぼ変化しないため、5fps を維持する意味がない
   - 共通上限 `CHART_MAX_POINTS`。`MAX_POINTS_IN_MEMORY`(256) は IndexedDB trim 専用
 - ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファ更新と IndexedDB バッチ書込みを実施）
 - **タイムスタンプは AI 読取り完了時刻（`lastAiReadCompletedAtRef`）を1つだけ使い、チャート・IndexedDB・TSV・レート表示すべてに同じ値を渡す**。`updateDataHistory` は Promise チェーンの継続として走るため、**その中で `Date.now()` を読んではならない** — 表示キューが捌けた時刻が記録され、レンダリング遅延が時間軸に混入する（v3.18 以前はチャート/IndexedDB と TSV で同じサンプルの時刻が食い違っていた）

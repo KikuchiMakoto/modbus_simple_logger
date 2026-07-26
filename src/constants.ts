@@ -27,6 +27,11 @@ export const NON_SAVING_CHART_WINDOW_MS = 60_000;
 // and feeds WebGL/regl resource churn. Coalescing redraws to ~5 fps keeps the
 // live view responsive while cutting steady GPU/React cost roughly in half.
 export const CHART_REDRAW_INTERVAL_MS = 200;
+// Same thing while a save is running. The chart then shows the whole capture
+// decimated to CHART_MAX_POINTS, so consecutive redraws differ by a pixel or
+// two — while the loop is at its most sensitive to anything sharing the main
+// thread. Recording is unaffected: every sample still goes to the TSV file.
+export const CHART_REDRAW_INTERVAL_SAVING_MS = 500;
 // How often per-sample readouts (measured rate, saved-point count) are pushed
 // into React state. They are numbers a human reads, so 4/s is already more than
 // anyone can follow — while a state update per sample put a full re-render of
