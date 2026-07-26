@@ -1272,8 +1272,10 @@ function App() {
   const getAiRawValue = useCallback((ch: number) => aiRawSourceRef.current[ch] ?? 0, []);
 
   // Spec-method reference units per sensor. HX711: fixed electrical-unit slopes.
-  // ADS1115: 'Raw' (slope 1) plus 'V'/'mV' derived from the channel's configured
-  // range (Voltage Config); when the range is Unknown, only 'Raw' is offered.
+  // ADS1115: only the channel's V/mV slope (from its Voltage Config range).
+  // The earlier 'Raw' option (slope = 1) was a meaningless b=sensitivity update,
+  // so it has been dropped — set the voltage range first if the dropdown is
+  // empty.
   const getHx711DenominatorOptions = useCallback(
     (): DenominatorOption[] =>
       HX711_DENOMINATOR_UNITS.map((u) => ({
@@ -1286,7 +1288,7 @@ function App() {
 
   const getAds1115DenominatorOptions = useCallback(
     (ch: number): DenominatorOption[] => {
-      const options: DenominatorOption[] = [{ value: 'raw', label: 'Raw', slopePerRaw: 1 }];
+      const options: DenominatorOption[] = [];
       const mode = voltageConfig[ch];
       if (mode) {
         const { value: slope, unit } = rawToDisplayValue(1, mode);
@@ -1828,8 +1830,8 @@ function App() {
         subtitle="Phy = a·Raw²+b·Raw+c"
         channelStart={8}
         channelCount={8}
-        referenceLabel="Reference (Raw or V)"
-        defaultDenomUnit="raw"
+        referenceLabel="Reference (V)"
+        defaultDenomUnit="volt"
         getDenominatorOptions={getAds1115DenominatorOptions}
         getAiRaw={getAiRawValue}
         onApply={applyAiCalibrationValues}

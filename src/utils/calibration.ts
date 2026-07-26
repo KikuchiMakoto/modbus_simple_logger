@@ -127,7 +127,8 @@ export const hx711SlopePerRaw = (unit: Hx711DenominatorUnit): number => {
 // Method 1 (spec): b = sensitivity × slopePerRaw, a = 0, c = 0. The sensitivity
 // carries units [physical]/[reference unit] but is just a number here — the
 // physical unit is irrelevant to the result. slopePerRaw comes from the caller
-// (HX711: fixed electrical-unit slope; ADS1115: 1 for Raw, V-per-raw for volts).
+// (HX711: fixed electrical-unit slope; ADS1115: V-per-raw derived from the
+// channel's Voltage Config range).
 export const specToCalibration = (sensitivity: number, slopePerRaw: number): AiCalibration | null => {
   if (!Number.isFinite(sensitivity) || !Number.isFinite(slopePerRaw)) return null;
   const b = sensitivity * slopePerRaw;

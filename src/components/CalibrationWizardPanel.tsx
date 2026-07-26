@@ -14,8 +14,8 @@ type SpecMode = 'pair' | 'sensitivity';
 type MeasureRow = { phy: string; raw: string };
 
 // A reference (denominator) unit for the spec method and its raw→unit slope.
-//   HX711:  fixed electrical units (μV/V, mV/V, με)
-//   ADS1115: 'Raw' (slope 1) and 'V'/'mV' (slope from the channel's range)
+//   HX711:   fixed electrical units (μV/V, mV/V, με)
+//   ADS1115: only the channel's V/mV slope (Voltage Config range must be set)
 export type DenominatorOption = { value: string; label: string; slopePerRaw: number };
 
 // Captured raw is kept to sub-count precision (averaging reduces noise) but
@@ -464,13 +464,22 @@ export function CalibrationWizardPanel({
                   value={selectedDenom?.value ?? ''}
                   onChange={(e) => patch({ denomUnit: e.target.value })}
                   className={inputClass}
+                  disabled={denomOptions.length === 0}
                 >
+                  {denomOptions.length === 0 && (
+                    <option value="">(no options)</option>
+                  )}
                   {denomOptions.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
                   ))}
                 </select>
+                {denomOptions.length === 0 && (
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    Set the voltage range in the main app's Voltage Config first, then come back.
+                  </p>
+                )}
               </div>
 
               {/* Spec input mode */}

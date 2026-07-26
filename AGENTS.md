@@ -226,7 +226,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`CalibrationWizardPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **キャリブレーションウィザードの2方式**（`CalibrationWizardPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) 共通コンポーネントを2インスタンスで使用。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
-  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は Raw（傾き1）と V/mV（`rawToDisplayValue(1, voltageConfig[ch])` から算出、レンジ Unknown 時は Raw のみ）。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出、レンジ Unknown 時は 0 件 → 「Voltage Config を先に設定」と案内）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。
 
 ## 変更stage前やcommit前のpackage.json更新のための絶対的なルール
