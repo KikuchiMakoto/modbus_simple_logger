@@ -25,6 +25,7 @@ import {
   RETRY_DELAY_MS,
   INPUT_READ_RETRY_WINDOW_MS,
   INPUT_READ_MAX_FAILURES_PER_WINDOW,
+  INPUT_READ_MAX_FAILURE_RATIO,
   OUTPUT_HOLDING_RETRY_WINDOW_MS,
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
@@ -1552,19 +1553,30 @@ function App() {
     const pruneAndCountAI = () =>
       pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
 
-    // Limit timeout to 75% of the poll interval so a slow/failed read never
-    // blocks longer than one cycle.  Floor at 100 ms, cap at 900 ms.
+    // 75% of the poll interval, floored at 100 ms. The floor now always wins —
+    // every poll rate is 100 ms or faster — so the "never blocks longer than one
+    // cycle" property the 75% was for no longer holds, and one timeout costs a
+    // poll slot (four of them at 25 ms). The floor stays because it is sized for
+    // the wire, not the loop: 16 i16 channels take 93 ms to transfer at the
+    // slowest offered 4800 baud, and a tighter deadline would fail reads that
+    // were on their way.
     const readTimeoutMs = Math.min(Math.max(Math.floor(pollIntervalRef.current * 0.75), 100), 900);
-    // Only retry when the poll interval is long enough that a second attempt
-    // fits within the cycle.  At ≤ 400 ms the retry would always overflow — and
-    // since the interval is now capped at MODBUS_POLL_INTERVAL_CAP_MS, that is
-    // every setting. A dropped frame costs one poll, not one recorded sample.
+    // Never true at the current poll rates, and kept deliberately rather than
+    // deleted: it is the rule, not an accident of the option list. A retry has
+    // to fit inside the cycle, and below 500 ms it cannot. Losing it costs
+    // little now — a dropped frame costs one poll rather than one recorded row,
+    // because the recording deadline just moves to the next successful poll.
     const canRetry = pollIntervalRef.current >= 500;
+    // Proportional to how often we poll — see INPUT_READ_MAX_FAILURE_RATIO.
+    const failureBudget = Math.max(
+      INPUT_READ_MAX_FAILURES_PER_WINDOW,
+      Math.round((INPUT_READ_RETRY_WINDOW_MS / pollIntervalRef.current) * INPUT_READ_MAX_FAILURE_RATIO),
+    );
 
     let aiSourceValues: number[] | null = null;
-    if (pruneAndCountAI() >= INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+    if (pruneAndCountAI() >= failureBudget) {
       firstError = new Error(
-        `AI read retry rate exceeded (${INPUT_READ_MAX_FAILURES_PER_WINDOW}/${Math.round(INPUT_READ_RETRY_WINDOW_MS / 1000)}s). Skipping AI read until failure rate decreases.`,
+        `AI read retry rate exceeded (${failureBudget}/${Math.round(INPUT_READ_RETRY_WINDOW_MS / 1000)}s). Skipping AI read until failure rate decreases.`,
       );
     } else {
       try {
@@ -1575,7 +1587,7 @@ function App() {
         inputReadFailureTimestampsRef.current.push(Date.now());
         const normalizedReadError =
           readError instanceof Error ? readError : new Error(String(readError));
-        if (canRetry && pruneAndCountAI() < INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+        if (canRetry && pruneAndCountAI() < failureBudget) {
           console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
@@ -1589,7 +1601,7 @@ function App() {
             );
           }
         } else if (!canRetry) {
-          console.warn('[App] AI read failed; skipping retry (polling interval too short)', normalizedReadError);
+          console.warn('[App] AI read failed; skipping retry (poll interval too short)', normalizedReadError);
           firstError = new Error(`Failed to read AI Input Registers: ${normalizedReadError.message}`);
         } else {
           firstError = new Error(
@@ -1733,16 +1745,21 @@ function App() {
       clearBackgroundTimer(pollTimer.current);
     }
     idealScheduleRef.current = 0;
-    // Restart the recording phase with the polling phase, so the first sample of
-    // a run (or of a resync after the window came back into view) is recorded
-    // immediately instead of on a deadline inherited from before the gap.
-    nextRecordAtRef.current = 0;
+    // Deliberately NOT re-phasing the recording deadline here. This runs on
+    // every visibilitychange, and a user who alt-tabs ten times during a 30 min
+    // save would otherwise get ten extra rows at arbitrary offsets. The deadline
+    // needs no help across a gap: it is an absolute time, so a poll returning
+    // after a freeze is simply past due and the catch-up clause in pollOnce
+    // re-phases it from there.
     pollTimer.current = setBackgroundTimeout(() => {
       void runPollingLoop();
     }, 0);
   }, [runPollingLoop]);
 
   const startPolling = useCallback(() => {
+    // Start of a run, unlike the resyncs scheduleImmediatePoll also serves: no
+    // earlier phase to preserve, so record the first sample straight away.
+    nextRecordAtRef.current = 0;
     scheduleImmediatePoll();
   }, [scheduleImmediatePoll]);
 
@@ -2200,11 +2217,6 @@ function App() {
         const startedAt = Date.now();
 
         pendingDataPoints.current = [];
-        // Record the first row at the save start rather than wherever the
-        // free-running deadline happened to be — at a 30 min save rate that is
-        // the difference between a file that starts now and one that starts
-        // half an hour from now.
-        nextRecordAtRef.current = 0;
 
         await dataStorage.clearAllData();
         dataBufferRef.current = [];
@@ -2214,6 +2226,18 @@ function App() {
         saveRawCounterRef.current = 0;
         setDisplayRevision((v) => v + 1);
 
+        // Re-phase the recording deadline so the file's first row lands at the
+        // save start rather than wherever the free-running deadline happened to
+        // be — at a 30 min save rate that is the difference between a file that
+        // starts now and one that starts half an hour from now.
+        //
+        // It has to be adjacent to the writer assignment, not up with the other
+        // resets: `await clearAllData()` above can take longer than a poll
+        // interval, and a poll landing in that gap would consume the re-phase
+        // (advancing the deadline by a full save interval) while
+        // enqueueSaveUpdate still had no writer to write to — reintroducing
+        // exactly the delay this line exists to prevent.
+        nextRecordAtRef.current = 0;
         tsvWriterRef.current = writer;
         // Background timer, for the same reason as the polling loop: a throttled
         // flush would leave captured rows sitting in the worker's buffer instead

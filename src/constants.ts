@@ -101,7 +101,22 @@ export const PRECISION_PROBE_CHANNELS = 2;
 
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;
+// Floor on the AI-read failure budget, and the share of the polls in one window
+// that may fail before reads are suspended. Whichever is larger wins.
+//
+// A flat count stopped working once the poll rate was decoupled from the save
+// rate. It was written when a slow setting meant a slow loop, so ten failures
+// took minutes to accumulate; at a fixed 10-40 Hz it is one second of a dead
+// device, after which every read is skipped until the failures age out of the
+// window — up to a minute of blackout, and at a 200 ms save rate that is 300
+// missing rows. The point of the limiter is to stop hammering a device that is
+// not answering, and "not answering" is a proportion of attempts, not a count.
+//
+// At 10% and a 100 ms poll rate this is 60 failures — six seconds of a fully
+// dead link before it backs off, while a link dropping a few percent of frames
+// never trips at all. That is the intended split.
 export const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
+export const INPUT_READ_MAX_FAILURE_RATIO = 0.1;
 export const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
 export const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 
