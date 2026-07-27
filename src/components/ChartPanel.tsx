@@ -49,7 +49,7 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 
 // Plot area height. The empty state matches it exactly, so the card does not
 // change size the moment the first sample arrives.
-const PLOT_HEIGHT = '245px';
+const PLOT_HEIGHT = '240px';
 
 // Force-release the WebGL context(s) behind a graph div.
 //
