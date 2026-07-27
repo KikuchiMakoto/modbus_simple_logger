@@ -90,8 +90,12 @@ export function SlideToConfirm({
         }`}
         style={{ width: `${knobX + knobPx}px` }}
       />
+      {/* Centred in the track MINUS the knob's parking spot, not in the whole
+          track: the knob sits at the left until it is dragged, and a label
+          centred across the full width starts underneath it. */}
       <span
-        className={`pointer-events-none absolute inset-0 flex items-center justify-center font-semibold ${labelClassName} ${
+        style={{ left: `${knobPx}px` }}
+        className={`pointer-events-none absolute inset-y-0 right-0 flex items-center justify-center px-1 font-semibold ${labelClassName} ${
           disabled
             ? 'text-slate-400 dark:text-slate-600'
             : armed
