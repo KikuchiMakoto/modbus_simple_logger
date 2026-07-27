@@ -95,7 +95,7 @@ export function SlideToConfirm({
           centred across the full width starts underneath it. */}
       <span
         style={{ left: `${knobPx}px` }}
-        className={`pointer-events-none absolute inset-y-0 right-0 flex items-center justify-center px-1 font-semibold ${labelClassName} ${
+        className={`pointer-events-none absolute inset-y-0 right-0 flex items-center justify-center whitespace-nowrap px-1 font-semibold ${labelClassName} ${
           disabled
             ? 'text-slate-400 dark:text-slate-600'
             : armed
