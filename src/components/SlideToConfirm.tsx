@@ -121,18 +121,17 @@ export function SlideToConfirm({
           : palette.track
       }`}
     >
-      {/* The trail the knob leaves, so it ends where the knob begins — NOT
-          knobX + knobPx. Sizing it to include the knob meant its edge and the
-          knob's edge had to land on the same pixel to stay invisible, and any
-          rounding (the UI scale zooms this whole subtree) or a frame's worth of
-          desync between the width and transform transitions showed up as a band
-          bleeding out of the circle. Ending at the knob's left edge cannot
-          overhang it at any width, and at rest it is zero-width. */}
+      {/* The trail the knob leaves. It ends at the knob's CENTRE, which is the
+          only x where a square edge can hide behind a circle: that is where the
+          circle spans the track's full height, so the fill's corners have
+          nothing to poke out of. Ending at the knob's right edge overhung it
+          under subpixel rounding; ending at its left edge left the two corners
+          showing where the circle had already curved away. */}
       <div
         className={`absolute inset-y-0 left-0 ${palette.fill} ${
           dragging ? '' : 'transition-[width] duration-200'
         }`}
-        style={{ width: `${knobX}px` }}
+        style={{ width: `${knobX + knobPx / 2}px` }}
       />
       {/* Centred in the track MINUS wherever the knob is, not in the whole
           track: it parks at the left and ends at the right, so the free space
