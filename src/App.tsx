@@ -2445,12 +2445,12 @@ function App() {
                       not reach. Same gesture as the Output Tester's zero. */}
                   {connected ? (
                     <SlideToConfirm
-                      label="Slide to disconnect"
+                      label="→ Disconnect"
                       armedLabel="Release"
                       knobLabel="⏻"
                       onConfirm={handleToggleConnection}
                       knobPx={30}
-                      className="h-[30px] w-[8.5rem]"
+                      className="h-[30px] w-[7rem]"
                       labelClassName="text-[0.7rem]"
                       aria-label="Slide to disconnect the device"
                     />
