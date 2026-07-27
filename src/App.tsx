@@ -8,6 +8,7 @@ import {
   DataPoint,
   SerialSettings,
   ModbusPrecision,
+  ModbusPrecisionSetting,
   VoltageMode,
   DEFAULT_VOLTAGE_CONFIG,
 } from './types';
@@ -18,6 +19,9 @@ import {
   AI_START_REGISTER,
   AI_FLOAT_START_REGISTER,
   AO_START_REGISTER,
+  PRECISION_PROBE_ATTEMPTS,
+  PRECISION_PROBE_CHANNELS,
+  PRECISION_PROBE_TIMEOUT_MS,
   RETRY_DELAY_MS,
   INPUT_READ_RETRY_WINDOW_MS,
   INPUT_READ_MAX_FAILURES_PER_WINDOW,
@@ -142,10 +146,16 @@ const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 4
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
 const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
-const PRECISION_OPTIONS: { label: string; value: ModbusPrecision }[] = [
+const PRECISION_OPTIONS: { label: string; value: ModbusPrecisionSetting }[] = [
+  { label: 'Auto', value: 'auto' },
   { label: 'Normal(i16t)', value: 'normal' },
   { label: 'Extended(f32t)', value: 'extended' },
 ];
+
+const PRECISION_LABEL: Record<ModbusPrecision, string> = {
+  normal: 'i16t',
+  extended: 'f32t',
+};
 const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
   dataBits: 8,
@@ -392,6 +402,46 @@ function CollapseButton({
   );
 }
 
+/**
+ * Ask the device whether it has the float32 register map, by reading the first
+ * PRECISION_PROBE_CHANNELS float channels at AI_FLOAT_START_REGISTER.
+ *
+ * Run once per connect, never during polling: the answer is a property of the
+ * firmware on the other end, so re-asking mid-run could only ever change the
+ * register map underneath a recording.
+ *
+ * Silence is read as "no f32 map" and repeated PRECISION_PROBE_ATTEMPTS times
+ * before it is believed. The asymmetry is deliberate — being wrong towards
+ * 'normal' lands on the mode this app used by default before Auto existed,
+ * while being wrong towards 'extended' would decode 16-bit registers as
+ * halves of floats and record numbers that look plausible and are nonsense.
+ *
+ * The values are required to be finite for the same reason: an unimplemented
+ * register block that answers with 0xFFFF padding decodes to NaN, which is a
+ * structurally valid float32 frame and would otherwise pass. A device that
+ * legitimately reports NaN on channel 0 or 1 will fall back to Normal, and can
+ * be set to Extended by hand.
+ */
+async function probeExtendedPrecision(client: WebSerialModbusClient): Promise<boolean> {
+  for (let attempt = 1; attempt <= PRECISION_PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      const values = await client.readInputRegistersAsFloat32Abcd(
+        AI_FLOAT_START_REGISTER,
+        PRECISION_PROBE_CHANNELS,
+        PRECISION_PROBE_TIMEOUT_MS,
+      );
+      if (values.length >= PRECISION_PROBE_CHANNELS && values.every((v) => Number.isFinite(v))) {
+        console.info('[App] precision probe: float block answered', { attempt, values });
+        return true;
+      }
+      console.warn('[App] precision probe: answer was not a usable float block', { attempt, values });
+    } catch (err) {
+      console.info(`[App] precision probe: no float block (attempt ${attempt}/${PRECISION_PROBE_ATTEMPTS})`, err);
+    }
+  }
+  return false;
+}
+
 // Module scope, not a ref: StrictMode mounts the app twice in development, and
 // the recovery prompt is a blocking dialog the user would have to dismiss twice
 // for every leftover run.
@@ -408,7 +458,15 @@ function App() {
 
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
-  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
+  // What the user picked, and what the link ended up using. Auto is the
+  // default: the probe can only improve on a fixed 'normal', which is what an
+  // f32 device got here before if nobody remembered to change this.
+  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecisionSetting>('auto');
+  const [resolvedPrecision, setResolvedPrecision] = useState<ModbusPrecision>('normal');
+  // Read by the polling loop, which keeps a closure alive across renders. Set
+  // in handleConnect before polling is allowed to start, so no cycle can run
+  // against the previous connection's answer.
+  const resolvedPrecisionRef = useRef<ModbusPrecision>('normal');
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS.find(p => p.valueMs === 200)!);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
@@ -615,6 +673,15 @@ function App() {
   useEffect(() => {
     pollingRateRef.current = pollingRate.valueMs;
   }, [pollingRate.valueMs]);
+
+  // A manual choice is its own answer — no probe involved — so it takes effect
+  // as soon as it is picked rather than at the next connect. (The control is
+  // disabled while connected, so this can only run between sessions.)
+  useEffect(() => {
+    if (modbusPrecision === 'auto') return;
+    resolvedPrecisionRef.current = modbusPrecision;
+    setResolvedPrecision(modbusPrecision);
+  }, [modbusPrecision]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -1379,7 +1446,7 @@ function App() {
       );
     } else {
       try {
-        aiSourceValues = modbusPrecision === 'extended'
+        aiSourceValues = resolvedPrecisionRef.current === 'extended'
           ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
           : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
       } catch (readError) {
@@ -1390,7 +1457,7 @@ function App() {
           console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
-            aiSourceValues = modbusPrecision === 'extended'
+            aiSourceValues = resolvedPrecisionRef.current === 'extended'
               ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
               : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
           } catch (retryReadError) {
@@ -1447,7 +1514,6 @@ function App() {
 
     setStatus(firstError ? firstError.message : 'Polling');
   }, [
-    modbusPrecision,
     enqueueDisplayUpdate,
     enqueueSaveUpdate,
     pruneFailuresInWindow,
@@ -1610,6 +1676,8 @@ function App() {
         slaveId,
         serialSettings,
         serial,
+        // Auto opens on the Normal timing (the wider inter-frame gap) and is
+        // corrected by setPrecisionMode() once the probe has answered.
         modbusPrecision === 'extended',
         shouldUsePolyfill,
       );
@@ -1628,6 +1696,23 @@ function App() {
         console.error('[App] Sync AO holding registers failed', err);
         throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
       }
+
+      // Resolve Auto here, after the AO sync has already proved the link works
+      // end to end. Probing first would make "device is not talking at all"
+      // and "device has no float registers" the same silence, and the app
+      // would settle on a register map on the strength of a dead cable.
+      //
+      // Both the ref and the state are set before setAcquiring(true) below, so
+      // the polling loop cannot start against a stale answer.
+      const resolved: ModbusPrecision =
+        modbusPrecision === 'auto'
+          ? (await probeExtendedPrecision(client)) ? 'extended' : 'normal'
+          : modbusPrecision;
+      console.info('[App] precision resolved', { setting: modbusPrecision, resolved });
+      client.setPrecisionMode(resolved === 'extended');
+      resolvedPrecisionRef.current = resolved;
+      setResolvedPrecision(resolved);
+
       clientRef.current = client;
       pendingClient = null;
       outputHoldingFailureTimestampsRef.current = [];
@@ -1636,7 +1721,12 @@ function App() {
       setConnected(true);
       acquiringRef.current = true;
       setAcquiring(true);
-      setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
+      // Always names the mode, including when it was chosen by the probe: an
+      // Auto that got it wrong has to be visible somewhere the user looks.
+      setStatus(
+        `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL[resolved]}` +
+          (modbusPrecision === 'auto' ? ' (auto)' : ''),
+      );
       await requestWakeLock();
       keepLatestCountRef.current = 0;
       console.info('[App] handleConnect complete');
@@ -1929,7 +2019,7 @@ function App() {
           // polling schedule has drifted; resync from now.
           idealScheduleRef.current = 0;
         },
-        modbusPrecision === 'extended',
+        resolvedPrecision === 'extended',
       );
       try {
         const startedAt = Date.now();
@@ -2014,6 +2104,11 @@ function App() {
     setStatus('Stopped saving');
   };
 
+  // Auto has no answer until it has connected once, and saying "i16t" before
+  // the probe has run would be a claim about a device nobody has asked yet.
+  const precisionLabel =
+    modbusPrecision === 'auto' && !connected ? 'auto' : PRECISION_LABEL[resolvedPrecision];
+
   // The page background and its full-height box live on <body> (index.css)
   // rather than on this element: everything below is inside #root, which the UI
   // scale zooms, and a min-h-screen there is measured in zoomed units — a
@@ -2043,7 +2138,7 @@ function App() {
               <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
                 {isViewerMode
                   ? remoteSerialLabel || 'Waiting for the host window…'
-                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`}
+                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)} - ${precisionLabel}`}
               </p>
               <div
                 role="status"
@@ -2228,7 +2323,7 @@ function App() {
                   <div className="flex justify-between items-center leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
+                      {resolvedPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
@@ -2421,6 +2516,7 @@ function App() {
         onSerialSettingsChange={setSerialSettings}
         modbusPrecision={modbusPrecision}
         onModbusPrecisionChange={setModbusPrecision}
+        resolvedPrecision={resolvedPrecision}
         baudOptions={BAUD_OPTIONS}
         dataBitsOptions={DATA_BITS_OPTIONS}
         stopBitsOptions={STOP_BITS_OPTIONS}

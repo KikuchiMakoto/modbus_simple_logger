@@ -1,4 +1,4 @@
-import { ModbusPrecision, PollingRateOption, SerialSettings } from '../types';
+import { ModbusPrecision, ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
 type ModbusConfigPanelProps = {
@@ -8,8 +8,10 @@ type ModbusConfigPanelProps = {
   onSlaveIdChange: (value: number) => void;
   serialSettings: SerialSettings;
   onSerialSettingsChange: (settings: SerialSettings) => void;
-  modbusPrecision: ModbusPrecision;
-  onModbusPrecisionChange: (value: ModbusPrecision) => void;
+  modbusPrecision: ModbusPrecisionSetting;
+  onModbusPrecisionChange: (value: ModbusPrecisionSetting) => void;
+  /** What Auto settled on. Meaningless until the first connect. */
+  resolvedPrecision: ModbusPrecision;
   pollingRate: PollingRateOption;
   onPollingRateChange: (value: PollingRateOption) => void;
   pollingOptions: PollingRateOption[];
@@ -17,7 +19,7 @@ type ModbusConfigPanelProps = {
   dataBitsOptions: SerialSettings['dataBits'][];
   stopBitsOptions: SerialSettings['stopBits'][];
   parityOptions: SerialSettings['parity'][];
-  precisionOptions: { label: string; value: ModbusPrecision }[];
+  precisionOptions: { label: string; value: ModbusPrecisionSetting }[];
   connected: boolean;
 };
 
@@ -30,6 +32,7 @@ export function ModbusConfigPanel({
   onSerialSettingsChange,
   modbusPrecision,
   onModbusPrecisionChange,
+  resolvedPrecision,
   pollingRate,
   onPollingRateChange,
   pollingOptions,
@@ -149,7 +152,7 @@ export function ModbusConfigPanel({
           <label className="block text-xs text-slate-600 dark:text-slate-400">Precision</label>
           <select
             value={modbusPrecision}
-            onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecision)}
+            onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecisionSetting)}
             className="w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             disabled={connected}
           >
@@ -159,6 +162,13 @@ export function ModbusConfigPanel({
               </option>
             ))}
           </select>
+          {modbusPrecision === 'auto' && (
+            <p className="mt-0.5 text-[0.7rem] leading-tight text-slate-500 dark:text-slate-400">
+              {connected
+                ? `Detected: ${resolvedPrecision === 'extended' ? 'Extended(f32t)' : 'Normal(i16t)'}.`
+                : 'Asks the device for the float registers once, on connect, and falls back to Normal(i16t) if there is no answer.'}
+            </p>
+          )}
         </div>
 
         <div>

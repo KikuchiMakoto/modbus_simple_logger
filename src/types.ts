@@ -43,7 +43,17 @@ export type SerialSettings = {
   parity: SerialParity;
 };
 
+/** The register map actually in use on the wire. Always one of the two. */
 export type ModbusPrecision = 'normal' | 'extended';
+
+/**
+ * What the user picked in Connection Config. 'auto' is a preference, not a
+ * mode: it is resolved to a ModbusPrecision once, at connect, and everything
+ * downstream (polling, TSV column formatting, the readout) only ever sees the
+ * resolved value. Keeping the two types apart is what stops 'auto' from
+ * leaking into code that must know which map it is reading.
+ */
+export type ModbusPrecisionSetting = ModbusPrecision | 'auto';
 
 export type VoltageMode =
   | 'hx711_mv_per_v'

@@ -103,6 +103,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - AO書込みを非ブロック化する場合も、`transfer()` の `AsyncMutex` により AI/AO 送信間の最低間隔が自動保証される
 - AO書込みは `doAoWriteAsync` で独立実行され、`aoWriteInProgressRef` で二重投入を防止する
 
+### 精度モードの自動判定（`App.tsx` の `probeExtendedPrecision`）
+- Precision の選択肢は **Auto（既定）/ Normal(i16t) / Extended(f32t)**。型を2つに分けてあり、`ModbusPrecisionSetting`（ユーザーの選択・`'auto'` を含む）と `ModbusPrecision`（実際に線上で使う地図・2値のみ）は**別物**。`'auto'` を下流（ポーリング・TSV 列整形・読み値表示）へ流してはならない
+- 判定は **接続時に1回だけ**。`AI_FLOAT_START_REGISTER`(5000) の先頭2ch を `PRECISION_PROBE_TIMEOUT_MS`(100ms) で読み、返れば Extended、返らなければ Normal。**実行中に再判定しないこと** — 相手のファームウェアの性質であり、記録中にレジスタ地図が変わる余地を作るだけ
+- **プローブは AO Holding Registers 同期の後に置く**。先に置くと「デバイスが全く喋っていない」と「float レジスタが無い」が同じ沈黙になり、断線を根拠にレジスタ地図を決めてしまう
+- **`PRECISION_PROBE_ATTEMPTS`(3回) 失敗して初めて Normal に落とす**。float レジスタを持たないデバイスは Modbus 例外フレーム（`transfer()` が待つ長さより短い）を返すため、これもタイムアウトとして現れる。つまり「例外」「無応答」「1フレーム落ち」が外から区別できない。**間違うなら Normal 側へ**倒すこと — Auto 以前の既定がまさに Normal であり、逆に誤って Extended にすると i16 レジスタを float の半分として解釈し、**もっともらしい嘘の値を記録する**
+- 応答値は**有限であることまで要求する**。未実装レジスタが 0xFFFF 詰めで応答すると NaN にデコードされるが、フレームとしては妥当なので構造チェックだけでは通ってしまう
+- 決まったモードは**ヘッダーと接続ステータスに必ず出す**（`i16t` / `f32t`、Auto 時は `(auto)` 付き）。自動判定が外した場合に、ユーザーが気づける場所が無いという状態を作らないこと
+
 ### ポーリング（`App.tsx`）
 - 50ms〜5分の定期ポーリング（`App.tsx` の `POLLING_OPTIONS`、既定 200ms。`setBackgroundTimeout` 再帰スケジュール）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行
