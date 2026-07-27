@@ -63,6 +63,8 @@ src/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
+    ├── opfsRecoveryShared.ts        # OPFS ミラーの命名規約（Worker と主スレッドで共有）
+    ├── opfsRecovery.ts              # 起動時の残存ミラー検出・ダウンロード・削除（主スレッド側）
     ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
@@ -217,6 +219,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
   - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は Normal（i16）では `toString()` の整数、Extended（f32）では init の `aiRawAsFloat` により浮動小数フォーマッタを通す
   - `Float32Array` / `number[]` の両方を受け付ける
+- **OPFS クラッシュリカバリ**（`utils/opfsRecoveryShared.ts` + `opfsRecovery.ts` + `tsvWriterWorker.ts`）: ピッカーで選んだファイルは `FileSystemWritableFileStream` がスワップファイルへ溜め、`close()` で初めて実体へ swing する。つまり **Stop Save まで対象ファイルは 0 バイト**で、途中でクラッシュすると全損する。そこで全行を OPFS へも同期追記する（`createSyncAccessHandle()` は OPFS 限定・Worker 限定・スワップ無し・追記可能）
+  - **ダーティビットは「ミラーファイルが存在すること」そのもの**。別フラグは持たない — クラッシュとは2つの書込みが食い違いうる瞬間そのものであり、この機能が絶対に許容できないのは「別の run の名前や時刻を持つ復旧ファイル」だから。メタデータ（元ファイル名・開始時刻）も**ミラー自身のファイル名にエンコードする**（サイドカーや localStorage にしない）。正常な Stop Save が消すので、起動時に残っているものは定義上「終わらなかった run」
+  - ミラーは**ストリームとは別のバッファ・別のタイマー**（`TSV_MIRROR_FLUSH_INTERVAL_MS` = 1s / `TSV_MIRROR_FLUSH_MAX_ROWS` = 100行）。ストリーム側の 60s に相乗りすると**毎 run の最初の1分間ミラーが空**になり、クラッシュリカバリが最も評価される窓がまさに穴になる
+  - ヘッダーは最初の1行が来るまで保留する（`mirrorPendingHeader`）。0行の run は 0 バイトのまま残り、起動時に無言で掃除される
+  - **ミラーの失敗は絶対に致命傷にしてはならない**。worker → main の `'error'` は init ハンドシェイクを reject して worker を terminate するため、ミラー関連は必ず **`'warning'`** で送ること。`'error'` で送っていた頃は、OPFS が使えない環境で**保存そのものが開始できなかった**（守るはずのデータを守るために失わせていた）
+  - **復旧は起動時の `confirm()` → ダウンロード**。`showSaveFilePicker()` は使えない（起動時に transient user activation が無く、confirm の解除でも付与されない）
+  - **1回の起動で提示するのは1件だけ**。activation の無い `<a download>.click()` は2件目から Chromium の「複数ファイルの自動ダウンロード」ブロックに掛かるため、ループで回すと2件目以降が黙って落ちたまま「ダウンロードしました」と表示して削除を促すことになる。残りは次回起動で提示する
+  - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
 - **設定永続化**: **localStorage** にテーマ・UI 拡大率・チャート軸・キャリブレーションを JSON 保存
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため

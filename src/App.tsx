@@ -562,31 +562,51 @@ function App() {
       requestPersistentStorage().catch(() => {});
 
       const keepNote = 'Cancel keeps it and offers it again next time.';
-      for (const found of await listRecoverableRuns()) {
-        const started = new Date(found.startedAt).toLocaleString();
-        const offer =
-          `An unsaved recording was found.\n\n` +
-          `File: ${found.originalName}\n` +
-          `Started: ${started}\n` +
-          `Size: ${formatRunSize(found.size)}\n\n` +
-          `OK downloads it now. ${keepNote}`;
-        if (!window.confirm(offer)) continue;
+      const runs = await listRecoverableRuns();
+      if (runs.length === 0) return;
 
-        try {
-          await downloadRecoveredRun(found);
-        } catch (err) {
-          window.alert(
-            `Could not recover ${found.originalName}.\n\n${(err as Error).message}\n\n` +
-              `The copy has been kept.`,
-          );
-          continue;
-        }
+      // One run per startup, not a loop over all of them. Each download here is
+      // an <a download>.click() with no transient user activation — dismissing a
+      // confirm() does not grant one — and Chromium blocks the second and later
+      // such download from a page. The loop would then tell the user that files
+      // 2..n "were sent to your downloads" and offer to delete copies that were
+      // never written anywhere.
+      const [found] = runs;
+      const alsoWaiting =
+        runs.length > 1
+          ? `\n\n${runs.length - 1} more unsaved recording(s) will be offered the next time the app starts.`
+          : '';
 
-        const cleanup =
-          `${found.originalName} was sent to your downloads.\n\n` +
-          `OK deletes the recovery copy. ${keepNote}`;
-        if (window.confirm(cleanup)) await discardRecoveredRun(found);
+      const started = new Date(found.startedAt).toLocaleString();
+      const offer =
+        `An unsaved recording was found.\n\n` +
+        `File: ${found.originalName}\n` +
+        `Started: ${started}\n` +
+        `Size: ${formatRunSize(found.size)}\n\n` +
+        `OK downloads it now. ${keepNote}${alsoWaiting}`;
+      if (!window.confirm(offer)) return;
+
+      try {
+        await downloadRecoveredRun(found);
+      } catch (err) {
+        window.alert(
+          `Could not recover ${found.originalName}.\n\n${(err as Error).message}\n\n` +
+            `The copy has been kept.`,
+        );
+        return;
       }
+
+      // Nothing here can observe when the download finishes — an <a download>
+      // fires no completion event, and the copy is still streaming out of OPFS
+      // when click() returns. So the prompt asks the user to check rather than
+      // announcing success: deleting the mirror while the browser is still
+      // reading it truncates the very file being rescued, and a run this feature
+      // exists for can be hundreds of megabytes.
+      const cleanup =
+        `${found.originalName} was sent to your browser's downloads.\n\n` +
+        `Once the download has finished and the file opens, press OK to delete the recovery copy.\n\n` +
+        `${keepNote}`;
+      if (window.confirm(cleanup)) await discardRecoveredRun(found);
     };
 
     run().catch((err) => console.warn('TSV recovery check failed:', err));
@@ -1891,7 +1911,15 @@ function App() {
         3,
         PARAM_CHANNELS,
         TSV_FLUSH_MAX_ROWS,
-        (message) => {
+        (message, severity) => {
+          // A warning means the TSV itself is being written correctly and only
+          // the crash-recovery mirror is missing. Prefixing it with "TSV write
+          // error" would have the user stop a healthy run to investigate.
+          if (severity === 'warning') {
+            console.warn('TSV worker warning:', message);
+            setStatus(message);
+            return;
+          }
           console.error('TSV worker error:', message);
           setStatus(`TSV write error: ${message}`);
         },

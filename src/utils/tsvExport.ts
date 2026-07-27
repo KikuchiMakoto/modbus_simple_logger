@@ -27,6 +27,15 @@ export { formatTimestamp, createTsvHeader, formatTsvRow } from './tsvFormat';
 const CLOSE_TIMEOUT_MS = 10_000;
 
 /**
+ * How a worker message should be presented. 'error' means the save is damaged
+ * or stopped; 'warning' means the save is fine and something adjacent to it
+ * (currently only the crash-recovery mirror) is not.
+ */
+export type TsvNoticeSeverity = 'error' | 'warning';
+
+export type TsvNoticeHandler = (message: string, severity: TsvNoticeSeverity) => void;
+
+/**
  * Streaming TSV sink. Backed by a Web Worker; every method forwards to it.
  * `writeRow` and `flush` are fire-and-forget (failures surface via the
  * `onError` callback passed to `createTsvWriter`), while `close` resolves once
@@ -49,26 +58,26 @@ export interface TsvSink {
 class TsvWorkerWriter implements TsvSink {
   private worker: Worker;
   private fileName: string;
-  private onError: (message: string) => void;
+  private onError: TsvNoticeHandler;
   private closePromise: Promise<void> | null = null;
   private closeResolve: (() => void) | null = null;
   private closeTimeout: number | undefined;
 
-  constructor(worker: Worker, fileName: string, onError: (message: string) => void) {
+  constructor(worker: Worker, fileName: string, onError: TsvNoticeHandler) {
     this.worker = worker;
     this.fileName = fileName;
     this.onError = onError;
     worker.addEventListener('message', (event: MessageEvent<TsvWorkerResponse>) => {
       const msg = event.data;
-      if (msg.type === 'error') {
-        onError(msg.message);
+      if (msg.type === 'error' || msg.type === 'warning') {
+        onError(msg.message, msg.type);
       } else if (msg.type === 'closed') {
         window.clearTimeout(this.closeTimeout);
         this.closeResolve?.();
         this.worker.terminate();
       }
     });
-    worker.addEventListener('error', (event) => onError(event.message || 'TSV worker error'));
+    worker.addEventListener('error', (event) => onError(event.message || 'TSV worker error', 'error'));
   }
 
   getFileName(): string {
@@ -109,7 +118,7 @@ class TsvWorkerWriter implements TsvSink {
         // Never let the caller's await hang: if the worker cannot reply
         // 'closed' (hard crash), force-terminate and resolve anyway.
         this.closeTimeout = window.setTimeout(() => {
-          this.onError('TSV close timed out; the file may be missing its final rows.');
+          this.onError('TSV close timed out; the file may be missing its final rows.', 'error');
           this.worker.terminate();
           resolve();
         }, CLOSE_TIMEOUT_MS);
@@ -128,7 +137,9 @@ class TsvWorkerWriter implements TsvSink {
  * @param physicalPrecision - Decimal places for physical values (default: 3)
  * @param paramChannels - Number of Parameter channels (default: 0)
  * @param flushMaxRows - Buffered-row count that triggers a flush (0 disables; default: 0)
- * @param onError - Called with a message when a worker write/flush/close fails
+ * @param onError - Called when the worker reports something the user should
+ *   see: severity 'error' for a failed write/flush/close, 'warning' for a
+ *   problem that leaves the save itself intact (the crash-recovery mirror)
  * @param onPickerSettled - Called as soon as the file picker closes (whether it
  *   returned a handle or the user cancelled), before the worker opens the file.
  *   On Android the picker is a separate system activity that backgrounds — and
@@ -147,7 +158,7 @@ export async function createTsvWriter(
   physicalPrecision: number = 3,
   paramChannels: number = 0,
   flushMaxRows: number = 0,
-  onError: (message: string) => void = () => {},
+  onError: TsvNoticeHandler = () => {},
   onPickerSettled: () => void = () => {},
   aiRawAsFloat: boolean = false,
 ): Promise<TsvSink> {
@@ -202,6 +213,12 @@ export async function createTsvWriter(
       if (event.data.type === 'ready') {
         cleanup();
         resolve();
+      } else if (event.data.type === 'warning') {
+        // Reported, not fatal — this is how the crash-recovery mirror says it
+        // could not open. The picked file is already open and its header
+        // written; failing the save here would throw away a working save
+        // because its backup is missing.
+        onError(event.data.message, 'warning');
       } else if (event.data.type === 'error') {
         cleanup();
         worker.terminate();
