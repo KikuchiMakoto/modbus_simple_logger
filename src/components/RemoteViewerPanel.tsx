@@ -13,13 +13,13 @@ type RemoteViewerPanelProps = {
 const MODES: { key: ViewerMode; label: string; blurb: string }[] = [
   {
     key: 'lan',
-    label: 'This network',
-    blurb: 'Direct, no internet needed. Only PCs on a 192.168.*.* address can reach it.',
+    label: 'Local Network',
+    blurb: 'Direct. No internet. Anything that can route to this PC.',
   },
   {
     key: 'tunnel',
-    label: 'Internet link',
-    blurb: 'An HTTPS link anyone can open, including a phone on mobile data. Needs internet.',
+    label: 'SmartPhone Link',
+    blurb: 'An HTTPS link. Opens on mobile data. Needs internet.',
   },
 ];
 
@@ -99,6 +99,12 @@ export function RemoteViewerPanel({ open, onClose, status, onEnabledChange }: Re
             <h4 className="mb-2 font-semibold text-emerald-600 dark:text-emerald-400">
               Scan to open
             </h4>
+            {urls.length > 1 && (
+              <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+                One per network adapter on this PC. Use the one the viewer shares a network with —
+                the others simply will not load for them.
+              </p>
+            )}
             <div className="space-y-4">
               {urls.map((url) => (
                 <div key={url} className="flex flex-col items-center gap-2">
@@ -119,35 +125,46 @@ export function RemoteViewerPanel({ open, onClose, status, onEnabledChange }: Re
 
         {running && urls.length === 0 && (
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            No reachable network address was found. This PC may only be on a network outside the
-            allowed range.
+            No network address was found. This PC does not appear to be on any network right now.
           </p>
         )}
 
         <div className="text-xs text-slate-500 dark:text-slate-400">
           <h4 className="mb-1 font-semibold text-slate-600 dark:text-slate-300">What viewers get</h4>
           <ul className="list-disc space-y-1 pl-4">
+            <li>No link, no page. Not even the login — the first request must carry the token.</li>
             <li>
-              Nothing at all without the link — not even the page. The first request has to carry
-              the token; after that a cookie stands in for it.
+              One-way feed. No serial port, no channel back. The hardware is out of reach by
+              construction, not by hidden buttons.
+            </li>
+            <li>Recent samples only. The full record is the TSV file on this PC.</li>
+            <li>The link is the key. Hand it out like one.</li>
+          </ul>
+        </div>
+
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+          <h4 className="mb-1 font-semibold">Before you turn this on</h4>
+          <ul className="list-disc space-y-1 pl-4">
+            <li>
+              <span className="font-semibold">Do not use SmartPhone Link where outbound tunnels
+              are not permitted.</span>{' '}
+              It is a Cloudflare Quick Tunnel — an outbound hole punched through your NAT and
+              firewall. On a university or corporate network that is a policy question, and the
+              answer is often no. Ask first.
             </li>
             <li>
-              The feed is one-way. A viewer has no serial port and no channel back to this window,
-              so it cannot drive the hardware — that is a property of the connection, not of the
-              buttons its page happens to show.
+              <span className="font-semibold">Local Network is plain HTTP and is not always local.</span>{' '}
+              On a campus network with global addresses, "this PC's network" can mean the internet.
             </li>
             <li>
-              Viewers see the most recent samples on the chart, not the whole capture. The complete
-              record is the TSV file this PC is writing.
+              <span className="font-semibold">Traffic hits the measurement.</span> Every request is
+              served by this process. A flood of them — deliberate or a stray scanner — competes
+              with the acquisition loop and can disturb the timing of the run.
             </li>
             <li>
-              <span className="font-semibold">This network</span> is plain HTTP and reaches no
-              further than the LAN. <span className="font-semibold">Internet link</span> is HTTPS
-              but the address lives on the public internet, so treat the link itself as the secret.
-            </li>
-            <li>
-              The internet link is a Cloudflare Quick Tunnel: free, no account, and with no uptime
-              guarantee. For a measurement someone is relying on, prefer this network.
+              <span className="font-semibold">No uptime guarantee on SmartPhone Link.</span> Quick
+              Tunnels are free and unaccounted. For a measurement someone is relying on, prefer
+              Local Network.
             </li>
           </ul>
         </div>

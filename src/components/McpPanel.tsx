@@ -45,7 +45,7 @@ export function McpPanel({ open, onClose, bridge, writeEnabled, onWriteEnabledCh
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="MCP Access"
+      title="MCP Server"
       subtitle="Desktop app only"
       defaultWidth={440}
       defaultHeight={560}

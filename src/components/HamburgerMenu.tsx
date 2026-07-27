@@ -30,7 +30,7 @@ const MENU_ITEMS = [
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
   { key: 'scriptRunner', label: 'PyScriptRunner', icon: '📜', wip: false },
-  { key: 'mcp', label: 'MCP Access', icon: '🤖', wip: false },
+  { key: 'mcp', label: 'MCP Server', icon: '🤖', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },

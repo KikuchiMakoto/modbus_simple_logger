@@ -50,22 +50,27 @@ export const VIEWER_TOKEN = mintToken();
 // Who may reach the viewer at all, checked before the token and before a single
 // asset is served.
 //
-// In LAN mode the server binds every interface, which is what makes it reachable
-// from the next desk; this allowlist is what keeps "the next desk" from meaning
-// "anything that can route a packet here". A home/office LAN is the intended
-// scope, so it is 192.168.0.0/16 plus loopback (the host's own browser, for
-// previewing the viewer page). Widening it is a one-line change — 10.0.0.0/8 and
-// 172.16.0.0/12 are the obvious candidates for a larger site network.
+// LAN mode accepts any IPv4 peer, because there is no address range that
+// reliably means "the local network". A campus or lab network hands out globally
+// routable addresses carved into small subnets (157.82.159.64/26 and the like),
+// and an overlay such as Tailscale presents its interface as a /32 in CGNAT
+// space — deriving an allowlist from this host's own interfaces would exclude
+// every Tailscale peer and every neighbouring subnet, which reads to the user as
+// a firewall fault rather than a policy decision. A range check that is wrong on
+// the networks this app is actually used on is worse than none: it silently
+// breaks the feature while implying a protection it never provided.
+//
+// The token is the boundary in this mode, as it already is in tunnel mode. What
+// LAN mode still gives you over a tunnel is that the address is only routable
+// from wherever this host is routable, and that no third party carries the
+// traffic.
 //
 // In tunnel mode nothing listens on the LAN at all: cloudflared terminates the
 // connection locally and arrives here as 127.0.0.1, so loopback alone is the
 // correct — and tightest — allowlist. The access boundary there is the token,
 // because the tunnel's own URL is public by design.
 const ALLOWED_CIDRS: Record<ViewerMode, [string, number][]> = {
-  lan: [
-    ['192.168.0.0', 16],
-    ['127.0.0.0', 8],
-  ],
+  lan: [['0.0.0.0', 0]],
   tunnel: [['127.0.0.0', 8]],
 };
 
@@ -106,13 +111,16 @@ export const isAllowedRemote = (address: string | undefined, mode: ViewerMode): 
 };
 
 // Every address another machine could plausibly reach this host on. Shown to the
-// user rather than guessed at: a PC on both Wi-Fi and Ethernet has more than
-// one, and only the person looking at it knows which network the viewer is on.
+// user rather than guessed at: a PC on Wi-Fi, Ethernet and Tailscale at once has
+// several, and only the person looking at it knows which network the viewer is
+// on. 169.254.0.0/16 is the one exclusion — an APIPA address means that adapter
+// never got a lease, so it is unreachable by construction rather than by policy.
 const localAddresses = (): string[] => {
   const found: string[] = [];
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses ?? []) {
       if (address.family !== 'IPv4' || address.internal) continue;
+      if (address.address.startsWith('169.254.')) continue;
       found.push(address.address);
     }
   }
@@ -122,13 +130,12 @@ const localAddresses = (): string[] => {
 /** The one URL a viewer opens, with the token that unlocks the first request. */
 export const viewerUrl = (origin: string): string => `${origin}${BASE_PATH}?k=${VIEWER_TOKEN}`;
 
-// Filtered by the same allowlist that guards the server: an address the viewer
-// would be refused from is worse than no address at all, because it sends the
-// user chasing a firewall problem that is really a policy one.
+// One URL per interface, unfiltered: LAN mode refuses nothing by address, so
+// every address listed here is one the server would actually answer on. Which of
+// them a given viewer can route to is a question about the network, not about
+// this app, so all of them are offered rather than one being guessed at.
 export const lanViewerUrls = (port: number): string[] =>
-  localAddresses()
-    .filter((host) => isAllowedRemote(host, 'lan'))
-    .map((host) => viewerUrl(`http://${host}:${port}`));
+  localAddresses().map((host) => viewerUrl(`http://${host}:${port}`));
 
 export type ViewerServerHandle = { stop: () => void; port: number };
 

@@ -147,7 +147,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
       const api = apiRef.current;
       const requireWrite = () => {
         if (!writeEnabledRef.current) {
-          throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
+          throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Server).');
         }
         // A running script owns the outputs; letting an external write interleave
         // with a control loop would fight it. Mirrors the in-app rule that
@@ -203,7 +203,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
           // Not gated by scriptRunning here: runScript itself refuses to replace
           // a running script, and its message names the conflict precisely.
           if (!writeEnabledRef.current) {
-            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
+            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Server).');
           }
           if (typeof params.code !== 'string' || params.code.trim() === '') {
             throw new Error('code must be a non-empty string.');
@@ -220,7 +220,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
         }
         case 'stop_script': {
           if (!writeEnabledRef.current) {
-            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
+            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Server).');
           }
           return { stopped: true, ...describeRun(api, api.stopScript(), RUN_RESULT_LOG_LINES) };
         }
