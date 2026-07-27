@@ -17,6 +17,7 @@ import {
   RECOVERY_DIR,
   buildRecoveryName,
   parseRecoveryName,
+  recoveredDownloadName,
 } from './opfsRecoveryShared';
 
 /** A finished-but-unsaved run found in OPFS. */
@@ -149,7 +150,7 @@ export async function downloadRecoveredRun(run: RecoverableRun): Promise<void> {
   try {
     const link = document.createElement('a');
     link.href = url;
-    link.download = run.originalName;
+    link.download = recoveredDownloadName(run.originalName);
     link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
@@ -161,7 +162,12 @@ export async function downloadRecoveredRun(run: RecoverableRun): Promise<void> {
   }
 }
 
-/** Delete a mirror. Only ever called after the user confirms the download. */
+/**
+ * Delete a mirror. Called when the user confirms the download arrived, and when
+ * they decline the offer outright — declining is an answer about the data, and
+ * re-offering the same dead run at every startup until they give in is not
+ * keeping it safe, it is nagging.
+ */
 export async function discardRecoveredRun(run: RecoverableRun): Promise<void> {
   const dir = await getRecoveryDir(false);
   if (!dir) return;
@@ -175,4 +181,4 @@ export function formatRunSize(bytes: number): string {
 }
 
 /** Re-exported so the worker and the main thread agree on one implementation. */
-export { RECOVERY_DIR, buildRecoveryName, parseRecoveryName };
+export { RECOVERY_DIR, buildRecoveryName, parseRecoveryName, recoveredDownloadName };

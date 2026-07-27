@@ -10,10 +10,10 @@ export const AO_START_REGISTER = 0;
 // on-screen chart).
 export const MAX_POINTS_IN_MEMORY = 256;
 
-// On-screen chart display budget. The chart never renders more than this many
-// points: while not saving it shows a ~NON_SAVING_CHART_WINDOW_MS sliding time
-// window; while saving it downsamples the whole capture (save-start → now) to
-// this budget. The full data is always written to TSV regardless.
+// On-screen chart budget while SAVING: the whole capture (save-start → now) is
+// downsampled to this many points. The not-saving preview has its own, smaller
+// budget (NON_SAVING_CHART_PREVIEW_POINTS). The full data is always written to
+// TSV regardless.
 // Raised 1024 → 2048 in v3.1, funded by disabling the scattergl hover pick-index
 // (`hoverinfo: 'skip'`, see ChartPanel.tsx): that index is rebuilt per update and
 // its cost scales with this constant, so removing it buys headroom at the same
@@ -35,22 +35,32 @@ export const CHART_MAX_POINTS = 2048;
 // The TSV is NOT on this budget: what the file records is the "Save every"
 // setting, which can be faster than this.
 export const CHART_INPUT_INTERVAL_MS = 100;
-export const NON_SAVING_CHART_WINDOW_MS = 60_000;
-// Minimum interval between chart redraws (setDisplayRevision bumps). Chart data
-// flushes ~10x/s, but redrawing all 4 scattergl charts that often is wasteful
-// and feeds WebGL/regl resource churn. Coalescing redraws to ~5 fps keeps the
-// live view responsive while cutting steady GPU/React cost roughly in half.
-export const CHART_REDRAW_INTERVAL_MS = 200;
-// Same thing while a save is running. The chart then shows the whole capture
-// decimated to CHART_MAX_POINTS, so consecutive redraws differ by a pixel or
-// two — while the loop is at its most sensitive to anything sharing the main
-// thread. Recording is unaffected: every sample still goes to the TSV file.
+// Preview length while NOT saving, as a point count rather than a duration.
+// Chart input is a fixed CHART_INPUT_INTERVAL_MS, so the two are the same thing
+// — 768 x 100 ms is a ~77 s window — and counting points means the trim is a
+// single splice with no clock read and no scan for the cutoff.
 //
-// Both of these are a FLOOR, not a period. A redraw is only armed by a flush
-// that actually added a point to the chart buffer (see flushPendingDataPoints),
-// so late in a save — where the decimation stride means a new point every few
+// It also behaves better when the feed stalls: a time window empties itself
+// while the device is silent, leaving a blank chart with no clue what the last
+// reading was, where a point budget holds the last 77 s of real data until new
+// data pushes it out.
+export const NON_SAVING_CHART_PREVIEW_POINTS = 768;
+// Minimum interval between chart redraws (setDisplayRevision bumps), saving or
+// not. Chart data flushes up to 10x/s and redrawing four scattergl charts that
+// often is wasteful and feeds WebGL/regl resource churn; 2 fps is plenty for a
+// preview and keeps the steady GPU/React cost off the acquisition loop, which
+// is the competition that matters. Recording is unaffected either way.
+//
+// One constant, not one per mode: the saving case used to be slower (500 vs
+// 200 ms) on the argument that a whole-capture view moves less per sample, but
+// the same is true of a 768-point preview, and two numbers only ever meant two
+// things to reason about.
+//
+// This is a FLOOR, not a period. A redraw is only armed by a flush that
+// actually added a point to the chart buffer (see flushPendingDataPoints), so
+// late in a save — where the decimation stride means a new point every few
 // seconds — the redraw rate follows the points rather than this constant.
-export const CHART_REDRAW_INTERVAL_SAVING_MS = 500;
+export const CHART_REDRAW_INTERVAL_MS = 500;
 // How often per-sample readouts (measured rate, saved-point count) are pushed
 // into React state. They are numbers a human reads, so 4/s is already more than
 // anyone can follow — while a state update per sample put a full re-render of

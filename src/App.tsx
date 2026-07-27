@@ -31,11 +31,10 @@ import {
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
-  CHART_REDRAW_INTERVAL_SAVING_MS,
   READOUT_PUBLISH_INTERVAL_MS,
   CHANNEL_CARD_MIN_INTERVAL_MS,
   CHART_INPUT_INTERVAL_MS,
-  NON_SAVING_CHART_WINDOW_MS,
+  NON_SAVING_CHART_PREVIEW_POINTS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
   KEEP_LATEST_TRIM_INTERVAL,
@@ -75,6 +74,7 @@ import {
   downloadRecoveredRun,
   formatRunSize,
   listRecoverableRuns,
+  recoveredDownloadName,
   requestPersistentStorage,
 } from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
@@ -660,7 +660,6 @@ function App() {
       // pressure. Best effort — a refusal changes nothing else.
       requestPersistentStorage().catch(() => {});
 
-      const keepNote = 'Cancel keeps it and offers it again next time.';
       const runs = await listRecoverableRuns();
       if (runs.length === 0) return;
 
@@ -682,8 +681,20 @@ function App() {
         `File: ${found.originalName}\n` +
         `Started: ${started}\n` +
         `Size: ${formatRunSize(found.size)}\n\n` +
-        `OK downloads it now. ${keepNote}${alsoWaiting}`;
-      if (!window.confirm(offer)) return;
+        `OK downloads it as ${recoveredDownloadName(found.originalName)}.\n` +
+        `Cancel deletes the recovery copy.${alsoWaiting}`;
+      // Declining deletes it, rather than keeping it for another prompt at the
+      // next startup. The user has been shown the run's name, start time and
+      // size and said no to it; asking again every launch until they relent is
+      // not protecting data, and the dialog says plainly what Cancel does.
+      //
+      // The second prompt below is the opposite case and still keeps: there,
+      // Cancel means "the download did not arrive", so deleting would destroy
+      // the very file being rescued.
+      if (!window.confirm(offer)) {
+        await discardRecoveredRun(found);
+        return;
+      }
 
       try {
         await downloadRecoveredRun(found);
@@ -702,9 +713,9 @@ function App() {
       // reading it truncates the very file being rescued, and a run this feature
       // exists for can be hundreds of megabytes.
       const cleanup =
-        `${found.originalName} was sent to your browser's downloads.\n\n` +
+        `${recoveredDownloadName(found.originalName)} was sent to your browser's downloads.\n\n` +
         `Once the download has finished and the file opens, press OK to delete the recovery copy.\n\n` +
-        `${keepNote}`;
+        `Cancel keeps it and offers it again next time.`;
       if (window.confirm(cleanup)) await discardRecoveredRun(found);
     };
 
@@ -863,17 +874,15 @@ function App() {
         // landed. The redraw triggered below already draws the new trace.
       }
     } else {
-      // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
+      // Not saving: a sliding preview of the last NON_SAVING_CHART_PREVIEW_POINTS
+      // points, which at the fixed chart input rate is a ~77 s window. No
+      // decimation — every point the chart is fed is drawn.
       bufferChanged = true;
       for (const p of pointsToAdd) buffer.push(p);
       published.push(...pointsToAdd);
-      const cutoff = Date.now() - NON_SAVING_CHART_WINDOW_MS;
-      let drop = 0;
-      while (drop < buffer.length && buffer[drop].timestamp < cutoff) drop++;
-      if (buffer.length - drop > CHART_MAX_POINTS) {
-        drop = buffer.length - CHART_MAX_POINTS;
+      if (buffer.length > NON_SAVING_CHART_PREVIEW_POINTS) {
+        buffer.splice(0, buffer.length - NON_SAVING_CHART_PREVIEW_POINTS);
       }
-      if (drop > 0) buffer.splice(0, drop);
 
       // Persist this batch to IndexedDB in a single transaction (only while not
       // saving; during save the TSV file is the durable store). Convert the
@@ -929,14 +938,11 @@ function App() {
     //
     // Reset paths (connect/disconnect/start/stop-save) still bump
     // setDisplayRevision directly for an immediate redraw.
-    const redrawIntervalMs = tsvWriterRef.current
-      ? CHART_REDRAW_INTERVAL_SAVING_MS
-      : CHART_REDRAW_INTERVAL_MS;
     if (bufferChanged && chartRedrawTimerRef.current === undefined) {
       chartRedrawTimerRef.current = window.setTimeout(() => {
         chartRedrawTimerRef.current = undefined;
         setDisplayRevision((v) => v + 1);
-      }, redrawIntervalMs);
+      }, CHART_REDRAW_INTERVAL_MS);
     }
   }, []);
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
+import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
 import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
 import { notify, NOTIFY_TAG } from '../utils/notifications';
 
@@ -120,7 +121,7 @@ export function useScriptRunner(
       const waiters = runWaitersRef.current;
       runWaitersRef.current = [];
       for (const waiter of waiters) {
-        window.clearTimeout(waiter.timer);
+        clearBackgroundTimer(waiter.timer);
         waiter.resolve(info);
       }
     },
@@ -147,13 +148,18 @@ export function useScriptRunner(
    * Resolve when the current run finishes, or after `timeoutMs` with the run
    * still marked 'running' (a control loop is supposed to keep going — that is
    * an answer, not a failure).
+   *
+   * Background timer: the caller is the MCP bridge, i.e. an agent driving this
+   * window from outside it, and the window it is driving is very often
+   * minimised. A throttled timeout would turn `wait_for_script(5s)` into a
+   * one-minute stall with nothing to indicate why.
    */
   const waitForScriptRun = useCallback((timeoutMs: number): Promise<ScriptRunInfo> => {
     if (scriptRunRef.current.outcome !== 'running') return Promise.resolve(scriptRunRef.current);
     return new Promise<ScriptRunInfo>((resolve) => {
       const entry = {
         resolve,
-        timer: window.setTimeout(() => {
+        timer: setBackgroundTimeout(() => {
           runWaitersRef.current = runWaitersRef.current.filter((w) => w !== entry);
           resolve(scriptRunRef.current);
         }, timeoutMs),

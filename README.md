@@ -15,8 +15,9 @@
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
-| **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。描画バックエンド（GPU/CPU）バッジ表示 |
-| **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み・全点記録）。IndexedDB でセッション中データを FIFO 管理 |
+| **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。非保存時は直近 768 点（≒77秒）のプレビュー、保存中は保存開始〜現在の全区間を 2048 点へ間引いて表示。描画バックエンド（GPU/CPU）バッジ表示 |
+| **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み）。書き込み周期は Save Rate に従います。IndexedDB でセッション中データを FIFO 管理 |
+| **クラッシュ復旧** | 保存中の全行を OPFS へ同期ミラーします（ピッカーで選んだファイルは Stop Save まで 0 バイトのため）。異常終了後の初回起動で復旧を提示し、`<元の名前>_autorestore.tsv` としてダウンロードします。提示を Cancel すると復旧コピーは削除されます |
 | **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御、`set_notify()` で通知 |
 | **バックグラウンド耐性** | ポーリング・チャート反映・TSV フラッシュのタイマーを専用 Worker で駆動。ウィンドウを最小化してもブラウザのタイマー抑制（1Hz→1分に1回）で計測が止まりません。デスクトップ版はブラウザ起動フラグでも抑制を無効化 |
 | **通知** | ScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ） |
