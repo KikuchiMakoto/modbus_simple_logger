@@ -10,7 +10,7 @@ import {
 import { type Config, type Data, type Layout } from 'plotly.js';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
-import { detectRenderBackend, reportRenderBackend } from '../utils/renderBackend';
+import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 
 interface AxisOption {
   key: string;
@@ -121,6 +121,11 @@ function ChartPanelComponent({
 }: ChartPanelProps) {
   const xDesc = useMemo(() => parseAxisKey(xAxis), [xAxis]);
   const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
+
+  // Read from the shared store rather than from local state: this panel detects
+  // the backend below and App Info shows the full renderer string, so the badge
+  // here is one more reader of the same value, not a second detection.
+  const backend = useRenderBackend();
 
   // Last graph div handed to us by react-plotly.js. Tracked so the WebGL context
   // of a replaced chart can be released explicitly — see releaseWebglContext.
@@ -309,6 +314,27 @@ function ChartPanelComponent({
               </option>
             ))}
         </select>
+        {/* Back in the chart header, as it was before v3.2 — the row it shares
+            has since been slimmed, so it now costs no height of its own. App
+            Info keeps the full renderer string; this is the at-a-glance version,
+            and amber when the browser has fallen back to a software rasterizer
+            is the whole point: that degradation is otherwise silent. */}
+        {!isEmpty && backend && (
+          <span
+            translate="no"
+            title={`Plotly render backend: ${backend.api}${backend.accel ? ` (${backend.accel})` : ''} — ${backend.detail}`}
+            className={`ml-auto shrink-0 rounded px-1 py-0.5 text-[0.6rem] font-semibold leading-none ${
+              backend.accel === 'GPU'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                : backend.accel === 'CPU'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+            }`}
+          >
+            {backend.api}
+            {backend.accel ? ` · ${backend.accel}` : ''}
+          </span>
+        )}
       </div>
       {isEmpty ? (
         <div className="flex items-center justify-center text-sm text-slate-400" style={{ height: PLOT_HEIGHT }}>

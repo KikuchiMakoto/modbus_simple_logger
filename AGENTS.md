@@ -70,7 +70,7 @@ src/
     ├── opfsRecovery.ts              # 起動時の残存ミラー検出・ダウンロード・削除（主スレッド側）
     ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
-    ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
+    ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し、各チャート右上のバッジと AppInfoPanel（全 renderer 文字列）が表示
     ├── backgroundTimer.ts           # timerWorker の主スレッド側（setBackgroundTimeout / Interval / clearBackgroundTimer）
     ├── notifications.ts             # Web Notification のゲート（トグル永続化＋許可判定）と notify()
     ├── appMode.ts                   # 実行形態の判定（web / launcher / viewer）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
