@@ -48,7 +48,7 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 
 // Plot area height. The empty state matches it exactly, so the card does not
 // change size the moment the first sample arrives.
-const PLOT_HEIGHT = '250px';
+const PLOT_HEIGHT = '245px';
 
 // Force-release the WebGL context(s) behind a graph div.
 //
@@ -276,13 +276,16 @@ function ChartPanelComponent({
   );
 
   return (
-    <section className="card card-tight space-y-1">
-      <div className="flex items-center gap-2">
-        <label className="text-xs text-slate-400">X:</label>
+    <section className="card card-tight space-y-0.5">
+      {/* The axis pickers are chrome above a fixed-height plot, so they are kept
+          to the smallest row that stays clickable — every pixel spent here is a
+          pixel the chart itself does not get, four times over on this page. */}
+      <div className="flex items-center gap-1.5">
+        <label className="text-[0.7rem] leading-none text-slate-400">X:</label>
         <select
           value={xAxis}
           onChange={(e) => onXAxisChange(e.target.value)}
-          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          className="rounded border border-slate-300 bg-white px-1.5 py-0 text-xs leading-tight text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           aria-label="X axis"
         >
           {axisOptions.map((opt) => (
@@ -291,11 +294,11 @@ function ChartPanelComponent({
             </option>
           ))}
         </select>
-        <label className="text-xs text-slate-400">Y:</label>
+        <label className="text-[0.7rem] leading-none text-slate-400">Y:</label>
         <select
           value={yAxis}
           onChange={(e) => onYAxisChange(e.target.value)}
-          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          className="rounded border border-slate-300 bg-white px-1.5 py-0 text-xs leading-tight text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           aria-label="Y axis"
         >
           {axisOptions

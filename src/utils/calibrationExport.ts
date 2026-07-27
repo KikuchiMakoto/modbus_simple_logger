@@ -1,5 +1,5 @@
 /**
- * TSV export for the HX711 / ADS1115 calibration window.
+ * TSV export for the Input Calibrator window (HX711 and ADS1115 channels).
  *
  * The layout follows the convention oscilloscope and DAQ exports use: a
  * key/value metadata block, then the sample table, each delimited by an
@@ -25,8 +25,14 @@ const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'modbus_simple_logger';
  * produce a file whose data section is always empty.
  */
 export interface CalibrationExport {
-  /** Window title, e.g. "HX711 Calib (CH00–07)". */
+  /** Window title, e.g. "Input Calibrator". */
   title: string;
+  /**
+   * Front-end the channel belongs to, e.g. "HX711". Its own key because the
+   * window title no longer names it: HX711 and ADS1115 share one window, so the
+   * chip is a property of the channel rather than of where the export came from.
+   */
+  sensor?: string;
   channel: number;
   /** Fitted coefficients, or null when the points admit no unique fit. */
   result: AiCalibration | null;
@@ -100,6 +106,7 @@ export function buildCalibrationTsv(data: CalibrationExport, at: Date = new Date
     ['Window', clean(data.title)],
     ['Channel', String(data.channel)],
     ['ChannelLabel', `CH${pad(data.channel)}`],
+    ['Sensor', clean(data.sensor ?? '')],
     ['Method', 'Measured'],
     ['Model', 'phy = a*raw^2 + b*raw + c'],
     ['CoefA', result ? num(result.a) : ''],

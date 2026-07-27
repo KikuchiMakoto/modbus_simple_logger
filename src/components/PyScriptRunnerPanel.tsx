@@ -9,7 +9,7 @@ type ChannelLabels = {
   param: string[];
 };
 
-type ScriptRunnerPanelProps = {
+type PyScriptRunnerPanelProps = {
   open: boolean;
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
@@ -31,7 +31,7 @@ const API_DOCS = [
 
 const buildAiPrompt = (channelLabels: ChannelLabels): string =>
   [
-    'Write a Python script for ModbusSimpleLogger ScriptRunner (Pyodide; async context, top-level await OK).',
+    'Write a Python script for ModbusSimpleLogger PyScriptRunner (Pyodide; async context, top-level await OK).',
     '',
     'API:',
     ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
@@ -51,13 +51,13 @@ const formatLogTime = (t: number): string => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 };
 
-export function ScriptRunnerPanel({
+export function PyScriptRunnerPanel({
   open,
   onClose,
   scriptRunner,
   onEditorKeyDown,
   channelLabels,
-}: ScriptRunnerPanelProps) {
+}: PyScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const { scriptLog } = scriptRunner;
@@ -82,7 +82,7 @@ export function ScriptRunnerPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="ScriptRunner"
+      title="PyScriptRunner"
       subtitle="Python (Pyodide)"
       defaultWidth={640}
       defaultHeight={620}
@@ -122,7 +122,7 @@ export function ScriptRunnerPanel({
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
         <p className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
           <span>Status: {scriptRunner.scriptRunnerStatus}</span>
-          {/* One ScriptRunner, one editor: a script submitted over MCP replaces
+          {/* One PyScriptRunner, one editor: a script submitted over MCP replaces
               what is shown here, so say where the running code came from. */}
           {scriptRunner.scriptRunning && scriptRunner.scriptSource === 'mcp' && (
             <span className="rounded bg-emerald-500 px-1.5 py-0.5 font-semibold text-emerald-950">

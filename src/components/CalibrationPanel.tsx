@@ -77,7 +77,7 @@ export function CalibrationPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="Calibration Value"
+      title="Input Calib Value"
       subtitle="a·(Raw)²+b·(Raw)+c = Phy"
       defaultWidth={420}
       defaultHeight={460}

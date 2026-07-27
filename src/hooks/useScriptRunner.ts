@@ -204,7 +204,7 @@ export function useScriptRunner(
     if (pyWorkerRef.current) return pyWorkerRef.current;
     if (!ensureShares()) {
       throw new Error(
-        'ScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
+        'PyScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
       );
     }
 
@@ -237,20 +237,20 @@ export function useScriptRunner(
         // set_notify(msg). Logged first: the log is the record, the toast is
         // only the interruption, and the user may have turned it off.
         appendLog('system', `notify: ${message.message}`);
-        notify('ScriptRunner', message.message, { tag: NOTIFY_TAG.scriptMessage });
+        notify('PyScriptRunner', message.message, { tag: NOTIFY_TAG.scriptMessage });
       } else if (message.type === 'done') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Completed');
         appendLog('system', message.message ?? 'Completed');
-        notify('ScriptRunner', 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
+        notify('PyScriptRunner', 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('completed');
       } else if (message.type === 'interrupted') {
         scriptExecutingRef.current = false;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Stopped');
         appendLog('system', message.message ?? 'Stopped');
-        notify('ScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
+        notify('PyScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('stopped');
       } else if (message.type === 'error') {
         scriptExecutingRef.current = false;
@@ -259,7 +259,7 @@ export function useScriptRunner(
         appendLog('stderr', message.traceback ?? message.message);
         // Sticky: a run that died is the one event worth leaving on screen
         // until someone actually looks at it.
-        notify('ScriptRunner error', message.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
+        notify('PyScriptRunner error', message.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
         settleRun('error', message.message, message.traceback ?? null);
       }
     };
@@ -268,7 +268,7 @@ export function useScriptRunner(
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${event.message}`);
       appendLog('stderr', event.message);
-      notify('ScriptRunner error', event.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
+      notify('PyScriptRunner error', event.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', event.message);
     };
 
@@ -300,7 +300,7 @@ export function useScriptRunner(
       // moment later; both carry the same tag, so the second replaces the first
       // rather than stacking. Notifying here too is what covers the case where
       // no answer comes back at all (Pyodide was still booting).
-      notify('ScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
+      notify('PyScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
       settleRun('stopped');
     }
   }, [appendLog, settleRun]);
@@ -321,7 +321,7 @@ export function useScriptRunner(
       setScriptRunnerStatus('Running');
       worker.postMessage({ type: 'run', code: codeOverride ?? scriptCodeRef.current });
       notify(
-        'ScriptRunner',
+        'PyScriptRunner',
         source === 'mcp' ? 'Script started from MCP.' : 'Script started.',
         { tag: NOTIFY_TAG.scriptRun },
       );
@@ -332,7 +332,7 @@ export function useScriptRunner(
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${text}`);
       appendLog('stderr', text);
-      notify('ScriptRunner error', text, { tag: NOTIFY_TAG.scriptRun, sticky: true });
+      notify('PyScriptRunner error', text, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', text);
       return scriptRunRef.current;
     }

@@ -9,7 +9,7 @@
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
-- Pyodide（Web Worker + SharedArrayBuffer）による ScriptRunner 機能
+- Pyodide（Web Worker + SharedArrayBuffer）による PyScriptRunner 機能
 - デスクトップ版（`launcher/` の Bun 単一バイナリ）限定で MCP サーバーを内蔵
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
 - Wake Lock API による計測中の画面スリープ抑止
@@ -34,7 +34,7 @@ src/
 ├── modbus/
 │   └── webserialClient.ts           # Web Serial トランスポート + Modbus RTU フレーム送受信
 ├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
-├── pyodideWorker.ts                 # Pyodide ScriptRunner 用 Web Worker
+├── pyodideWorker.ts                 # Pyodide PyScriptRunner 用 Web Worker
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
 ├── timerWorker.ts                   # タイマー抑制回避用 Worker（setTimeout/setInterval をワーカースレッドで保持）
 ├── hooks/
@@ -46,15 +46,16 @@ src/
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
-│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
+│   ├── PyScriptRunnerPanel.tsx      # PyScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
 │   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー（ビューアのみアプリヘッダーにも出す）
 │   ├── UiScaleControl.tsx           # UI 拡大率の [-] [100%] [+]。Menu パネルのヘッダー
-│   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
-│   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
+│   ├── CalibrationPanel.tsx         # Input Calib Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
+│   ├── InputCalibratorPanel.tsx     # Input Calibrator（実測最小二乗 / スペック計算）。CH00-15 を1ウィンドウで扱い、HX711/ADS1115 の別は ch 番号から決まる
 │   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
-│   ├── VoltageConfigPanel.tsx       # 電圧表示モード設定（チャネルタイプ別フィルタ）
+│   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
+│   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー（MCP 項目は exe 限定で表示）
 │   ├── McpPanel.tsx                 # MCP 状態表示＋書込み許可トグル（exe 限定）
 │   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
@@ -174,7 +175,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### 通知（`utils/notifications.ts` + `useNotifications.ts`）
 - 通知の可否は**モジュールレベルの1箇所**（`utils/notifications.ts` の `enabled` + 許可状態）で判定する。`notify()` は Worker のメッセージハンドラなど React の外から呼ばれるため、React state をゲートにしないこと
-- 対象は ScriptRunner の開始 / 停止 / 完了 / エラーと、Python の `set_notify(msg)`。**通知した内容は必ず `scriptLog` にも書く**（通知 OFF や許可なしでも情報が消えないように）
+- 対象は PyScriptRunner の開始 / 停止 / 完了 / エラーと、Python の `set_notify(msg)`。**通知した内容は必ず `scriptLog` にも書く**（通知 OFF や許可なしでも情報が消えないように）
 - **許可要求は起動時に1回**（`useNotifications` の effect、トグル ON かつ `permission === 'default'` のときだけ）。計測は「開始したら人が離れる」使い方なので、失敗した瞬間に許可ダイアログを出しても誰も答えられない。拒否された場合はトグルを自動で OFF にして、UI と実態を合わせる
 - **通知は tag で潰す**（`NOTIFY_TAG`）。`while True:` の中の `set_notify()` でデスクトップが埋まらないようにするため。連投は「最新1件が残る」挙動になる
 - 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
@@ -189,7 +190,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
 - 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
 
-### ScriptRunner（`pyodideWorker.ts`）
+### PyScriptRunner（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
   - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
   - バージョンは **`package.json` の `pyodide` 依存（現在 `^314.0.3`）が一次情報源**。アセットは `node_modules` の実インストール版からコピーされるためバージョンずれは構造的に起きない。URL 直書き・他ファイルへのバージョン直書きは禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
@@ -209,12 +210,12 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **デスクトップ版（exe）限定**。ページ側は `utils/appMode.ts` の `isLauncherMode` で gate し、Web 版・PWA には一切影響させない
 - エンドポイントは `http://127.0.0.1:8765/mcp`（Streamable HTTP・ステートレス・JSON レスポンス）。**ポート固定は MCP クライアント設定を安定させるため**で、多重起動は**先勝ち**（bind 失敗＝2つ目以降は MCP 無効で通常起動。fatal にしないこと）
 - **ステートレスモードでは transport / McpServer をリクエストごとに新規生成する**（SDK が使い回しを拒否する。状態はすべてページ側にあるため生成コストは実質ゼロ）
-- launcher は状態を持たない。ツールはすべて `bridge.call()` の薄いラッパで、実処理はページ側の `useMcpBridge` が**ScriptRunner と同じ SAB・同じ `setAo` / `handleTareCalibration` へディスパッチする**。API の同一性はロジックの複製ではなくこの共有で担保している
+- launcher は状態を持たない。ツールはすべて `bridge.call()` の薄いラッパで、実処理はページ側の `useMcpBridge` が**PyScriptRunner と同じ SAB・同じ `setAo` / `handleTareCalibration` へディスパッチする**。API の同一性はロジックの複製ではなくこの共有で担保している
 - **launcher プロセスから Modbus を触ってはならない**。書込みは必ず `setAo` → `doAoWriteAsync` → `transfer()` を通し、フレーム間隔の不変条件（下記「USB転送間隔制約」）を維持する
 - 書込み許可の判定は**ページ側の1箇所**（`useMcpBridge` の `writeEnabledRef`）に置く。既定 OFF、`McpPanel` のトグルで opt-in。launcher 側にゲートを二重実装しないこと
-- **ScriptRunner の実体は1つ**なので MCP 実行と UI 実行は同一の実行系・同一のエディタ内容を共有する（二重実行は構造的に起こらない）。実行中は反対側からの起動と直接書込み（`set_ao` 等）を拒否する。**「MCP 接続中は UI 側をロックする」といった所有権フラグを追加しないこと** — ブリッジ WS は exe 起動中ずっと繋がっているため、それを基準にすると UI が常時使用不能になる
+- **PyScriptRunner の実体は1つ**なので MCP 実行と UI 実行は同一の実行系・同一のエディタ内容を共有する（二重実行は構造的に起こらない）。実行中は反対側からの起動と直接書込み（`set_ao` 等）を拒否する。**「MCP 接続中は UI 側をロックする」といった所有権フラグを追加しないこと** — ブリッジ WS は exe 起動中ずっと繋がっているため、それを基準にすると UI が常時使用不能になる
 - **MCP ハンドシェイクのバージョンは `package.json` から取得する**（`launcher/mcp.ts` の `import pkg from '../package.json' with { type: 'json' }`）。Bun がビルド時に解決し `bun build --compile` が exe へインライン化する。**バージョン文字列を直書きに戻さないこと**（v3.5 以前は直書きで、実際に 3.3 のまま取り残されていた）
-- **`get_labels` は MCP 専用**（ScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`ScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
+- **`get_labels` は MCP 専用**（PyScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`ScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
 - `run_script` はエディタ内容を上書きするため、直前のコードを `scriptRunnerCodeBackup` へ退避し UI の「Restore」で戻せるようにしてある
 - **スクリプトの失敗は「ツールのエラー」ではなく「結果のデータ」として返す**。投入した Python は別ワーカーで非同期に走るので、ツール呼び出し自体は必ず成功してしまう。そのため `run_script` は `wait_ms`（既定 3000ms・最大 60s・0 で即時）だけ完了を待ち、`{ outcome, error, traceback, log }` を返す。起動直後に落ちる失敗（構文エラー等）をここで捕まえるのが目的で、走り続けるループは `outcome: "running"` で返るのが正常。**「起動したら `started: true` だけ返す」形へ戻さないこと**（エラーが一切見えなくなる）
 - `dispatch` は **Promise を返してよい**（`run_script` の待機）。WS ハンドラ側で resolve してから応答フレームを送る。launcher 側の `bridge.call` タイムアウトは `wait_ms + RUN_SCRIPT_HEADROOM_MS` を渡すこと（待機時間を超えると待機自体がタイムアウトになる）
@@ -276,7 +277,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
-- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約14MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
+- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約14MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は PyScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
   - `CACHE_VERSION` も同プラグインがマニフェスト内容のハッシュへ置換（`'dev'` → 8桁ハッシュ）。デプロイ毎に新キャッシュへ切替わり旧キャッシュは activate で削除
   - 未ビルドの `vite dev` ではプレースホルダのまま（空配列／`'dev'`）。dev は base が `/` で BASE_PATH 不一致のため SW は実質無効、問題なし
@@ -326,7 +327,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 ## 変更時の注意
 
 - 通信方式は「Web Serial API」を基準に記述する（WebUSB は polyfill 経由のフォールバック）
-- ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
+- PyScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
 - **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
 - **`scattergl` は性能上の選択ではなくデータモデル上の必然**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。scatter トレースは点列を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**scatter 相当のパラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`
 - **`hoverinfo: 'skip'` + `hovermode: false` を外さないこと**（`ChartPanel.tsx`）。scattergl はホバー判定用の空間インデックスを毎更新で構築し、そのコストは `CHART_MAX_POINTS` に比例する。本アプリは `hovertemplate` も `onHover`/`onClick` も使っていないため純粋な無駄であり、これを止めた前提で `CHART_MAX_POINTS` を 2048 に上げている。**ホバーでの値読みを復活させる場合は `CHART_MAX_POINTS` を 1024 に戻すこと**
@@ -358,11 +359,12 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 既存コードの確立済みセマンティック色（危険表示の red、レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを新規要素へ拡張しない
   - **例外**: ユーザーが「破棄すると取り戻せないデータ」の危険性を伝える**明示的な警告ツールチップ/バナー**に限り amber を使ってよい（v3.18 の Save ボタン注記が初出）。中性的な記述（単なるヘルプ）では使わないこと。**区別はユーザーが付ける**
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
-- **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`CalibrationWizardPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
-- **キャリブレーションウィザードの2方式**（`CalibrationWizardPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) 共通コンポーネントを2インスタンスで使用。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
+- **キャリブレーションのロック**: PyScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
+- **Input Calibrator の2方式**（`InputCalibratorPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) を**1ウィンドウ**で扱う。チャネル選択は CH00-15 の単一ドロップダウンで、どちらのフロントエンドかは ch 番号（AI マップの前半/後半）から決まる。チップ種別を先に選ばせるタブは置かない（ch の属性であって、ユーザーが選ぶモードではないため）。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
-  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
-  - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
+  - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。TSV エクスポートはウィンドウ名がチップを示さなくなったため、`Sensor` キーで HX711/ADS1115 を別途記録する。
+- **Output Tester**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と PyScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
 
 ## package.json のバージョン更新の絶対的なルール
 

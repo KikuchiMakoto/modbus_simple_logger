@@ -6,10 +6,10 @@ import { isLauncherMode } from '../utils/appMode';
 // Page side of the MCP bridge (desktop exe only).
 //
 // The launcher process hosts the MCP server but owns no logger state: AI/AO
-// values, the Modbus connection and the Pyodide ScriptRunner all live here. This
+// values, the Modbus connection and the Pyodide PyScriptRunner all live here. This
 // hook answers method calls relayed over a WebSocket to the launcher's own
 // origin, dispatching them to the very same SharedArrayBuffers and callbacks the
-// ScriptRunner uses — so the MCP tools and the Python API are two doors into one
+// PyScriptRunner uses — so the MCP tools and the Python API are two doors into one
 // implementation rather than two implementations.
 //
 // Launcher mode comes from utils/appMode (a marker the launcher injects into the
@@ -29,7 +29,7 @@ export type McpRecentSample = {
  * Free-text labels the user typed on the AI / AO / Parameter cards. Index = ch,
  * '' = unlabeled. Returned as one object rather than per channel: a client that
  * has to correlate 16+8+16 channels would otherwise need 40 round trips, and
- * this is the same shape the ScriptRunner panel's AI-prompt button emits.
+ * this is the same shape the PyScriptRunner panel's AI-prompt button emits.
  */
 export type McpLabels = {
   ai: string[];

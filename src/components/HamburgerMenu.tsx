@@ -16,11 +16,16 @@ type HamburgerMenuProps = {
 
 const MENU_ITEMS = [
   { key: 'modbusConfig', label: 'Connection Config', icon: '🔌', wip: false },
-  { key: 'calibration', label: 'Calibration Value', icon: '⚙️', wip: false },
-  { key: 'hx711Calibration', label: 'HX711 Calib (CH00–07)', icon: '⚖️', wip: false },
-  { key: 'ads1115Calibration', label: 'ADS1115 Calib (CH08–15)', icon: '🎚️', wip: false },
-  { key: 'voltageConfig', label: 'Voltage Config', icon: '⚡', wip: false },
-  { key: 'scriptRunner', label: 'ScriptRunner', icon: '📜', wip: false },
+  // The three AI-side windows share an "Input …" prefix and sit together, so
+  // the menu reads as range → derive coefficients → inspect coefficients.
+  { key: 'inputConfig', label: 'Input Config', icon: '⚡', wip: false },
+  // One entry for both front-ends: the HX711 and ADS1115 windows differed only
+  // in which channels they offered and which reference units the Spec tab
+  // listed, and both of those follow the channel number the user picks.
+  { key: 'inputCalibrator', label: 'Input Calibrator', icon: '⚖️', wip: false },
+  { key: 'calibration', label: 'Input Calib Value', icon: '⚙️', wip: false },
+  { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
+  { key: 'scriptRunner', label: 'PyScriptRunner', icon: '📜', wip: false },
   { key: 'mcp', label: 'MCP Access', icon: '🤖', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },

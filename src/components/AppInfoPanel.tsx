@@ -47,7 +47,7 @@ export function AppInfoPanel({
   connected?: boolean;
   // Notifications are one switch with no settings of their own, so they live
   // here rather than in a panel of their own (what is notified is documented in
-  // the ScriptRunner API list, next to the calls that raise them).
+  // the PyScriptRunner API list, next to the calls that raise them).
   notifications: NotificationsState;
 }) {
   const backend = useRenderBackend();
@@ -154,7 +154,7 @@ export function AppInfoPanel({
               <span>
                 <span className="font-semibold">Desktop notifications</span>
                 <span className="block text-xs text-slate-500 dark:text-slate-400">
-                  ScriptRunner start / stop / completion and errors, plus set_notify() messages
+                  PyScriptRunner start / stop / completion and errors, plus set_notify() messages
                   from a running script.
                 </span>
               </span>
@@ -172,8 +172,8 @@ export function AppInfoPanel({
                 : notifications.permission === 'denied'
                   ? 'Notifications are blocked for this site in the browser settings. Allow them there, then reload.'
                   : notifications.enabled
-                    ? 'On. Repeated alerts replace each other instead of stacking, and everything notified is also written to the ScriptRunner Output log.'
-                    : 'Off. Events are still written to the ScriptRunner Output log.'}
+                    ? 'On. Repeated alerts replace each other instead of stacking, and everything notified is also written to the PyScriptRunner Output log.'
+                    : 'Off. Events are still written to the PyScriptRunner Output log.'}
             </p>
           </div>
         </div>

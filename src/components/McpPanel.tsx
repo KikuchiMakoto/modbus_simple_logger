@@ -26,7 +26,7 @@ const WRITE_TOOLS = [
   { name: 'set_ao(ch, volt)', desc: 'Set AO voltage [V], clamped to 0-10.' },
   { name: 'set_param(ch, value)', desc: 'Set a Parameter scratch value.' },
   { name: 'set_ai_tare(ch)', desc: 'Tare AI ch (offset c only).' },
-  { name: 'run_script(code, wait_ms)', desc: 'Run Python in ScriptRunner; returns its outcome and errors.' },
+  { name: 'run_script(code, wait_ms)', desc: 'Run Python in PyScriptRunner; returns its outcome and errors.' },
   { name: 'stop_script()', desc: 'Interrupt the running script; returns the outcome.' },
 ];
 
@@ -113,7 +113,7 @@ export function McpPanel({ open, onClose, bridge, writeEnabled, onWriteEnabledCh
           </h4>
           <ToolList tools={WRITE_TOOLS} />
           <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-            There is only one ScriptRunner: a script started here and one started over MCP are the
+            There is only one PyScriptRunner: a script started here and one started over MCP are the
             same run, sharing the same editor contents. Whichever starts first holds it until it
             stops. Direct writes are refused while a script is running — the script owns the outputs.
           </p>
