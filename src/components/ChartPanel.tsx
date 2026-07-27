@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
 } from 'react';
@@ -126,6 +127,9 @@ function ChartPanelComponent({
   // the backend below and App Info shows the full renderer string, so the badge
   // here is one more reader of the same value, not a second detection.
   const backend = useRenderBackend();
+  // Four charts are on the page at once, so the note's id has to be per-instance
+  // for aria-describedby to point at the right one.
+  const backendNoteId = useId();
 
   // Last graph div handed to us by react-plotly.js. Tracked so the WebGL context
   // of a replaced chart can be released explicitly — see releaseWebglContext.
@@ -320,20 +324,41 @@ function ChartPanelComponent({
             and amber when the browser has fallen back to a software rasterizer
             is the whole point: that degradation is otherwise silent. */}
         {!isEmpty && backend && (
-          <span
-            translate="no"
-            title={`Plotly render backend: ${backend.api}${backend.accel ? ` (${backend.accel})` : ''} — ${backend.detail}`}
-            className={`ml-auto shrink-0 rounded px-1 py-0.5 text-[0.6rem] font-semibold leading-none ${
-              backend.accel === 'GPU'
-                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                : backend.accel === 'CPU'
-                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-            }`}
-          >
-            {backend.api}
-            {backend.accel ? ` · ${backend.accel}` : ''}
-          </span>
+          // Same hover note as the channel cards' HX711 / ADS1115 / GP8403
+          // labels (group-hover on a plain absolute box, no tooltip library),
+          // rather than a native `title`: this reads as one more "what is the
+          // hardware behind this" note, and the renderer string is far too long
+          // for the OS tooltip that used to carry it. Anchored right — the badge
+          // sits at the end of its row.
+          <div className="group/backend relative ml-auto shrink-0">
+            <span
+              translate="no"
+              tabIndex={0}
+              aria-describedby={backendNoteId}
+              className={`block cursor-help rounded px-1 py-0.5 text-[0.6rem] font-semibold leading-none ${
+                backend.accel === 'GPU'
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                  : backend.accel === 'CPU'
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              {backend.api}
+              {backend.accel ? ` · ${backend.accel}` : ''}
+            </span>
+            <div
+              id={backendNoteId}
+              role="tooltip"
+              className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-56 rounded border border-sky-400 bg-sky-50 p-2 text-left text-[0.7rem] font-normal normal-case leading-snug tracking-normal text-sky-900 shadow-lg group-hover/backend:block group-focus-within/backend:block dark:border-sky-500/60 dark:bg-slate-800 dark:text-sky-200"
+            >
+              <strong translate="no">{backend.api}</strong> — Plotly render backend
+              <ul className="mt-1 list-disc space-y-0.5 pl-3">
+                <li>scattergl traces, drawn by {backend.accel === 'CPU' ? 'the CPU' : 'the GPU'}</li>
+                <li translate="no" className="break-words">{backend.detail}</li>
+                {backend.accel === 'CPU' && <li>Software rasterizer — redraws will be slow</li>}
+              </ul>
+            </div>
+          </div>
         )}
       </div>
       {isEmpty ? (

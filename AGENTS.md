@@ -60,6 +60,7 @@ src/
 │   ├── McpPanel.tsx                 # MCP 状態表示＋書込み許可トグル（exe 限定）
 │   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
 │   ├── QrCode.tsx                   # QR をインライン SVG で描画（qrcode-generator・1 path に集約）
+│   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Tester の全ch 0V / PyScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { FloatingWindow } from './FloatingWindow';
+import { SlideToConfirm } from './SlideToConfirm';
 
 type ChannelLabels = {
   ai: string[];
@@ -107,15 +108,21 @@ export function PyScriptRunnerPanel({
               Restore
             </button>
           )}
-          <button
-            type="button"
-            className="button-secondary py-1 text-sm"
-            onClick={scriptRunner.clearScriptCode}
+          {/* A swipe, not a button: it discards whatever is in the editor for
+              the default script, and an editor holds work that exists nowhere
+              else — there is no undo behind it. Same gesture as the header's
+              Disconnect and the Output Tester's zero. */}
+          <SlideToConfirm
+            label="Slide to clear"
+            armedLabel="Release"
+            knobLabel="✕"
+            onConfirm={scriptRunner.clearScriptCode}
             disabled={scriptRunner.scriptRunning}
-            title="Reset script to default"
-          >
-            Clear All
-          </button>
+            knobPx={26}
+            className="h-[26px] w-[7.5rem]"
+            labelClassName="text-[0.7rem]"
+            aria-label="Slide to reset the script to the default"
+          />
         </>
       }
     >

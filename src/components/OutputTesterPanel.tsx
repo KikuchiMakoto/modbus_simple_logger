@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
+import { SlideToConfirm } from './SlideToConfirm';
 
 /**
  * Manual AO exerciser: pick a channel, click a voltage, watch the wire.
@@ -23,11 +24,8 @@ const PRESETS: number[] = (() => {
   return out;
 })();
 
-// Fraction of the slider's travel that counts as a completed swipe. Not 1.0:
-// the knob is released by lifting a finger, which drifts, and demanding the
-// last pixel turns a deliberate gesture into a retry.
-const ZERO_SWIPE_COMMIT = 0.92;
-const ZERO_KNOB_PX = 44;
+
+
 
 type OutputTesterPanelProps = {
   open: boolean;
@@ -58,13 +56,6 @@ export function OutputTesterPanel({
   const [manual, setManual] = useState('');
   const [sent, setSent] = useState<string | null>(null);
 
-  // Slide-to-zero state. knobX is the knob's offset along the track in px;
-  // dragging suppresses the snap-back transition while a finger is down.
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const dragOriginRef = useRef(0);
-  const [knobX, setKnobX] = useState(0);
-  const [dragging, setDragging] = useState(false);
-
   // A stale "Sent 5.000 V" under a channel it was not sent to would be a lie.
   useEffect(() => setSent(null), [channel]);
 
@@ -92,40 +83,6 @@ export function OutputTesterPanel({
     setSent('All channels set to 0.000 V');
   };
 
-  // --- Slide to zero ---
-  //
-  // A plain button sat one stray click away from dropping every output, which
-  // on a rig under test is the most disruptive thing this window can do. The
-  // gesture is the confirmation — no dialog, because a dialog someone has
-  // learnt to dismiss confirms nothing, and because the whole point of the
-  // control is that it is reached for when the outputs need to go down NOW.
-  // Completing the swipe zeroes immediately; there is no second step.
-  const maxTravel = () => Math.max(0, (trackRef.current?.clientWidth ?? 0) - ZERO_KNOB_PX);
-
-  const beginZeroDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (disabled) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragOriginRef.current = e.clientX - knobX;
-    setDragging(true);
-  };
-
-  const moveZeroDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    setKnobX(Math.max(0, Math.min(maxTravel(), e.clientX - dragOriginRef.current)));
-  };
-
-  const endZeroDrag = () => {
-    if (!dragging) return;
-    setDragging(false);
-    const travel = maxTravel();
-    if (travel > 0 && knobX >= travel * ZERO_SWIPE_COMMIT) allZero();
-    setKnobX(0);
-  };
-
-  const travelNow = maxTravel();
-  const zeroProgress = travelNow > 0 ? knobX / travelNow : 0;
-  const zeroArmed = zeroProgress >= ZERO_SWIPE_COMMIT;
 
   return (
     <FloatingWindow
@@ -223,52 +180,16 @@ export function OutputTesterPanel({
           </button>
         </div>
 
-        {/* Slide to zero. Warning-coloured because it acts on every channel at
-            once, and gated by the gesture because it acts the instant the
-            gesture completes. */}
-        <div
-          ref={trackRef}
-          className={`relative h-9 select-none overflow-hidden rounded-full border ${
-            disabled
-              ? 'border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800'
-              : 'border-rose-300 bg-rose-50 dark:border-rose-500/50 dark:bg-rose-500/10'
-          }`}
-        >
-          {/* Fill behind the knob: the gesture's own progress bar. */}
-          <div
-            className={`absolute inset-y-0 left-0 bg-rose-400/30 dark:bg-rose-400/20 ${
-              dragging ? '' : 'transition-[width] duration-200'
-            }`}
-            style={{ width: `${knobX + ZERO_KNOB_PX}px` }}
-          />
-          <span
-            className={`pointer-events-none absolute inset-0 flex items-center justify-center text-[11px] font-semibold ${
-              disabled
-                ? 'text-slate-400 dark:text-slate-600'
-                : zeroArmed
-                  ? 'text-rose-700 dark:text-rose-300'
-                  : 'text-rose-600/80 dark:text-rose-400/80'
-            }`}
-          >
-            {zeroArmed ? 'Release to zero all channels' : 'Slide to zero all channels →'}
-          </span>
-          <div
-            onPointerDown={beginZeroDrag}
-            onPointerMove={moveZeroDrag}
-            onPointerUp={endZeroDrag}
-            onPointerCancel={endZeroDrag}
-            style={{ width: `${ZERO_KNOB_PX}px`, transform: `translateX(${knobX}px)` }}
-            className={`absolute inset-y-0 left-0 flex touch-none items-center justify-center rounded-full text-sm font-bold ${
-              disabled
-                ? 'cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-600'
-                : 'cursor-grab bg-rose-500 text-white active:cursor-grabbing dark:bg-rose-500'
-            } ${dragging ? '' : 'transition-transform duration-200'}`}
-            role="button"
-            aria-label="Slide to set every AO channel to 0 V"
-          >
-            0V
-          </div>
-        </div>
+        {/* Warning-coloured and gesture-gated because it acts on every
+            channel at once, the instant the gesture completes. */}
+        <SlideToConfirm
+          label="Slide to zero all channels →"
+          armedLabel="Release to zero all channels"
+          knobLabel="0V"
+          onConfirm={allZero}
+          disabled={disabled}
+          aria-label="Slide to set every AO channel to 0 V"
+        />
 
         {/* One status line, in priority order: why output is blocked first,
             what was last sent second. */}

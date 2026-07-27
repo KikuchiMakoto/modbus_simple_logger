@@ -100,6 +100,7 @@ import { ManualPanel } from './components/ManualPanel';
 import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
 import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
+import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -2436,13 +2437,32 @@ function App() {
                 </span>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className={`button-touch min-w-[6rem] ${connected ? 'button-secondary' : 'button-primary'}`}
-                    onClick={handleToggleConnection}
-                  >
-                    {connected ? 'Disconnect' : 'Connect'}
-                  </button>
+                  {/* Connect is a button; Disconnect is a swipe. They are not
+                      the same kind of action: connecting is recoverable by
+                      clicking again, while disconnecting mid-run drops the link
+                      a save is being written from, and the two sit at the same
+                      spot — so the destructive one is the one a mis-click must
+                      not reach. Same gesture as the Output Tester's zero. */}
+                  {connected ? (
+                    <SlideToConfirm
+                      label="Slide to disconnect"
+                      armedLabel="Release"
+                      knobLabel="⏻"
+                      onConfirm={handleToggleConnection}
+                      knobPx={30}
+                      className="h-[30px] w-[8.5rem]"
+                      labelClassName="text-[0.7rem]"
+                      aria-label="Slide to disconnect the device"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="button-touch button-primary min-w-[6rem]"
+                      onClick={handleToggleConnection}
+                    >
+                      Connect
+                    </button>
+                  )}
                   {/* Next to Start Save, not in Connection Config, because it is
                       a property of the run rather than of the link: the poll
                       rate is set once for a device, this is chosen per

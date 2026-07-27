@@ -426,7 +426,8 @@ import math
 
 t = 0.0
 while True:
-    set_param(0, math.sin(t))  # example: slow sine wave on Parameter ch0
+    # example: slow sine wave on Parameter ch0
+    set_param(0, math.sin(t))
     t += 0.1
     await asyncio.sleep(1)`;
 }
