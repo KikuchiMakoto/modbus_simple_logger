@@ -2449,7 +2449,13 @@ function App() {
                       armedLabel="Release"
                       knobLabel="→"
                       onConfirm={handleToggleConnection}
-                      knobPx={30}
+                      // Grey, not the Output Tester's rose: disconnecting is
+                      // guarded because it should not happen by accident, not
+                      // because it is alarming — and a permanently red control
+                      // in the header would be shouting at someone who is only
+                      // ever looking at the channel grid behind it.
+                      tone="neutral"
+                      knobPx={28}
                       // Exactly the Connect button's 6rem: the two swap places
                       // in the same slot, so the header must not reflow when
                       // the link comes up. "Disconnect" is 10 Iosevka chars at

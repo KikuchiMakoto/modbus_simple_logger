@@ -15,6 +15,33 @@ import { useRef, useState } from 'react';
 // a deliberate gesture into a retry.
 const COMMIT_FRACTION = 0.92;
 
+/**
+ * How loudly the control announces itself. The gesture is the same either way —
+ * this is only about whether the action deserves the eye it pulls.
+ *
+ *   warn    destructive: dropping every output, discarding an editor's contents
+ *   neutral guarded but unremarkable: it should not happen by accident, and it
+ *           is not news when it does
+ */
+export type SlideTone = 'warn' | 'neutral';
+
+const TONE = {
+  warn: {
+    track: 'border-rose-300 bg-rose-50 dark:border-rose-500/50 dark:bg-rose-500/10',
+    fill: 'bg-rose-400/30 dark:bg-rose-400/20',
+    label: 'text-rose-600/80 dark:text-rose-400/80',
+    labelArmed: 'text-rose-700 dark:text-rose-300',
+    knob: 'bg-rose-500 text-white',
+  },
+  neutral: {
+    track: 'border-slate-300 bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60',
+    fill: 'bg-slate-400/25 dark:bg-slate-400/15',
+    label: 'text-slate-500 dark:text-slate-400',
+    labelArmed: 'text-slate-700 dark:text-slate-200',
+    knob: 'bg-slate-500 text-white dark:bg-slate-600',
+  },
+} as const;
+
 type SlideToConfirmProps = {
   /** Shown across the track before the commit point is reached. */
   label: string;
@@ -24,7 +51,13 @@ type SlideToConfirmProps = {
   knobLabel: string;
   onConfirm: () => void;
   disabled?: boolean;
-  /** Knob width in px; also the track's height budget. */
+  tone?: SlideTone;
+  /**
+   * Knob width in px. Set it to the track's INNER height — the height in
+   * `className` minus the 1px border on each side — or the knob renders as a
+   * pill rather than a circle and the progress fill, which is exactly this
+   * wide, stops short of or overhangs its edge.
+   */
   knobPx?: number;
   /** Height/typography classes, so a header control can match its neighbours. */
   className?: string;
@@ -38,7 +71,9 @@ export function SlideToConfirm({
   knobLabel,
   onConfirm,
   disabled = false,
-  knobPx = 44,
+  tone = 'warn',
+  // Defaults are a matched pair: h-9 is 36 px, less 1 px of border a side.
+  knobPx = 34,
   className = 'h-9',
   labelClassName = 'text-[11px]',
   'aria-label': ariaLabel,
@@ -73,6 +108,7 @@ export function SlideToConfirm({
 
   const travelNow = maxTravel();
   const armed = travelNow > 0 && knobX >= travelNow * COMMIT_FRACTION;
+  const palette = TONE[tone];
 
   return (
     <div
@@ -80,12 +116,12 @@ export function SlideToConfirm({
       className={`relative select-none overflow-hidden rounded-full border ${className} ${
         disabled
           ? 'border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800'
-          : 'border-rose-300 bg-rose-50 dark:border-rose-500/50 dark:bg-rose-500/10'
+          : palette.track
       }`}
     >
       {/* Fill behind the knob: the gesture's own progress bar. */}
       <div
-        className={`absolute inset-y-0 left-0 bg-rose-400/30 dark:bg-rose-400/20 ${
+        className={`absolute inset-y-0 left-0 ${palette.fill} ${
           dragging ? '' : 'transition-[width] duration-200'
         }`}
         style={{ width: `${knobX + knobPx}px` }}
@@ -99,8 +135,8 @@ export function SlideToConfirm({
           disabled
             ? 'text-slate-400 dark:text-slate-600'
             : armed
-              ? 'text-rose-700 dark:text-rose-300'
-              : 'text-rose-600/80 dark:text-rose-400/80'
+              ? palette.labelArmed
+              : palette.label
         }`}
       >
         {armed ? armedLabel : label}
@@ -114,7 +150,7 @@ export function SlideToConfirm({
         className={`absolute inset-y-0 left-0 flex touch-none items-center justify-center rounded-full text-xs font-bold ${
           disabled
             ? 'cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-600'
-            : 'cursor-grab bg-rose-500 text-white active:cursor-grabbing'
+            : `cursor-grab active:cursor-grabbing ${palette.knob}`
         } ${dragging ? '' : 'transition-transform duration-200'}`}
         role="button"
         aria-label={ariaLabel ?? label}

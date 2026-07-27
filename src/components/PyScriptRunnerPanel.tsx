@@ -118,7 +118,7 @@ export function PyScriptRunnerPanel({
             knobLabel="✕"
             onConfirm={scriptRunner.clearScriptCode}
             disabled={scriptRunner.scriptRunning}
-            knobPx={26}
+            knobPx={24}
             className="h-[26px] w-[7.5rem]"
             labelClassName="text-[0.7rem]"
             aria-label="Slide to reset the script to the default"
