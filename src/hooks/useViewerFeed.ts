@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isLauncherMode, isViewerMode, viewerToken } from '../utils/appMode';
+import type { ModbusPrecision } from '../types';
 
 // Page side of read-only remote monitoring (desktop exe only).
 //
@@ -49,6 +50,10 @@ export type ViewerStatePayload = {
   pollingIntervalMs: number;
   saveIntervalMs: number;
   actualPollIntervalMs: number;
+  // The register map actually in use on the wire, so the viewer can match the
+  // host's Raw formatting (Extended prints toFixed(3); Normal prints int).
+  // Sent on the same wholesale snapshot as everything else.
+  precision: ModbusPrecision;
   serial: string;
 };
 

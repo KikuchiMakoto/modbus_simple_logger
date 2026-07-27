@@ -1168,6 +1168,7 @@ function App() {
     pollingIntervalMs: pollingRate.valueMs,
     saveIntervalMs: saveRate.valueMs,
     actualPollIntervalMs,
+    precision: resolvedPrecision,
     serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
   });
 
@@ -1258,6 +1259,14 @@ function App() {
     setSavePointCount(state.savePointCount);
     setActualPollIntervalMs(state.actualPollIntervalMs ?? 0);
     setRemoteSerialLabel(state.serial);
+    // Mirror the host's resolved register map. Without this the viewer's
+    // resolvedPrecision stays at its 'normal' default and a host in Extended
+    // mode prints its Raw without toFixed(3), dropping the decimal part that
+    // is the whole reason the mode exists. The ref is the on-wire mirror that
+    // poll-side code reads; the viewer never polls, but keeping them in step
+    // is cheaper than reasoning about which one each consumer reads.
+    setResolvedPrecision((prev) => (prev === state.precision ? prev : state.precision));
+    resolvedPrecisionRef.current = state.precision;
     setPollingRate((prev) =>
       prev.valueMs === state.pollingIntervalMs
         ? prev
