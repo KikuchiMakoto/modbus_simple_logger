@@ -11,11 +11,11 @@ import { FloatingWindow } from './FloatingWindow';
  */
 
 const FULL_SCALE_V = 10;
-const PRESET_STEP_V = 1;
+const PRESET_STEP_V = 0.5;
 
 const clampVolt = (v: number): number => Math.min(FULL_SCALE_V, Math.max(0, v));
 
-// 0, 1, 2 … 10. Built rather than listed so the row stays in sync with
+// 0, 0.5, 1 … 10. Built rather than listed so the grid stays in sync with
 // FULL_SCALE_V if the DAC range ever changes.
 const PRESETS: number[] = (() => {
   const out: number[] = [];
@@ -135,7 +135,7 @@ export function OutputTesterPanel({
       subtitle="Manual AO output (GP8403, 0-10 V)"
       accent="blue"
       defaultWidth={400}
-      defaultHeight={440}
+      defaultHeight={480}
     >
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
         {/* Channel + live commanded value */}
@@ -171,19 +171,31 @@ export function OutputTesterPanel({
             manual field below is the one that needs Apply: a half-typed number
             must not reach the hardware. */}
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Four per row — an even count, so every row starts on a whole volt
+              and the whole volts stay in the same two columns all the way down.
+              They are tinted as well: 21 identically-styled buttons would have
+              to be read one by one, and a sweep is usually driven off the whole
+              volts with the halves as in-between points. */}
           <div className="grid grid-cols-4 gap-1">
-            {PRESETS.map((v) => (
-              <button
-                key={v}
-                type="button"
-                disabled={disabled}
-                onClick={() => send(v)}
-                translate="no"
-                className="rounded border border-sky-400 px-1 py-1 text-xs font-semibold tabular-nums text-sky-600 hover:bg-sky-50 active:bg-sky-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 disabled:hover:bg-transparent dark:border-sky-400/60 dark:text-sky-400 dark:hover:bg-sky-400/10 dark:disabled:border-slate-700 dark:disabled:text-slate-600"
-              >
-                {v.toFixed(1)} V
-              </button>
-            ))}
+            {PRESETS.map((v) => {
+              const whole = Number.isInteger(v);
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => send(v)}
+                  translate="no"
+                  className={`rounded border px-1 py-1 text-xs font-semibold tabular-nums disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-transparent disabled:text-slate-300 disabled:hover:bg-transparent dark:disabled:border-slate-700 dark:disabled:text-slate-600 ${
+                    whole
+                      ? 'border-sky-400 bg-sky-50 text-sky-700 hover:bg-sky-100 active:bg-sky-200 dark:border-sky-400/60 dark:bg-sky-400/10 dark:text-sky-300 dark:hover:bg-sky-400/20'
+                      : 'border-sky-200 text-sky-600 hover:bg-sky-50 active:bg-sky-100 dark:border-sky-400/30 dark:text-sky-400/90 dark:hover:bg-sky-400/10'
+                  }`}
+                >
+                  {v.toFixed(1)} V
+                </button>
+              );
+            })}
           </div>
         </div>
 
