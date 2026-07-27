@@ -2368,11 +2368,18 @@ function App() {
                   ModbusSimpleLogger
                 </a>
               </h1>
-              <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
-                {isViewerMode
-                  ? remoteSerialLabel || 'Waiting for the host window…'
-                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)} - ${precisionLabel}`}
-              </p>
+              {/* Link details have moved to Connection Config in full — baud
+                  and parity, the transport name, and the resolved precision.
+                  None of them is something to act on while a run is in flight
+                  (they are all locked once connected), and the header is
+                  sticky, so every line here is a line the channel grid never
+                  gets back. A viewer has no local link at all: what it shows
+                  is the host's, which no panel of its own can report. */}
+              {isViewerMode && (
+                <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
+                  {remoteSerialLabel || 'Waiting for the host window…'}
+                </p>
+              )}
               <div
                 role="status"
                 aria-live="polite"
@@ -2778,6 +2785,8 @@ function App() {
         stopBitsOptions={STOP_BITS_OPTIONS}
         parityOptions={PARITY_OPTIONS}
         precisionOptions={PRECISION_OPTIONS}
+        transportLabel={serialTransportLabel}
+        resolvedPrecisionLabel={precisionLabel}
         pollingRate={pollingRate}
         onPollingRateChange={setPollingRate}
         pollingOptions={POLLING_OPTIONS}

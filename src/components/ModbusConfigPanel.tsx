@@ -18,6 +18,13 @@ type ModbusConfigPanelProps = {
   stopBitsOptions: SerialSettings['stopBits'][];
   parityOptions: SerialSettings['parity'][];
   precisionOptions: { label: string; value: ModbusPrecisionSetting }[];
+  /** "WebSerial" or "WebUSB" — decided by the environment, not by the user. */
+  transportLabel: string;
+  /**
+   * The register map actually in use ("i16" / "f32t"), which under the "auto"
+   * setting is only known after the connect-time probe has answered.
+   */
+  resolvedPrecisionLabel: string;
   connected: boolean;
 };
 
@@ -38,6 +45,8 @@ export function ModbusConfigPanel({
   stopBitsOptions,
   parityOptions,
   precisionOptions,
+  transportLabel,
+  resolvedPrecisionLabel,
   connected,
 }: ModbusConfigPanelProps) {
   // "Connection Config", not "Modbus Config": the panel also covers the serial
@@ -45,6 +54,19 @@ export function ModbusConfigPanel({
   return (
     <FloatingWindow open={open} onClose={onClose} title="Connection Config" defaultWidth={300} defaultHeight={420}>
       <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
+        {/* Read-only, and first: which API the browser gave us is decided by the
+            environment (WebSerial where it exists, the WebUSB polyfill on
+            mobile), not by anything on this panel. It used to be printed in the
+            app header, where it cost a permanent line to say something that
+            never changes within a session. */}
+        <div
+          translate="no"
+          className="flex items-baseline justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-800"
+        >
+          <span className="text-xs text-slate-500 dark:text-slate-400">Transport</span>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{transportLabel}</span>
+        </div>
+
         <div>
           <label className="block text-xs text-slate-600 dark:text-slate-400">Slave ID</label>
           <input
@@ -146,7 +168,18 @@ export function ModbusConfigPanel({
         </div>
 
         <div>
-          <label className="block text-xs text-slate-600 dark:text-slate-400">Precision</label>
+          <label className="flex items-baseline justify-between text-xs text-slate-600 dark:text-slate-400">
+            <span>Precision</span>
+            {/* Only under "auto", and only once it has an answer: the register
+                map is settled by probing the device at connect time, so before
+                that there is nothing to report, and under an explicit setting
+                the select already says it. */}
+            {modbusPrecision === 'auto' && connected && (
+              <span translate="no" className="font-semibold text-slate-700 dark:text-slate-200">
+                in use: {resolvedPrecisionLabel}
+              </span>
+            )}
+          </label>
           <select
             value={modbusPrecision}
             onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecisionSetting)}
