@@ -1,4 +1,3 @@
-import { MODBUS_POLL_INTERVAL_CAP_MS } from '../constants';
 import { ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
@@ -42,7 +41,7 @@ export function ModbusConfigPanel({
   connected,
 }: ModbusConfigPanelProps) {
   // "Connection Config", not "Modbus Config": the panel also covers the serial
-  // link and the sampling rate, and the transport may be WebSerial or WebUSB.
+  // link and the polling rate, and the transport may be WebSerial or WebUSB.
   return (
     <FloatingWindow open={open} onClose={onClose} title="Connection Config" defaultWidth={300} defaultHeight={420}>
       <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
@@ -163,14 +162,21 @@ export function ModbusConfigPanel({
         </div>
 
         <div>
-          <label className="block text-xs text-slate-600 dark:text-slate-400">Sampling Rate</label>
+          <label className="block text-xs text-slate-600 dark:text-slate-400">Polling Rate</label>
+          {/* Locked once connected, like the serial settings above: the poll
+              rate is a property of the link, and the loop's schedule, its read
+              timeout and its retry budget are all derived from it. Changing it
+              mid-run also moves the sample grid the recording deadline is
+              locked to. "Save every" stays live because it is a property of the
+              measurement, and re-phasing it costs nothing. */}
           <select
             value={pollingRate.valueMs}
             onChange={(e) => {
               const next = pollingOptions.find((p) => p.valueMs === Number(e.target.value));
               if (next) onPollingRateChange(next);
             }}
-            className="w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            disabled={connected}
           >
             {pollingOptions.map((opt) => (
               <option key={opt.valueMs} value={opt.valueMs}>
@@ -179,8 +185,10 @@ export function ModbusConfigPanel({
             ))}
           </select>
           <p className="mt-0.5 text-[0.65rem] leading-tight text-slate-500 dark:text-slate-500">
-            This sets how often a sample is recorded. Except at 50 ms, the Modbus
-            polling rate stays fixed at {MODBUS_POLL_INTERVAL_CAP_MS} ms.
+            How often the device is read, and how often the chart moves — this
+            is the rate a feedback script sees. How often a reading is written
+            to file is <strong>Save every</strong>, next to Start Save. Fixed
+            while connected.
           </p>
         </div>
       </div>

@@ -44,11 +44,10 @@ export type ViewerStatePayload = {
   filename: string;
   saveElapsedMs: number;
   savePointCount: number;
-  // The selected sampling interval, which the viewer maps back onto its own
-  // POLLING_OPTIONS entry, plus the poll interval the host's loop actually
-  // measured. The two are unrelated numbers whenever sampling is slower than
-  // MODBUS_POLL_INTERVAL_CAP_MS.
+  // The host's two rate settings, which the viewer maps back onto its own
+  // option lists, plus the poll interval the host's loop actually measured.
   pollingIntervalMs: number;
+  saveIntervalMs: number;
   actualPollIntervalMs: number;
   serial: string;
 };

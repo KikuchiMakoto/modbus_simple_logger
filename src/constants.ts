@@ -21,6 +21,20 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // measured on-device yet (docs/chart-library-comparison.md §11-1), so this is a
 // doubling rather than the 8192 the hardware may well allow.
 export const CHART_MAX_POINTS = 2048;
+// How often a polled sample is fed to the chart buffer (and, while not saving,
+// to IndexedDB and the remote viewer feed). Applied as a poll-count stride, so
+// it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
+// 50 ms, every 5th at 20 ms.
+//
+// 10 Hz is already twice the chart's own redraw rate, so the points past it
+// were never separately visible — they only ever added buffer churn and, at the
+// fast poll rates, decimation work between two Modbus transfers. Keeping the
+// chart's input rate fixed also means the poll rate can be raised for a control
+// loop without the display cost following it up.
+//
+// The TSV is NOT on this budget: what the file records is the "Save every"
+// setting, which can be faster than this.
+export const CHART_INPUT_INTERVAL_MS = 100;
 export const NON_SAVING_CHART_WINDOW_MS = 60_000;
 // Minimum interval between chart redraws (setDisplayRevision bumps). Chart data
 // flushes ~10x/s, but redrawing all 4 scattergl charts that often is wasteful
@@ -40,12 +54,12 @@ export const CHART_REDRAW_INTERVAL_SAVING_MS = 500;
 // publishing is on a budget.
 export const READOUT_PUBLISH_INTERVAL_MS = 250;
 // Floor on how often the AI channel cards are refreshed, applied only when
-// polling faster than this (at the default 200 ms nothing changes). A publish
-// re-renders every channel card, and at 20 Hz that render lands between two
-// Modbus transfers — display cost turning straight into polling jitter, which
-// is the one trade this app must never make. 10 Hz is already past what anyone
-// can read off a moving number. Raise it to 0 to go back to one render per
-// sample; the recorded data is unaffected either way.
+// polling faster than this (at the default 100 ms poll rate nothing changes). A
+// publish re-renders every channel card, and at 20 Hz that render lands between
+// two Modbus transfers — display cost turning straight into polling jitter,
+// which is the one trade this app must never make. 10 Hz is already past what
+// anyone can read off a moving number. Raise it to 0 to go back to one render
+// per sample; the recorded data is unaffected either way.
 export const CHANNEL_CARD_MIN_INTERVAL_MS = 100;
 // NOTE: CHART_PURGE_INTERVAL_MS (periodic 15-minute purge + remount) was removed
 // in v3.1. It was counterproductive: `Plotly.purge()` does not destroy the
@@ -79,22 +93,6 @@ export const CHANNEL_CARD_MIN_INTERVAL_MS = 100;
 export const PRECISION_PROBE_TIMEOUT_MS = 100;
 export const PRECISION_PROBE_ATTEMPTS = 3;
 export const PRECISION_PROBE_CHANNELS = 2;
-
-// Ceiling on the Modbus polling interval, independent of the selected sampling
-// (= recording) rate. Anything slower than this is achieved by recording one
-// poll out of every N, not by slowing the wire down.
-//
-// The reason is closed-loop control: a script driving AO reads its inputs from
-// the values the polling loop refreshes, so tying the poll rate to the save rate
-// meant a run that only wants a sample a minute on disk also got a control loop
-// that saw new data once a minute. Feedback quality and file size are separate
-// concerns and now have separate rates — 10 Hz on the wire, whatever the user
-// picked on disk.
-//
-// 50 ms is the one selectable rate below this, and there the cap does nothing:
-// the poll interval is min(selected, cap), so 50 ms still polls at 50 ms and
-// records every sample.
-export const MODBUS_POLL_INTERVAL_CAP_MS = 100;
 
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;

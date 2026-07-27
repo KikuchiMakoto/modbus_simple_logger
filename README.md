@@ -11,7 +11,7 @@
 | 機能 | 説明 |
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境は `web-serial-polyfill` 経由の WebUSB フォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。Sampling Rate（50ms〜5分、既定 200ms）は**記録の周期**で、Modbus 通信は 50ms 設定を除き **100ms 固定** — 遅い記録周期でもフィードバック制御は 10Hz で回る。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（20ms / 50ms / 100ms、既定 100ms、接続中は固定）と **Save every**（20ms〜30分、既定 1s、いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
