@@ -815,8 +815,12 @@ function App() {
     // stream, so the feed's bandwidth is bounded by the chart budget rather than
     // by the poll rate — a 50 Hz capture does not become a 50 Hz socket.
     const published: DataPoint[] = [];
+    // Whether the chart buffer actually gained anything. While saving it very
+    // often does not — see the redraw arming at the bottom.
+    let bufferChanged = false;
 
     if (isViewerMode) {
+      bufferChanged = true;
       // A viewer's points arrive already decimated by the host and already
       // bounded by the hub's backlog, so there is nothing to decide here: keep
       // the most recent chart budget and drop the rest. Notably this skips the
@@ -834,6 +838,7 @@ function App() {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
           published.push(p);
+          bufferChanged = true;
         }
         saveRawCounterRef.current++;
       }
@@ -858,6 +863,7 @@ function App() {
       }
     } else {
       // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
+      bufferChanged = true;
       for (const p of pointsToAdd) buffer.push(p);
       published.push(...pointsToAdd);
       const cutoff = Date.now() - NON_SAVING_CHART_WINDOW_MS;
@@ -899,21 +905,33 @@ function App() {
       );
     }
 
-    // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
-    // this flush runs ~10x/s, but redrawing all 4 scattergl charts that often is
-    // wasteful and feeds WebGL/regl churn. A single pending timer collapses a
-    // burst of flushes into one redraw showing the latest buffer. Reset paths
-    // (connect/disconnect/start/stop-save) still bump setDisplayRevision directly
-    // for an immediate redraw.
-    // While saving, the chart is the whole capture downsampled to a fixed point
-    // budget: each new sample moves a handful of pixels at most, so redrawing
-    // 5x/s buys nothing a slower rate does not. The interval is the one knob
-    // that scales the chart's competition with the acquisition loop, and during
-    // a save is exactly when that competition matters.
+    // Redraws are data-driven AND rate-limited, and it takes both to be right.
+    //
+    // Data-driven: a flush that added nothing to the buffer arms nothing. This
+    // matters more the longer a save runs. The whole-capture decimation doubles
+    // its stride every time the buffer fills, so new chart points arrive every
+    // 100 ms at stride 1 but only every 6.4 s at stride 64 — while the flush
+    // itself keeps running 10x/s throughout. Arming on every flush therefore
+    // redrew four scattergl charts a dozen times per actual change late in a
+    // capture, each redraw painting a trace identical to the last, and the
+    // waste grew without bound as the run got longer. That cost landed on the
+    // main thread between two Modbus transfers, which is exactly where this app
+    // cannot afford it.
+    //
+    // Rate-limited: the floor still has to be here, because early in a save
+    // (stride 1) points do arrive 10x/s, and the chart is the whole capture
+    // downsampled to a fixed budget — one new sample moves a handful of pixels
+    // at most. The trailing-edge timer collapses that burst into one redraw of
+    // the latest buffer. Together the two rules mean the redraw rate is
+    // whichever is SLOWER of the point rate and this interval, with no idle
+    // redraws at either end.
+    //
+    // Reset paths (connect/disconnect/start/stop-save) still bump
+    // setDisplayRevision directly for an immediate redraw.
     const redrawIntervalMs = tsvWriterRef.current
       ? CHART_REDRAW_INTERVAL_SAVING_MS
       : CHART_REDRAW_INTERVAL_MS;
-    if (chartRedrawTimerRef.current === undefined) {
+    if (bufferChanged && chartRedrawTimerRef.current === undefined) {
       chartRedrawTimerRef.current = window.setTimeout(() => {
         chartRedrawTimerRef.current = undefined;
         setDisplayRevision((v) => v + 1);

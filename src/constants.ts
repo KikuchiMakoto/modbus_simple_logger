@@ -45,6 +45,11 @@ export const CHART_REDRAW_INTERVAL_MS = 200;
 // decimated to CHART_MAX_POINTS, so consecutive redraws differ by a pixel or
 // two — while the loop is at its most sensitive to anything sharing the main
 // thread. Recording is unaffected: every sample still goes to the TSV file.
+//
+// Both of these are a FLOOR, not a period. A redraw is only armed by a flush
+// that actually added a point to the chart buffer (see flushPendingDataPoints),
+// so late in a save — where the decimation stride means a new point every few
+// seconds — the redraw rate follows the points rather than this constant.
 export const CHART_REDRAW_INTERVAL_SAVING_MS = 500;
 // How often per-sample readouts (measured rate, saved-point count) are pushed
 // into React state. They are numbers a human reads, so 4/s is already more than
