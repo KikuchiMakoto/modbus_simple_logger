@@ -2450,7 +2450,7 @@ function App() {
                       knobLabel="→"
                       onConfirm={handleToggleConnection}
                       knobPx={30}
-                      className="h-[30px] w-[6.5rem]"
+                      className="h-[30px] w-[6.2rem]"
                       labelClassName="text-[0.7rem]"
                       aria-label="Slide to disconnect the device"
                     />
