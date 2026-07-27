@@ -80,6 +80,22 @@ export const PRECISION_PROBE_TIMEOUT_MS = 100;
 export const PRECISION_PROBE_ATTEMPTS = 3;
 export const PRECISION_PROBE_CHANNELS = 2;
 
+// Ceiling on the Modbus polling interval, independent of the selected sampling
+// (= recording) rate. Anything slower than this is achieved by recording one
+// poll out of every N, not by slowing the wire down.
+//
+// The reason is closed-loop control: a script driving AO reads its inputs from
+// the values the polling loop refreshes, so tying the poll rate to the save rate
+// meant a run that only wants a sample a minute on disk also got a control loop
+// that saw new data once a minute. Feedback quality and file size are separate
+// concerns and now have separate rates — 10 Hz on the wire, whatever the user
+// picked on disk.
+//
+// 50 ms is the one selectable rate below this, and there the cap does nothing:
+// the poll interval is min(selected, cap), so 50 ms still polls at 50 ms and
+// records every sample.
+export const MODBUS_POLL_INTERVAL_CAP_MS = 100;
+
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;
 export const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;

@@ -41,7 +41,11 @@ export type McpStatus = {
   connected: boolean;
   polling: boolean;
   saving: boolean;
+  // Modbus poll interval on the wire (capped at MODBUS_POLL_INTERVAL_CAP_MS)
+  // and the interval at which polls are recorded. They differ whenever the
+  // selected sampling rate is slower than the cap.
   pollingIntervalMs: number;
+  samplingIntervalMs: number;
   serial: string;
   scriptRunning: boolean;
   scriptSource: string;

@@ -1,3 +1,4 @@
+import { MODBUS_POLL_INTERVAL_CAP_MS } from '../constants';
 import { ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
@@ -177,6 +178,10 @@ export function ModbusConfigPanel({
               </option>
             ))}
           </select>
+          <p className="mt-0.5 text-[0.65rem] leading-tight text-slate-500 dark:text-slate-500">
+            This sets how often a sample is recorded. Except at 50 ms, the Modbus
+            polling rate stays fixed at {MODBUS_POLL_INTERVAL_CAP_MS} ms.
+          </p>
         </div>
       </div>
     </FloatingWindow>
