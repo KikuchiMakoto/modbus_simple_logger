@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { probeRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
-import { DEFAULT_UI_SCALE, canStepUiScale, setUiScalePercent, stepUiScale, useUiScalePercent } from '../utils/uiScale';
 import type { NotificationsState } from '../hooks/useNotifications';
 
 const LIBRARIES = [
@@ -35,32 +34,6 @@ const UPDATE_STATUS: Record<UpdateCheckResult, string> = {
   failed: 'Update check failed. Check your network connection.',
 };
 
-function ScaleStepButton({
-  delta,
-  label,
-  children,
-}: {
-  delta: number;
-  label: string;
-  children: string;
-}) {
-  // Subscribes in its own right so the end-of-range disabled state is correct
-  // no matter which control changed the scale.
-  useUiScalePercent();
-  return (
-    <button
-      type="button"
-      onClick={() => stepUiScale(delta)}
-      disabled={!canStepUiScale(delta)}
-      aria-label={label}
-      title={label}
-      className="h-7 w-7 rounded border border-slate-300 text-base font-bold leading-none text-slate-700 hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
-    >
-      {children}
-    </button>
-  );
-}
-
 export function AppInfoPanel({
   open,
   onClose,
@@ -78,7 +51,6 @@ export function AppInfoPanel({
   notifications: NotificationsState;
 }) {
   const backend = useRenderBackend();
-  const uiScalePercent = useUiScalePercent();
   const [checking, setChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
@@ -170,35 +142,10 @@ export function AppInfoPanel({
           )}
         </div>
 
-        <div>
-          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Display</h4>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-semibold">Interface scale</span>
-              <div className="flex shrink-0 items-center gap-1">
-                <ScaleStepButton delta={-1} label="Decrease interface scale">−</ScaleStepButton>
-                {/* The percentage doubles as the reset control: at anything but
-                    100% it is the one click back to the default, which the two
-                    step buttons would otherwise take up to five of. */}
-                <button
-                  type="button"
-                  onClick={() => setUiScalePercent(DEFAULT_UI_SCALE)}
-                  disabled={uiScalePercent === DEFAULT_UI_SCALE}
-                  title={uiScalePercent === DEFAULT_UI_SCALE ? undefined : `Reset to ${DEFAULT_UI_SCALE}%`}
-                  className="w-16 rounded border border-slate-300 px-1 py-1 text-center font-mono text-sm font-semibold tabular-nums text-slate-800 hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-default disabled:border-slate-300 disabled:text-slate-800 disabled:hover:text-slate-800 dark:border-slate-600 dark:text-slate-100 dark:hover:border-emerald-400 dark:hover:text-emerald-400 dark:disabled:border-slate-600 dark:disabled:text-slate-100"
-                >
-                  {uiScalePercent}%
-                </button>
-                <ScaleStepButton delta={1} label="Increase interface scale">+</ScaleStepButton>
-              </div>
-            </div>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Scales the whole interface, and is remembered on this device. Use it where
-              the browser's own zoom is unavailable or does not stick — an installed PWA
-              on Android, or a display whose system scaling the browser does not follow.
-            </p>
-          </div>
-        </div>
+        {/* Interface scale used to be here. It moved to the Menu panel's header
+            (components/UiScaleControl.tsx): it is a display setting you adjust
+            while looking at the page, and this panel is the wrong place to have
+            to open to do that. */}
 
         <div>
           <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Notifications</h4>

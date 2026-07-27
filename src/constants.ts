@@ -10,10 +10,10 @@ export const AO_START_REGISTER = 0;
 // on-screen chart).
 export const MAX_POINTS_IN_MEMORY = 256;
 
-// On-screen chart display budget. The chart never renders more than this many
-// points: while not saving it shows a ~NON_SAVING_CHART_WINDOW_MS sliding time
-// window; while saving it downsamples the whole capture (save-start → now) to
-// this budget. The full data is always written to TSV regardless.
+// On-screen chart budget while SAVING: the whole capture (save-start → now) is
+// downsampled to this many points. The not-saving preview has its own, smaller
+// budget (NON_SAVING_CHART_PREVIEW_POINTS). The full data is always written to
+// TSV regardless.
 // Raised 1024 → 2048 in v3.1, funded by disabling the scattergl hover pick-index
 // (`hoverinfo: 'skip'`, see ChartPanel.tsx): that index is rebuilt per update and
 // its cost scales with this constant, so removing it buys headroom at the same
@@ -21,17 +21,46 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // measured on-device yet (docs/chart-library-comparison.md §11-1), so this is a
 // doubling rather than the 8192 the hardware may well allow.
 export const CHART_MAX_POINTS = 2048;
-export const NON_SAVING_CHART_WINDOW_MS = 60_000;
-// Minimum interval between chart redraws (setDisplayRevision bumps). Chart data
-// flushes ~10x/s, but redrawing all 4 scattergl charts that often is wasteful
-// and feeds WebGL/regl resource churn. Coalescing redraws to ~5 fps keeps the
-// live view responsive while cutting steady GPU/React cost roughly in half.
-export const CHART_REDRAW_INTERVAL_MS = 200;
-// Same thing while a save is running. The chart then shows the whole capture
-// decimated to CHART_MAX_POINTS, so consecutive redraws differ by a pixel or
-// two — while the loop is at its most sensitive to anything sharing the main
-// thread. Recording is unaffected: every sample still goes to the TSV file.
-export const CHART_REDRAW_INTERVAL_SAVING_MS = 500;
+// How often a polled sample is fed to the chart buffer (and, while not saving,
+// to IndexedDB and the remote viewer feed). Applied as a poll-count stride, so
+// it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
+// 50 ms, every 5th at 20 ms.
+//
+// 10 Hz is already twice the chart's own redraw rate, so the points past it
+// were never separately visible — they only ever added buffer churn and, at the
+// fast poll rates, decimation work between two Modbus transfers. Keeping the
+// chart's input rate fixed also means the poll rate can be raised for a control
+// loop without the display cost following it up.
+//
+// The TSV is NOT on this budget: what the file records is the "Save every"
+// setting, which can be faster than this.
+export const CHART_INPUT_INTERVAL_MS = 100;
+// Preview length while NOT saving, as a point count rather than a duration.
+// Chart input is a fixed CHART_INPUT_INTERVAL_MS, so the two are the same thing
+// — 768 x 100 ms is a ~77 s window — and counting points means the trim is a
+// single splice with no clock read and no scan for the cutoff.
+//
+// It also behaves better when the feed stalls: a time window empties itself
+// while the device is silent, leaving a blank chart with no clue what the last
+// reading was, where a point budget holds the last 77 s of real data until new
+// data pushes it out.
+export const NON_SAVING_CHART_PREVIEW_POINTS = 768;
+// Minimum interval between chart redraws (setDisplayRevision bumps), saving or
+// not. Chart data flushes up to 10x/s and redrawing four scattergl charts that
+// often is wasteful and feeds WebGL/regl resource churn; 2 fps is plenty for a
+// preview and keeps the steady GPU/React cost off the acquisition loop, which
+// is the competition that matters. Recording is unaffected either way.
+//
+// One constant, not one per mode: the saving case used to be slower (500 vs
+// 200 ms) on the argument that a whole-capture view moves less per sample, but
+// the same is true of a 768-point preview, and two numbers only ever meant two
+// things to reason about.
+//
+// This is a FLOOR, not a period. A redraw is only armed by a flush that
+// actually added a point to the chart buffer (see flushPendingDataPoints), so
+// late in a save — where the decimation stride means a new point every few
+// seconds — the redraw rate follows the points rather than this constant.
+export const CHART_REDRAW_INTERVAL_MS = 500;
 // How often per-sample readouts (measured rate, saved-point count) are pushed
 // into React state. They are numbers a human reads, so 4/s is already more than
 // anyone can follow — while a state update per sample put a full re-render of
@@ -40,12 +69,12 @@ export const CHART_REDRAW_INTERVAL_SAVING_MS = 500;
 // publishing is on a budget.
 export const READOUT_PUBLISH_INTERVAL_MS = 250;
 // Floor on how often the AI channel cards are refreshed, applied only when
-// polling faster than this (at the default 200 ms nothing changes). A publish
-// re-renders every channel card, and at 20 Hz that render lands between two
-// Modbus transfers — display cost turning straight into polling jitter, which
-// is the one trade this app must never make. 10 Hz is already past what anyone
-// can read off a moving number. Raise it to 0 to go back to one render per
-// sample; the recorded data is unaffected either way.
+// polling faster than this (at the default 100 ms poll rate nothing changes). A
+// publish re-renders every channel card, and at 20 Hz that render lands between
+// two Modbus transfers — display cost turning straight into polling jitter,
+// which is the one trade this app must never make. 10 Hz is already past what
+// anyone can read off a moving number. Raise it to 0 to go back to one render
+// per sample; the recorded data is unaffected either way.
 export const CHANNEL_CARD_MIN_INTERVAL_MS = 100;
 // NOTE: CHART_PURGE_INTERVAL_MS (periodic 15-minute purge + remount) was removed
 // in v3.1. It was counterproductive: `Plotly.purge()` does not destroy the
@@ -82,7 +111,22 @@ export const PRECISION_PROBE_CHANNELS = 2;
 
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;
+// Floor on the AI-read failure budget, and the share of the polls in one window
+// that may fail before reads are suspended. Whichever is larger wins.
+//
+// A flat count stopped working once the poll rate was decoupled from the save
+// rate. It was written when a slow setting meant a slow loop, so ten failures
+// took minutes to accumulate; at a fixed 10-40 Hz it is one second of a dead
+// device, after which every read is skipped until the failures age out of the
+// window — up to a minute of blackout, and at a 200 ms save rate that is 300
+// missing rows. The point of the limiter is to stop hammering a device that is
+// not answering, and "not answering" is a proportion of attempts, not a count.
+//
+// At 10% and a 100 ms poll rate this is 60 failures — six seconds of a fully
+// dead link before it backs off, while a link dropping a few percent of frames
+// never trips at all. That is the intended split.
 export const INPUT_READ_MAX_FAILURES_PER_WINDOW = 10;
+export const INPUT_READ_MAX_FAILURE_RATIO = 0.1;
 export const OUTPUT_HOLDING_RETRY_WINDOW_MS = 60_000;
 export const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 

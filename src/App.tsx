@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -25,15 +25,16 @@ import {
   RETRY_DELAY_MS,
   INPUT_READ_RETRY_WINDOW_MS,
   INPUT_READ_MAX_FAILURES_PER_WINDOW,
+  INPUT_READ_MAX_FAILURE_RATIO,
   OUTPUT_HOLDING_RETRY_WINDOW_MS,
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
-  CHART_REDRAW_INTERVAL_SAVING_MS,
   READOUT_PUBLISH_INTERVAL_MS,
   CHANNEL_CARD_MIN_INTERVAL_MS,
-  NON_SAVING_CHART_WINDOW_MS,
+  CHART_INPUT_INTERVAL_MS,
+  NON_SAVING_CHART_PREVIEW_POINTS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
   KEEP_LATEST_TRIM_INTERVAL,
@@ -73,6 +74,7 @@ import {
   downloadRecoveredRun,
   formatRunSize,
   listRecoverableRuns,
+  recoveredDownloadName,
   requestPersistentStorage,
 } from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
@@ -92,6 +94,7 @@ import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { McpPanel } from './components/McpPanel';
+import { ThemeToggle } from './components/ThemeToggle';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -126,9 +129,41 @@ const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 // meter can never disagree with what the hardware will actually accept.
 const AO_FULL_SCALE_MV = 10000;
 
+/**
+ * How fast the Modbus loop runs. Deliberately short: this is the rate a
+ * feedback script's inputs are refreshed at, and there is no reason to ever
+ * want it slower — a run that only needs a sample a minute on disk still wants
+ * a control loop that sees fresh data. How much of it is kept is SAVE_RATE_OPTIONS.
+ */
 const POLLING_OPTIONS: PollingRateOption[] = [
+  // 25 ms, not 20: 20 ms was tried on the bench and did not hold rate, 25 ms
+  // does. It is still the setting nearest the edge — the read timeout has a
+  // 100 ms floor it cannot honour, so what keeps it working is the device
+  // answering well inside the cycle rather than anything this code enforces.
+  { label: '25 ms', valueMs: 25 },
   { label: '50 ms', valueMs: 50 },
   { label: '100 ms', valueMs: 100 },
+];
+const DEFAULT_POLLING_RATE_MS = 100;
+
+/**
+ * How often a polled sample is written to the TSV file.
+ *
+ * Only the file: the chart and IndexedDB stay on the poll rate, so the live
+ * view is the same whether rows land every 200 ms or every half hour.
+ *
+ * Starts at 200 ms, independently of the poll rate. Faster save rates were
+ * offered briefly and are not on the table: a file written faster than this
+ * buys nothing anyone reads back, while the per-row cost lands in the middle of
+ * the acquisition loop. Every entry is a whole multiple of every poll rate, so
+ * the written interval lands on the poll grid exactly — 200 ms is every 2nd
+ * poll at 100 ms polling, every 8th at 25 ms.
+ *
+ * The floor being above the slowest poll rate is what lets the two lists be
+ * independent. Adding a poll rate slower than 200 ms would break that, and the
+ * save rate would need clamping to it.
+ */
+const SAVE_RATE_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
   { label: '500 ms', valueMs: 500 },
   { label: '1 s', valueMs: 1000 },
@@ -140,7 +175,11 @@ const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '1 min', valueMs: 60000 },
   { label: '2 min', valueMs: 120000 },
   { label: '5 min', valueMs: 300000 },
+  { label: '10 min', valueMs: 600000 },
+  { label: '20 min', valueMs: 1200000 },
+  { label: '30 min', valueMs: 1800000 },
 ];
+const DEFAULT_SAVE_RATE_MS = 1000;
 
 const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
@@ -330,46 +369,6 @@ const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 // header reads as one icon set. Inlined rather than pulled from an icon package:
 // the app must precache every asset for offline use, and these are two paths.
 //
-// Not a Unicode glyph (☀ / ☾): those render from whatever font the platform
-// picks — colour emoji on some, a thin outline on others — and would be the one
-// element in the UI not drawn from the bundled Iosevka stack.
-function SunIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <circle cx="12" cy="12" r="4.5" />
-      <path d="M12 1.5v2M12 20.5v2M3.6 3.6l1.4 1.4M19 19l1.4 1.4M1.5 12h2M20.5 12h2M3.6 20.4 5 19M19 5l1.4-1.4" />
-    </svg>
-  );
-}
-
-function MoonIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
-
 function CollapseButton({
   collapsed,
   onToggle,
@@ -467,7 +466,14 @@ function App() {
   // in handleConnect before polling is allowed to start, so no cycle can run
   // against the previous connection's answer.
   const resolvedPrecisionRef = useRef<ModbusPrecision>('normal');
-  const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS.find(p => p.valueMs === 200)!);
+  // Two independent rates: how fast the link is polled, and how much of that is
+  // kept. See POLLING_OPTIONS / SAVE_RATE_OPTIONS.
+  const [pollingRate, setPollingRate] = useState<PollingRateOption>(
+    POLLING_OPTIONS.find((p) => p.valueMs === DEFAULT_POLLING_RATE_MS)!,
+  );
+  const [saveRate, setSaveRate] = useState<PollingRateOption>(
+    SAVE_RATE_OPTIONS.find((p) => p.valueMs === DEFAULT_SAVE_RATE_MS)!,
+  );
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
   const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels());
@@ -515,14 +521,11 @@ function App() {
   const inputReadFailureTimestampsRef = useRef<number[]>([]);
   const lastAiReadCompletedAtRef = useRef(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const recentTimestampsRef = useRef<number[]>([]);
   // Readouts (measured rate, saved-point count) are published to React on a
   // budget rather than per sample — see READOUT_PUBLISH_INTERVAL_MS.
-  const lastRatePublishRef = useRef(0);
   const lastCardPublishRef = useRef(0);
   const lastSaveCountPublishRef = useRef(0);
   const savePointCountRef = useRef(0);
-  const [actualRateHz, setActualRateHz] = useState<number>(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
   const batchUpdateTimer = useRef<number | undefined>(undefined);
   const tsvWriterRef = useRef<TsvSink | null>(null);
@@ -560,7 +563,35 @@ function App() {
   // stride and raw-point counter (reset on each save start).
   const saveDecimationStrideRef = useRef(1);
   const saveRawCounterRef = useRef(0);
-  const pollingRateRef = useRef(pollingRate.valueMs);
+  // The Modbus poll interval on the wire — NOT the save rate. Everything that
+  // has to fit inside one transfer cycle (read timeouts, the retry budget, the
+  // channel-card publish floor) is measured against this.
+  const pollIntervalRef = useRef(pollingRate.valueMs);
+  // The recording side: the selected save interval, and the capture time the
+  // next recorded sample is due at (0 = record the very next successful poll).
+  //
+  // A due *time* rather than a poll counter, because polls are not guaranteed to
+  // happen: a read can fail, and the loop skips its request entirely while the
+  // save-file picker holds the foreground. A counter would let those shift every
+  // subsequent row — and would drop a row outright whenever the failed poll
+  // happened to be the Nth one. With a deadline, a missed poll costs at most one
+  // poll interval of lateness and the phase re-locks by itself.
+  const saveIntervalRef = useRef(saveRate.valueMs);
+  const nextRecordAtRef = useRef(0);
+  // Chart input decimation: feed the display path one poll in every
+  // `plotStrideRef`, so it runs at a fixed CHART_INPUT_INTERVAL_MS whatever the
+  // poll rate. A plain counter, not a deadline like the save path above: a poll
+  // lost to a failed read shifts the phase of a 10 Hz chart trace by 100 ms and
+  // nothing else, whereas a missing TSV row is missing data.
+  const plotStrideRef = useRef(1);
+  const pollsSincePlotRef = useRef(0);
+  // Measured poll interval, for the header's parenthetical. Taken from the poll
+  // loop rather than from the recorded points, which at the slow save rates are
+  // a different and much rarer clock: the header answers "is the link keeping
+  // up", and that question is about the wire.
+  const recentPollTimestampsRef = useRef<number[]>([]);
+  const lastPollRatePublishRef = useRef(0);
+  const [actualPollIntervalMs, setActualPollIntervalMs] = useState(0);
   const voltageConfigRef = useRef<VoltageMode[]>(voltageConfig);
 
   // Remote monitoring (see hooks/useViewerFeed.ts). Held in a ref because the
@@ -629,7 +660,6 @@ function App() {
       // pressure. Best effort — a refusal changes nothing else.
       requestPersistentStorage().catch(() => {});
 
-      const keepNote = 'Cancel keeps it and offers it again next time.';
       const runs = await listRecoverableRuns();
       if (runs.length === 0) return;
 
@@ -651,8 +681,20 @@ function App() {
         `File: ${found.originalName}\n` +
         `Started: ${started}\n` +
         `Size: ${formatRunSize(found.size)}\n\n` +
-        `OK downloads it now. ${keepNote}${alsoWaiting}`;
-      if (!window.confirm(offer)) return;
+        `OK downloads it as ${recoveredDownloadName(found.originalName)}.\n` +
+        `Cancel deletes the recovery copy.${alsoWaiting}`;
+      // Declining deletes it, rather than keeping it for another prompt at the
+      // next startup. The user has been shown the run's name, start time and
+      // size and said no to it; asking again every launch until they relent is
+      // not protecting data, and the dialog says plainly what Cancel does.
+      //
+      // The second prompt below is the opposite case and still keeps: there,
+      // Cancel means "the download did not arrive", so deleting would destroy
+      // the very file being rescued.
+      if (!window.confirm(offer)) {
+        await discardRecoveredRun(found);
+        return;
+      }
 
       try {
         await downloadRecoveredRun(found);
@@ -671,9 +713,9 @@ function App() {
       // reading it truncates the very file being rescued, and a run this feature
       // exists for can be hundreds of megabytes.
       const cleanup =
-        `${found.originalName} was sent to your browser's downloads.\n\n` +
+        `${recoveredDownloadName(found.originalName)} was sent to your browser's downloads.\n\n` +
         `Once the download has finished and the file opens, press OK to delete the recovery copy.\n\n` +
-        `${keepNote}`;
+        `Cancel keeps it and offers it again next time.`;
       if (window.confirm(cleanup)) await discardRecoveredRun(found);
     };
 
@@ -681,8 +723,18 @@ function App() {
   }, []);
 
   useEffect(() => {
-    pollingRateRef.current = pollingRate.valueMs;
+    pollIntervalRef.current = pollingRate.valueMs;
+    plotStrideRef.current = Math.max(1, Math.round(CHART_INPUT_INTERVAL_MS / pollingRate.valueMs));
+    pollsSincePlotRef.current = 0;
   }, [pollingRate.valueMs]);
+
+  useEffect(() => {
+    saveIntervalRef.current = saveRate.valueMs;
+    // Re-arm rather than carry the old phase over: a change to the save rate
+    // should take effect on the next poll, not once the deadline left over from
+    // the previous rate expires (up to half an hour away).
+    nextRecordAtRef.current = 0;
+  }, [saveRate.valueMs]);
 
   // A manual choice is its own answer — no probe involved — so it takes effect
   // as soon as it is picked rather than at the next connect. (The control is
@@ -773,10 +825,14 @@ function App() {
     // What remote viewers are shown: exactly the points this host decided to
     // plot, not every captured point. During a save that means the decimated
     // stream, so the feed's bandwidth is bounded by the chart budget rather than
-    // by the sampling rate — a 100 Hz capture does not become a 100 Hz socket.
+    // by the poll rate — a 50 Hz capture does not become a 50 Hz socket.
     const published: DataPoint[] = [];
+    // Whether the chart buffer actually gained anything. While saving it very
+    // often does not — see the redraw arming at the bottom.
+    let bufferChanged = false;
 
     if (isViewerMode) {
+      bufferChanged = true;
       // A viewer's points arrive already decimated by the host and already
       // bounded by the hub's backlog, so there is nothing to decide here: keep
       // the most recent chart budget and drop the rest. Notably this skips the
@@ -794,6 +850,7 @@ function App() {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
           published.push(p);
+          bufferChanged = true;
         }
         saveRawCounterRef.current++;
       }
@@ -817,16 +874,15 @@ function App() {
         // landed. The redraw triggered below already draws the new trace.
       }
     } else {
-      // Not saving: show a sliding ~NON_SAVING_CHART_WINDOW_MS time window.
+      // Not saving: a sliding preview of the last NON_SAVING_CHART_PREVIEW_POINTS
+      // points, which at the fixed chart input rate is a ~77 s window. No
+      // decimation — every point the chart is fed is drawn.
+      bufferChanged = true;
       for (const p of pointsToAdd) buffer.push(p);
       published.push(...pointsToAdd);
-      const cutoff = Date.now() - NON_SAVING_CHART_WINDOW_MS;
-      let drop = 0;
-      while (drop < buffer.length && buffer[drop].timestamp < cutoff) drop++;
-      if (buffer.length - drop > CHART_MAX_POINTS) {
-        drop = buffer.length - CHART_MAX_POINTS;
+      if (buffer.length > NON_SAVING_CHART_PREVIEW_POINTS) {
+        buffer.splice(0, buffer.length - NON_SAVING_CHART_PREVIEW_POINTS);
       }
-      if (drop > 0) buffer.splice(0, drop);
 
       // Persist this batch to IndexedDB in a single transaction (only while not
       // saving; during save the TSV file is the durable store). Convert the
@@ -859,25 +915,34 @@ function App() {
       );
     }
 
-    // Coalesce data-driven redraws to ~CHART_REDRAW_INTERVAL_MS (trailing edge):
-    // this flush runs ~10x/s, but redrawing all 4 scattergl charts that often is
-    // wasteful and feeds WebGL/regl churn. A single pending timer collapses a
-    // burst of flushes into one redraw showing the latest buffer. Reset paths
-    // (connect/disconnect/start/stop-save) still bump setDisplayRevision directly
-    // for an immediate redraw.
-    // While saving, the chart is the whole capture downsampled to a fixed point
-    // budget: each new sample moves a handful of pixels at most, so redrawing
-    // 5x/s buys nothing a slower rate does not. The interval is the one knob
-    // that scales the chart's competition with the acquisition loop, and during
-    // a save is exactly when that competition matters.
-    const redrawIntervalMs = tsvWriterRef.current
-      ? CHART_REDRAW_INTERVAL_SAVING_MS
-      : CHART_REDRAW_INTERVAL_MS;
-    if (chartRedrawTimerRef.current === undefined) {
+    // Redraws are data-driven AND rate-limited, and it takes both to be right.
+    //
+    // Data-driven: a flush that added nothing to the buffer arms nothing. This
+    // matters more the longer a save runs. The whole-capture decimation doubles
+    // its stride every time the buffer fills, so new chart points arrive every
+    // 100 ms at stride 1 but only every 6.4 s at stride 64 — while the flush
+    // itself keeps running 10x/s throughout. Arming on every flush therefore
+    // redrew four scattergl charts a dozen times per actual change late in a
+    // capture, each redraw painting a trace identical to the last, and the
+    // waste grew without bound as the run got longer. That cost landed on the
+    // main thread between two Modbus transfers, which is exactly where this app
+    // cannot afford it.
+    //
+    // Rate-limited: the floor still has to be here, because early in a save
+    // (stride 1) points do arrive 10x/s, and the chart is the whole capture
+    // downsampled to a fixed budget — one new sample moves a handful of pixels
+    // at most. The trailing-edge timer collapses that burst into one redraw of
+    // the latest buffer. Together the two rules mean the redraw rate is
+    // whichever is SLOWER of the point rate and this interval, with no idle
+    // redraws at either end.
+    //
+    // Reset paths (connect/disconnect/start/stop-save) still bump
+    // setDisplayRevision directly for an immediate redraw.
+    if (bufferChanged && chartRedrawTimerRef.current === undefined) {
       chartRedrawTimerRef.current = window.setTimeout(() => {
         chartRedrawTimerRef.current = undefined;
         setDisplayRevision((v) => v + 1);
-      }, redrawIntervalMs);
+      }, CHART_REDRAW_INTERVAL_MS);
     }
   }, []);
 
@@ -914,9 +979,10 @@ function App() {
       }),
     );
     // Put the frame on the wire now rather than at the end of the next polling
-    // cycle. The old path cost a control loop up to one full polling interval
-    // of dead time per command — 200 ms by default and minutes at the slow
-    // sampling rates — for a transfer that takes single-digit milliseconds.
+    // cycle. The old path cost a control loop up to one full polling interval of
+    // dead time per command — and back when the poll rate was also the save
+    // rate, that meant minutes at the slow settings — for a transfer that takes
+    // single-digit milliseconds.
     //
     // Nothing here waits or paces: the inter-frame gap and the exclusion
     // against a concurrent AI read are both the transport's job
@@ -1013,7 +1079,11 @@ function App() {
       connected,
       polling: acquiringRef.current,
       saving: activeSaveFilename !== '',
-      pollingIntervalMs: pollingRateRef.current,
+      // Two rates, deliberately both reported: the wire runs at the first, rows
+      // land in the file at the second. A control script asking how fresh its
+      // inputs are wants pollingIntervalMs.
+      pollingIntervalMs: pollIntervalRef.current,
+      saveIntervalMs: saveRate.valueMs,
       serial: `${formatSerialSettings(serialSettings)} slave ${slaveId}`,
       scriptRunning: scriptRunner.scriptRunning,
       scriptSource: scriptRunner.scriptSource,
@@ -1090,7 +1160,8 @@ function App() {
     saveElapsedMs,
     savePointCount,
     pollingIntervalMs: pollingRate.valueMs,
-    actualRateHz,
+    saveIntervalMs: saveRate.valueMs,
+    actualPollIntervalMs,
     serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
   });
 
@@ -1179,12 +1250,17 @@ function App() {
     setActiveSaveFilename(state.filename);
     setSaveElapsedMs(state.saveElapsedMs);
     setSavePointCount(state.savePointCount);
-    setActualRateHz(state.actualRateHz);
+    setActualPollIntervalMs(state.actualPollIntervalMs ?? 0);
     setRemoteSerialLabel(state.serial);
     setPollingRate((prev) =>
       prev.valueMs === state.pollingIntervalMs
         ? prev
         : POLLING_OPTIONS.find((option) => option.valueMs === state.pollingIntervalMs) ?? prev,
+    );
+    setSaveRate((prev) =>
+      prev.valueMs === state.saveIntervalMs
+        ? prev
+        : SAVE_RATE_OPTIONS.find((option) => option.valueMs === state.saveIntervalMs) ?? prev,
     );
   }, []);
 
@@ -1288,22 +1364,6 @@ function App() {
       param,
     });
 
-    // Measured from capture times, so this reports the acquisition rate rather
-    // than the rate at which the display managed to keep up.
-    const ts = recentTimestampsRef.current;
-    ts.push(timestamp);
-    if (ts.length > 40) ts.splice(0, ts.length - 40);
-    if (ts.length >= 2) {
-      const elapsed = ts[ts.length - 1] - ts[0];
-      // Throttled: the readout is for a human, and pushing a new number 20 times
-      // a second only bought an unreadable flicker plus a React render competing
-      // with the very loop it is measuring.
-      if (elapsed > 0 && timestamp - lastRatePublishRef.current >= READOUT_PUBLISH_INTERVAL_MS) {
-        lastRatePublishRef.current = timestamp;
-        setActualRateHz(Math.round(((ts.length - 1) / elapsed) * 1000 * 10) / 10);
-      }
-    }
-
     if (pendingDataPoints.current.length >= BATCH_FLUSH_THRESHOLD) {
       if (batchUpdateTimer.current !== undefined) {
         clearBackgroundTimer(batchUpdateTimer.current);
@@ -1335,18 +1395,29 @@ function App() {
     return timestampsRef.current.length;
   }, []);
 
-  const enqueueDisplayUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
+  /**
+   * The display side of a poll: channel cards, and — when `plot` is set — the
+   * chart buffer, IndexedDB and the remote viewer feed.
+   *
+   * Both are on the poll clock, not the save rate. Only the TSV follows "Save
+   * every"; a chart that advanced one point per half hour would make a
+   * slow-logging run unwatchable. What the poll rate buys is control-loop
+   * freshness, and the display has no use for more than 10 Hz of it.
+   *
+   * @param plot Whether this poll is the one in `plotStrideRef` that reaches
+   *   the chart. Fixed at CHART_INPUT_INTERVAL_MS, so the display cost of a run
+   *   is the same at 25 ms polling as at 100 ms.
+   */
+  const enqueueDisplayUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array, plot: boolean) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
         // Card values are published at CHANNEL_CARD_MIN_INTERVAL_MS at most, and
-        // only when the polling interval is shorter than that — i.e. never at
-        // the default 200 ms, where one render per sample is affordable. Above
-        // 10 Hz it is not: every publish re-renders 40 channel cards between two
-        // Modbus transfers, and nobody can read a number changing 20 times a
-        // second anyway. The data path below is NOT throttled — every sample
-        // still reaches the chart buffer, IndexedDB and TSV.
+        // only when the poll interval is shorter than that — i.e. at the 20 and
+        // 50 ms settings. There one render per sample is not affordable: every
+        // publish re-renders 40 channel cards between two Modbus transfers, and
+        // nobody can read a number changing 20 times a second anyway.
         const cardsDue =
-          pollingRateRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
+          pollIntervalRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
           timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;
         if (cardsDue) {
           lastCardPublishRef.current = timestamp;
@@ -1365,7 +1436,7 @@ function App() {
             }),
           );
         }
-        updateDataHistory(timestamp, aiRaw, aiPhysical, param);
+        if (plot) updateDataHistory(timestamp, aiRaw, aiPhysical, param);
       })
       .catch((err) => {
         console.error('[App] display update event failed', err);
@@ -1488,17 +1559,30 @@ function App() {
     const pruneAndCountAI = () =>
       pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
 
-    // Limit timeout to 75% of the polling interval so a slow/failed read never
-    // blocks longer than one cycle.  Floor at 100 ms, cap at 900 ms.
-    const readTimeoutMs = Math.min(Math.max(Math.floor(pollingRateRef.current * 0.75), 100), 900);
-    // Only retry when the polling interval is long enough that a second attempt
-    // fits within the cycle.  At ≤ 400 ms the retry would always overflow.
-    const canRetry = pollingRateRef.current >= 500;
+    // 75% of the poll interval, floored at 100 ms. The floor now always wins —
+    // every poll rate is 100 ms or faster — so the "never blocks longer than one
+    // cycle" property the 75% was for no longer holds, and one timeout costs a
+    // poll slot (four of them at 25 ms). The floor stays because it is sized for
+    // the wire, not the loop: 16 i16 channels take 93 ms to transfer at the
+    // slowest offered 4800 baud, and a tighter deadline would fail reads that
+    // were on their way.
+    const readTimeoutMs = Math.min(Math.max(Math.floor(pollIntervalRef.current * 0.75), 100), 900);
+    // Never true at the current poll rates, and kept deliberately rather than
+    // deleted: it is the rule, not an accident of the option list. A retry has
+    // to fit inside the cycle, and below 500 ms it cannot. Losing it costs
+    // little now — a dropped frame costs one poll rather than one recorded row,
+    // because the recording deadline just moves to the next successful poll.
+    const canRetry = pollIntervalRef.current >= 500;
+    // Proportional to how often we poll — see INPUT_READ_MAX_FAILURE_RATIO.
+    const failureBudget = Math.max(
+      INPUT_READ_MAX_FAILURES_PER_WINDOW,
+      Math.round((INPUT_READ_RETRY_WINDOW_MS / pollIntervalRef.current) * INPUT_READ_MAX_FAILURE_RATIO),
+    );
 
     let aiSourceValues: number[] | null = null;
-    if (pruneAndCountAI() >= INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+    if (pruneAndCountAI() >= failureBudget) {
       firstError = new Error(
-        `AI read retry rate exceeded (${INPUT_READ_MAX_FAILURES_PER_WINDOW}/${Math.round(INPUT_READ_RETRY_WINDOW_MS / 1000)}s). Skipping AI read until failure rate decreases.`,
+        `AI read retry rate exceeded (${failureBudget}/${Math.round(INPUT_READ_RETRY_WINDOW_MS / 1000)}s). Skipping AI read until failure rate decreases.`,
       );
     } else {
       try {
@@ -1509,7 +1593,7 @@ function App() {
         inputReadFailureTimestampsRef.current.push(Date.now());
         const normalizedReadError =
           readError instanceof Error ? readError : new Error(String(readError));
-        if (canRetry && pruneAndCountAI() < INPUT_READ_MAX_FAILURES_PER_WINDOW) {
+        if (canRetry && pruneAndCountAI() < failureBudget) {
           console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
@@ -1523,7 +1607,7 @@ function App() {
             );
           }
         } else if (!canRetry) {
-          console.warn('[App] AI read failed; skipping retry (polling interval too short)', normalizedReadError);
+          console.warn('[App] AI read failed; skipping retry (poll interval too short)', normalizedReadError);
           firstError = new Error(`Failed to read AI Input Registers: ${normalizedReadError.message}`);
         } else {
           firstError = new Error(
@@ -1560,8 +1644,49 @@ function App() {
       // One capture time for every sink: chart, IndexedDB, TSV and the rate
       // readout all describe this sample as having happened here.
       const timestamp = lastAiReadCompletedAtRef.current;
-      enqueueDisplayUpdate(timestamp, aiRaw, aiPhysical, param);
-      enqueueSaveUpdate(timestamp, aiRaw, aiPhysical, param);
+
+      // Does this poll go to the file? Only when the save rate is slower than
+      // the poll rate is the answer ever "no" — with the two equal every poll is
+      // written and the deadline advances one poll at a time.
+      //
+      // The half-interval tolerance picks whichever poll lands nearest the
+      // deadline instead of the first one past it, which keeps the written
+      // interval on the poll grid rather than letting it sit a fraction of a
+      // poll late for the whole run. It is strictly less than one poll interval,
+      // so it can never make two consecutive polls both due.
+      let record = false;
+      if (nextRecordAtRef.current === 0) {
+        nextRecordAtRef.current = timestamp;
+      }
+      if (timestamp >= nextRecordAtRef.current - pollIntervalRef.current / 2) {
+        record = true;
+        nextRecordAtRef.current += saveIntervalRef.current;
+        // Fell behind (device stalled, machine slept, picker held the loop):
+        // resync from now rather than firing off the backlog of missed
+        // deadlines as a burst of rows carrying near-identical timestamps.
+        if (nextRecordAtRef.current <= timestamp) {
+          nextRecordAtRef.current = timestamp + saveIntervalRef.current;
+        }
+      }
+
+      const plot = pollsSincePlotRef.current === 0;
+      pollsSincePlotRef.current = (pollsSincePlotRef.current + 1) % plotStrideRef.current;
+
+      enqueueDisplayUpdate(timestamp, aiRaw, aiPhysical, param, plot);
+      if (record) enqueueSaveUpdate(timestamp, aiRaw, aiPhysical, param);
+
+      // Measured poll interval for the header. Sampled here, at the top of the
+      // loop, rather than downstream of the display queue: the number answers
+      // "is the link keeping up", so it must not fold in how long the chart
+      // took to accept the point.
+      const pollTs = recentPollTimestampsRef.current;
+      pollTs.push(timestamp);
+      if (pollTs.length > 40) pollTs.splice(0, pollTs.length - 40);
+      if (pollTs.length >= 2 && timestamp - lastPollRatePublishRef.current >= READOUT_PUBLISH_INTERVAL_MS) {
+        lastPollRatePublishRef.current = timestamp;
+        const elapsed = pollTs[pollTs.length - 1] - pollTs[0];
+        setActualPollIntervalMs(Math.round(elapsed / (pollTs.length - 1)));
+      }
     } else if (!firstError) {
       firstError = new Error('AI read failed');
     }
@@ -1603,16 +1728,17 @@ function App() {
 
       if (pollTimer.current === undefined) return;
 
-      idealScheduleRef.current += pollingRate.valueMs;
+      const pollIntervalMs = pollingRate.valueMs;
+      idealScheduleRef.current += pollIntervalMs;
       const now = Date.now();
-      if (idealScheduleRef.current < now - pollingRate.valueMs) {
+      if (idealScheduleRef.current < now - pollIntervalMs) {
         idealScheduleRef.current = now;
       }
       const delay = Math.max(0, idealScheduleRef.current - now);
 
       // Scheduled on the timer worker, not on window: a hidden or minimised
       // window has its own timers throttled to 1 Hz and then to 1/min, which
-      // would turn a 200 ms polling loop into a minute-long gap in the data
+      // would turn a 100 ms polling loop into a minute-long gap in the data
       // (see utils/backgroundTimer.ts).
       pollTimer.current = setBackgroundTimeout(() => {
         void runPollingLoop();
@@ -1625,12 +1751,21 @@ function App() {
       clearBackgroundTimer(pollTimer.current);
     }
     idealScheduleRef.current = 0;
+    // Deliberately NOT re-phasing the recording deadline here. This runs on
+    // every visibilitychange, and a user who alt-tabs ten times during a 30 min
+    // save would otherwise get ten extra rows at arbitrary offsets. The deadline
+    // needs no help across a gap: it is an absolute time, so a poll returning
+    // after a freeze is simply past due and the catch-up clause in pollOnce
+    // re-phases it from there.
     pollTimer.current = setBackgroundTimeout(() => {
       void runPollingLoop();
     }, 0);
   }, [runPollingLoop]);
 
   const startPolling = useCallback(() => {
+    // Start of a run, unlike the resyncs scheduleImmediatePoll also serves: no
+    // earlier phase to preserve, so record the first sample straight away.
+    nextRecordAtRef.current = 0;
     scheduleImmediatePoll();
   }, [scheduleImmediatePoll]);
 
@@ -1853,9 +1988,10 @@ function App() {
       lastAiReadCompletedAtRef.current = 0;
       displayUpdateChainRef.current = Promise.resolve();
       pendingDataPoints.current = [];
-      recentTimestampsRef.current = [];
-      lastRatePublishRef.current = 0;
-      setActualRateHz(0);
+      recentPollTimestampsRef.current = [];
+      lastPollRatePublishRef.current = 0;
+      nextRecordAtRef.current = 0;
+      setActualPollIntervalMs(0);
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
       viewerHostRef.current?.publishReset();
@@ -2087,9 +2223,6 @@ function App() {
         const startedAt = Date.now();
 
         pendingDataPoints.current = [];
-        recentTimestampsRef.current = [];
-        lastRatePublishRef.current = 0;
-        setActualRateHz(0);
 
         await dataStorage.clearAllData();
         dataBufferRef.current = [];
@@ -2099,6 +2232,18 @@ function App() {
         saveRawCounterRef.current = 0;
         setDisplayRevision((v) => v + 1);
 
+        // Re-phase the recording deadline so the file's first row lands at the
+        // save start rather than wherever the free-running deadline happened to
+        // be — at a 30 min save rate that is the difference between a file that
+        // starts now and one that starts half an hour from now.
+        //
+        // It has to be adjacent to the writer assignment, not up with the other
+        // resets: `await clearAllData()` above can take longer than a poll
+        // interval, and a poll landing in that gap would consume the re-phase
+        // (advancing the deadline by a full save interval) while
+        // enqueueSaveUpdate still had no writer to write to — reintroducing
+        // exactly the delay this line exists to prevent.
+        nextRecordAtRef.current = 0;
         tsvWriterRef.current = writer;
         // Background timer, for the same reason as the polling loop: a throttled
         // flush would leave captured rows sitting in the worker's buffer instead
@@ -2154,9 +2299,10 @@ function App() {
     }
 
     pendingDataPoints.current = [];
-    recentTimestampsRef.current = [];
-    lastRatePublishRef.current = 0;
-    setActualRateHz(0);
+    // Re-phase the recording deadline the same way the save start did. The poll
+    // rate measurement is deliberately left alone: the loop kept running through
+    // all of this, so zeroing its readout would only blank a live number.
+    nextRecordAtRef.current = 0;
 
     await dataStorage.clearAllData();
     dataBufferRef.current = [];
@@ -2213,8 +2359,14 @@ function App() {
                 <span className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
                 </span>
+                {/* Measured only, no nominal alongside it: the wire rate is now
+                    a fixed constant rather than something the user chose, so
+                    printing the target next to it would just be a reminder of
+                    what 100 is. What this answers is whether the link is
+                    keeping up. What reaches the file is the Save Rate, and its
+                    progress is the count to the left. */}
                 <span className="tabular-nums">
-                  Sampling: {(1000 / pollingRate.valueMs).toFixed(1)} Hz({actualRateHz.toFixed(1)})
+                  Polling: {actualPollIntervalMs > 0 ? `${actualPollIntervalMs} ms` : '-'}
                 </span>
               </div>
             </div>
@@ -2222,30 +2374,11 @@ function App() {
                 becomes the only item on its own line and would otherwise sit at
                 the left edge, away from the window controls it belongs with. */}
             <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={isDarkMode}
-                aria-label="Toggle dark mode"
-                onClick={toggleTheme}
-                className="relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border border-slate-300 bg-white px-1 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
-              >
-                <span className="sr-only">Toggle theme</span>
-                <span className="absolute left-1 text-slate-400 dark:text-slate-500" aria-hidden>
-                  <SunIcon className="h-3.5 w-3.5" />
-                </span>
-                <span className="absolute right-1 text-slate-400 dark:text-slate-500" aria-hidden>
-                  <MoonIcon className="h-3.5 w-3.5" />
-                </span>
-                {/* The knob covers whichever side icon is active, so the pair
-                    below reads as "current mode" rather than duplicating it. */}
-                <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-[26px]' : 'translate-x-0'}`}
-                  aria-hidden
-                >
-                  {isDarkMode ? <MoonIcon className="h-3.5 w-3.5" /> : <SunIcon className="h-3.5 w-3.5" />}
-                </span>
-              </button>
+              {/* The theme toggle's home is the Menu panel's header. A viewer
+                  has no menu button (see below), so it keeps one here rather
+                  than losing light/dark entirely — a monitor is exactly the
+                  window someone leaves on a wall display and wants dimmed. */}
+              {isViewerMode && <ThemeToggle isDarkMode={isDarkMode} onToggle={toggleTheme} />}
               {/* A viewer gets no controls at all — not disabled ones. Every
                   action here (connect, save, and everything behind the menu)
                   acts on hardware this machine does not have, so offering them
@@ -2278,6 +2411,28 @@ function App() {
                   >
                     {connected ? 'Disconnect' : 'Connect'}
                   </button>
+                  {/* Next to Start Save, not in Connection Config, because it is
+                      a property of the run rather than of the link: the poll
+                      rate is set once for a device, this is chosen per
+                      measurement — and unlike the poll rate it stays live
+                      mid-run. */}
+                  <label className="flex items-center gap-1 text-[0.7rem] text-slate-600 dark:text-slate-400">
+                    Save Rate
+                    <select
+                      value={saveRate.valueMs}
+                      onChange={(e) => {
+                        const next = SAVE_RATE_OPTIONS.find((option) => option.valueMs === Number(e.target.value));
+                        if (next) setSaveRate(next);
+                      }}
+                      className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      {SAVE_RATE_OPTIONS.map((option) => (
+                        <option key={option.valueMs} value={option.valueMs}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   {/* The file the picker creates stays 0 bytes until the writer
                       closes it: a FileSystemWritableFileStream buffers into a
                       swap file and only swings it onto the target on close().
@@ -2569,6 +2724,8 @@ function App() {
         open={hamburgerMenuOpen}
         onClose={() => setHamburgerMenuOpen(false)}
         onSelectItem={handleMenuSelect}
+        isDarkMode={isDarkMode}
+        onToggleTheme={toggleTheme}
         showMcp={mcpBridge.bridgeConnected || mcpBridge.mcpEnabled}
         showRemoteViewer={viewerHost.status !== null}
       />

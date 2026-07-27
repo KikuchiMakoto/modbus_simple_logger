@@ -44,8 +44,11 @@ export type ViewerStatePayload = {
   filename: string;
   saveElapsedMs: number;
   savePointCount: number;
+  // The host's two rate settings, which the viewer maps back onto its own
+  // option lists, plus the poll interval the host's loop actually measured.
   pollingIntervalMs: number;
-  actualRateHz: number;
+  saveIntervalMs: number;
+  actualPollIntervalMs: number;
   serial: string;
 };
 

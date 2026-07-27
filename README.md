@@ -11,16 +11,17 @@
 | 機能 | 説明 |
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境は `web-serial-polyfill` 経由の WebUSB フォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング（50ms〜5分間隔、既定 200ms）。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（25ms / 50ms / 100ms、既定 100ms、接続中は固定）と **Save Rate**（200ms〜30分、既定 1s、いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
-| **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。描画バックエンド（GPU/CPU）バッジ表示 |
-| **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み・全点記録）。IndexedDB でセッション中データを FIFO 管理 |
+| **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。非保存時は直近 768 点（≒77秒）のプレビュー、保存中は保存開始〜現在の全区間を 2048 点へ間引いて表示。描画バックエンド（GPU/CPU）バッジ表示 |
+| **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み）。書き込み周期は Save Rate に従います。IndexedDB でセッション中データを FIFO 管理 |
+| **クラッシュ復旧** | 保存中の全行を OPFS へ同期ミラーします（ピッカーで選んだファイルは Stop Save まで 0 バイトのため）。異常終了後の初回起動で復旧を提示し、`<元の名前>_autorestore.tsv` としてダウンロードします。提示を Cancel すると復旧コピーは削除されます |
 | **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御、`set_notify()` で通知 |
 | **バックグラウンド耐性** | ポーリング・チャート反映・TSV フラッシュのタイマーを専用 Worker で駆動。ウィンドウを最小化してもブラウザのタイマー抑制（1Hz→1分に1回）で計測が止まりません。デスクトップ版はブラウザ起動フラグでも抑制を無効化 |
 | **通知** | ScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ） |
-| **UI 拡大率** | 画面全体を 50〜200%（11 段）で拡大・縮小し、その端末に記憶します（Application Info の `[-] [100%] [+]`）。ブラウザのズームが使えない・保持されない環境（Android のインストール済み PWA など）向け |
+| **UI 拡大率** | 画面全体を 50〜200%（11 段）で拡大・縮小し、その端末に記憶します（Menu ヘッダーの `[-] [100%] [+]`。ダーク/ライト切替も同じ場所）。ブラウザのズームが使えない・保持されない環境（Android のインストール済み PWA など）向け |
 | **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
 | **リモート監視** | デスクトップ版限定。他 PC やスマホのブラウザから、チャートとチャネル値を**閲覧のみ**できます（LAN 直接 / インターネット経由・QR 表示・既定オフ） |
 | **PWA** | Service Worker プリキャッシュで完全オフライン動作。COOP/COEP で SharedArrayBuffer を有効化。更新確認は起動直後と Application Info の「Check for Updates」ボタンのみで、デバイス接続中は停止（計測中に確認ウィンドウが割り込まない） |

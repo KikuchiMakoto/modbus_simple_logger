@@ -67,3 +67,23 @@ export function parseRecoveryName(opfsName: string): RecoveryNameParts | null {
 
   return { originalName, startedAt };
 }
+
+/**
+ * The name a recovered run is downloaded under: `<stem>_autorestore<ext>`.
+ *
+ * Deliberately NOT the original name. A recovered file is not the file the run
+ * was supposed to produce — it is what a crash left behind, and it can be
+ * missing the rows buffered when the page died. Handing it back under the
+ * original name puts it in the downloads folder indistinguishable from a clean
+ * save, which is the one place the difference matters: nobody would know the
+ * run had failed at all.
+ *
+ * The OPFS entry keeps its own name (buildRecoveryName above) — that one is
+ * parsed, this one is only ever read by a human.
+ */
+export function recoveredDownloadName(originalName: string): string {
+  const dot = originalName.lastIndexOf('.');
+  // A leading dot is the whole name of a dotfile, not an extension.
+  if (dot <= 0) return `${originalName}_autorestore`;
+  return `${originalName.slice(0, dot)}_autorestore${originalName.slice(dot)}`;
+}

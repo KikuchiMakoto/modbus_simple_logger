@@ -74,12 +74,17 @@ const TEARDOWN_STEP_TIMEOUT_MS = 1500;
  * Both handlers are attached immediately, so a promise abandoned by the timeout
  * that rejects later is still considered handled and never surfaces as an
  * unhandled rejection.
+ *
+ * On the background timer like the rest of this file: teardown is not only
+ * something a user clicks. The port's `disconnect` event fires when the cable is
+ * pulled, which can happen with the window minimised, and on a window timer each
+ * of these steps would stretch from 1.5 s to the throttled minute.
  */
 function settleWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(true), ms);
+    const timer = setBackgroundTimeout(() => resolve(true), ms);
     const settled = () => {
-      clearTimeout(timer);
+      clearBackgroundTimer(timer);
       resolve(false);
     };
     promise.then(settled, settled);

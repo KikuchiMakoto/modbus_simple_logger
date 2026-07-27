@@ -1,9 +1,13 @@
 import { SlidePanel } from './SlidePanel';
+import { ThemeToggle } from './ThemeToggle';
+import { UiScaleControl } from './UiScaleControl';
 
 type HamburgerMenuProps = {
   open: boolean;
   onClose: () => void;
   onSelectItem: (item: string) => void;
+  isDarkMode: boolean;
+  onToggleTheme: () => void;
   /** MCP is a desktop-launcher feature; the entry is hidden in the web build. */
   showMcp?: boolean;
   /** Remote monitoring is likewise launcher-only. */
@@ -27,6 +31,8 @@ export function HamburgerMenu({
   open,
   onClose,
   onSelectItem,
+  isDarkMode,
+  onToggleTheme,
   showMcp = false,
   showRemoteViewer = false,
 }: HamburgerMenuProps) {
@@ -37,7 +43,23 @@ export function HamburgerMenu({
   });
 
   return (
-    <SlidePanel open={open} onClose={onClose} title="Menu" maxWidth="max-w-xs">
+    <SlidePanel
+      open={open}
+      onClose={onClose}
+      title="Menu"
+      maxWidth="max-w-xs"
+      // In the header rather than as menu rows: the rows all open a panel, and
+      // ones that instead change a setting in place would be the odd ones out.
+      // Both are appearance-only and take effect instantly, so they belong
+      // where they can be used while looking at the page behind them — not
+      // buried in Application Info, which is where the scale control was.
+      headerActions={
+        <>
+          <UiScaleControl />
+          <ThemeToggle isDarkMode={isDarkMode} onToggle={onToggleTheme} />
+        </>
+      }
+    >
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
           {items.map((item) => (
