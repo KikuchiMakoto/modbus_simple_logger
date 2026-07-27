@@ -1,4 +1,4 @@
-import { ModbusPrecision, ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
+import { ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
 type ModbusConfigPanelProps = {
@@ -10,8 +10,6 @@ type ModbusConfigPanelProps = {
   onSerialSettingsChange: (settings: SerialSettings) => void;
   modbusPrecision: ModbusPrecisionSetting;
   onModbusPrecisionChange: (value: ModbusPrecisionSetting) => void;
-  /** What Auto settled on. Meaningless until the first connect. */
-  resolvedPrecision: ModbusPrecision;
   pollingRate: PollingRateOption;
   onPollingRateChange: (value: PollingRateOption) => void;
   pollingOptions: PollingRateOption[];
@@ -32,7 +30,6 @@ export function ModbusConfigPanel({
   onSerialSettingsChange,
   modbusPrecision,
   onModbusPrecisionChange,
-  resolvedPrecision,
   pollingRate,
   onPollingRateChange,
   pollingOptions,
@@ -162,13 +159,6 @@ export function ModbusConfigPanel({
               </option>
             ))}
           </select>
-          {modbusPrecision === 'auto' && (
-            <p className="mt-0.5 text-[0.7rem] leading-tight text-slate-500 dark:text-slate-400">
-              {connected
-                ? `Detected: ${resolvedPrecision === 'extended' ? 'Extended(f32t)' : 'Normal(i16t)'}.`
-                : 'Asks the device for the float registers once, on connect, and falls back to Normal(i16t) if there is no answer.'}
-            </p>
-          )}
         </div>
 
         <div>

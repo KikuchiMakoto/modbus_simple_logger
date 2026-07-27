@@ -101,7 +101,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **この制約をアプリケーション層で再実装してはならない**（`transfer()` が単一責任）
 - `constants.ts` に追加の Wait 定数を定義しないこと（`transfer()` の待機と二重になる）
 - AO書込みを非ブロック化する場合も、`transfer()` の `AsyncMutex` により AI/AO 送信間の最低間隔が自動保証される
-- AO書込みは `doAoWriteAsync` で独立実行され、`aoWriteInProgressRef` で二重投入を防止する
+- **「出力直後の InputRegisters 読みを少し遅らせる」も `transfer()` が既に担保している**。参照実装（`DigitShowModbusDoc.cpp`）の `sleep_time_after_cmd_ms`（非 usb_cdc_direct で 10ms / direct で 0）に対応するのが `minMessageIntervalMs`（Normal 10ms / Extended = 5文字時間 ≒ 1.3ms@38400)。**アプリ側に「書込み後ウェイト」を足さないこと** — 二重待機になるだけで、片方だけ直すと必ず食い違う
+
+### AO 出力（`App.tsx` の `doAoWriteAsync`）
+- **AO の変更は即時送信**。`applyAoRawValues`（`set_ao` / MCP の唯一の着地点）が `requestAoWriteRef.current()` で書込みを起こす。ポーリング周期末尾まで待たせていた頃は、制御ループが1コマンドあたり最大1周期（既定 200ms、遅いサンプリングでは数分）の死に時間を払っていた — 実際の転送は数 ms なのに
+- **待たない・間隔を計らない**。フレーム間隔も AI 読取りとの排他も `transfer()` の責任（`AsyncMutex` + `minMessageIntervalMs`）。ここで待つと二重待機になる
+- **再入は落とさず畳む**。書込み中に来た変更は `aoWriteRequestedRef` を立て、転送完了後にもう1周だけ回す（参照実装の `evt_cmd_send` と同じレベルトリガ）。**`return` で捨ててはならない** — 捨てられるのは定義上いちばん新しい値であり、制御ループが自分の周期で出力を動かすと黙って取りこぼす
+- ループを回す条件は「**直前の転送中に**新しい変更が来たこと」だけにすること。失敗した書込みは値が「変更済み」のまま残るため、これを条件にすると死んだデバイスへ延々と再送する
+- `pollOnce` 末尾の `doAoWriteAsync()` は**取りこぼしの拾い直し**（リトライ制限に当たっていた変更）であって主経路ではない
 
 ### 精度モードの自動判定（`App.tsx` の `probeExtendedPrecision`）
 - Precision の選択肢は **Auto（既定）/ Normal(i16t) / Extended(f32t)**。型を2つに分けてあり、`ModbusPrecisionSetting`（ユーザーの選択・`'auto'` を含む）と `ModbusPrecision`（実際に線上で使う地図・2値のみ）は**別物**。`'auto'` を下流（ポーリング・TSV 列整形・読み値表示）へ流してはならない
@@ -113,7 +120,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### ポーリング（`App.tsx`）
 - 50ms〜5分の定期ポーリング（`App.tsx` の `POLLING_OPTIONS`、既定 200ms。`setBackgroundTimeout` 再帰スケジュール）
-- **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行
+- **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ内最大10回）
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
 - **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
@@ -315,6 +322,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 定数は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
+- **AI Raw の表示桁は精度モードで変える**: Extended(f32t) は `toFixed(3)`、Normal(i16t) は整数そのまま。f32 レジスタを読みながら `Math.trunc()` していた頃は、そのモードの存在理由である小数部を表示だけ捨てていた（TSV には常に入っている）
 - **配色ルール（重要）**: 明示的な指示がない限り、新規 UI 要素の色指定は **他と同じ緑（emerald）か通常のグレー（slate）のみ**を使う。青(blue/sky)・琥珀(amber)・赤(red)などを新規に持ち込まない。
   - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
   - 通知/注意バナー等も緑（成功）かグレー（中立・ロック等）で表現し、赤や琥珀の警告色は使わない

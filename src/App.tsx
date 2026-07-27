@@ -543,6 +543,16 @@ function App() {
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
   const aoWriteInProgressRef = useRef(false);
+  // Level-triggered, like the evt_cmd_send event in the reference desktop
+  // implementation: an AO change that lands while a write is already on the
+  // wire sets this instead of being dropped, and the driver runs one more pass
+  // when the current transfer finishes. However many changes arrive during a
+  // write, they cost exactly one extra frame, and it carries the newest values.
+  const aoWriteRequestedRef = useRef(false);
+  // Assigned during render further down, once doAoWriteAsync exists. The AO
+  // setters are declared above it and must not take a dependency on its
+  // identity, so the kick goes through a ref rather than a captured callback.
+  const requestAoWriteRef = useRef<() => void>(() => {});
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
   // While saving, the chart shows the whole capture downsampled to
@@ -903,6 +913,16 @@ function App() {
         return { ...channel, raw: value, physical: value };
       }),
     );
+    // Put the frame on the wire now rather than at the end of the next polling
+    // cycle. The old path cost a control loop up to one full polling interval
+    // of dead time per command — 200 ms by default and minutes at the slow
+    // sampling rates — for a transfer that takes single-digit milliseconds.
+    //
+    // Nothing here waits or paces: the inter-frame gap and the exclusion
+    // against a concurrent AI read are both the transport's job
+    // (transfer()'s AsyncMutex and minMessageIntervalMs), and a second
+    // implementation of either would just fight it.
+    requestAoWriteRef.current();
   }, []);
 
   const setAo = useCallback((ch: number, data: number) => {
@@ -1382,27 +1402,11 @@ function App() {
     }
   }, [setStatus]);
 
-  const doAoWriteAsync = useCallback(async () => {
-    if (aoWriteInProgressRef.current) return;
-    const currentAoRaw = aoRawSourceRef.current;
-    if (!hasAoValuesChanged(lastSentAoRawRef.current, currentAoRaw)) return;
-    if (!clientRef.current) return;
-
-    const failureCount = pruneFailuresInWindow(
-      outputHoldingFailureTimestampsRef,
-      OUTPUT_HOLDING_RETRY_WINDOW_MS,
-    );
-    if (failureCount >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
-      console.warn('[App] AO write skipped due to retry limit', {
-        failureCount: outputHoldingFailureTimestampsRef.current.length,
-      });
-      return;
-    }
-
-    aoWriteInProgressRef.current = true;
+  /** One AO block write and its single retry. Both read the newest values. */
+  const writeAoBlockOnce = useCallback(async () => {
     try {
       const latest = aoRawSourceRef.current;
-      await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
+      await clientRef.current!.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
       lastSentAoRawRef.current = [...latest];
     } catch (writeError) {
       outputHoldingFailureTimestampsRef.current.push(Date.now());
@@ -1412,7 +1416,7 @@ function App() {
       try {
         await waitMs(RETRY_DELAY_MS);
         const latest = aoRawSourceRef.current;
-        await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
+        await clientRef.current!.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
         lastSentAoRawRef.current = [...latest];
       } catch (retryError) {
         outputHoldingFailureTimestampsRef.current.push(Date.now());
@@ -1420,10 +1424,62 @@ function App() {
           retryError instanceof Error ? retryError : new Error(String(retryError));
         console.warn('[App] AO write failed after retry', normalizedRetryError);
       }
+    }
+  }, [waitMs]);
+
+  /**
+   * Send the AO block if it differs from what the device was last told.
+   *
+   * Called on every AO change (immediately, from applyAoRawValues) and once
+   * more at the end of each polling cycle, which is the catch-up for a change
+   * that arrived while the retry limiter was tripped.
+   *
+   * Re-entry does not drop the request: a call that arrives mid-write re-arms
+   * aoWriteRequestedRef and the loop below runs one more pass. Dropping was
+   * survivable while writes only left once per cycle, but with a control loop
+   * setting outputs at its own rate it would silently discard commands — and
+   * the one that gets discarded is by definition the most recent.
+   */
+  const doAoWriteAsync = useCallback(async () => {
+    if (aoWriteInProgressRef.current) {
+      aoWriteRequestedRef.current = true;
+      return;
+    }
+
+    aoWriteInProgressRef.current = true;
+    try {
+      for (;;) {
+        aoWriteRequestedRef.current = false;
+        if (!clientRef.current) break;
+        if (!hasAoValuesChanged(lastSentAoRawRef.current, aoRawSourceRef.current)) break;
+
+        const failureCount = pruneFailuresInWindow(
+          outputHoldingFailureTimestampsRef,
+          OUTPUT_HOLDING_RETRY_WINDOW_MS,
+        );
+        if (failureCount >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
+          console.warn('[App] AO write skipped due to retry limit', {
+            failureCount: outputHoldingFailureTimestampsRef.current.length,
+          });
+          break;
+        }
+
+        await writeAoBlockOnce();
+        // Only loop for changes that arrived during the transfer just made. A
+        // failed write leaves the values "changed", so without this the loop
+        // would keep retrying a dead device until the limiter caught it.
+        if (!aoWriteRequestedRef.current) break;
+      }
     } finally {
       aoWriteInProgressRef.current = false;
     }
-  }, [pruneFailuresInWindow, waitMs]);
+  }, [pruneFailuresInWindow, writeAoBlockOnce]);
+
+  // Direct assignment during render, like mcpApiRef/viewerStateRef below: an
+  // effect would leave the first AO change of the session with no writer.
+  requestAoWriteRef.current = () => {
+    void doAoWriteAsync();
+  };
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
@@ -1510,6 +1566,9 @@ function App() {
       firstError = new Error('AI read failed');
     }
 
+    // Catch-up, not the main path: AO changes go out the moment they happen
+    // (applyAoRawValues). This picks up a value that was still owed because
+    // the write retry limiter was tripped when it arrived.
     void doAoWriteAsync();
 
     setStatus(firstError ? firstError.message : 'Polling');
@@ -1786,6 +1845,9 @@ function App() {
       }
       lastSentAoRawRef.current = null;
       aoWriteInProgressRef.current = false;
+      // Cleared with the rest: a request left armed here would fire one write
+      // into the next connection, before anything has set an output on it.
+      aoWriteRequestedRef.current = false;
       inputReadFailureTimestampsRef.current = [];
       outputHoldingFailureTimestampsRef.current = [];
       lastAiReadCompletedAtRef.current = 0;
@@ -2323,7 +2385,11 @@ function App() {
                   <div className="flex justify-between items-center leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {resolvedPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
+                      {/* Extended reads float32 registers, so truncating the
+                          readout to an integer threw away the only thing that
+                          mode is for. Normal carries int16 counts, where a
+                          decimal point would be noise. */}
+                      {resolvedPrecision === 'extended' ? ch.raw.toFixed(3) : ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
@@ -2516,7 +2582,6 @@ function App() {
         onSerialSettingsChange={setSerialSettings}
         modbusPrecision={modbusPrecision}
         onModbusPrecisionChange={setModbusPrecision}
-        resolvedPrecision={resolvedPrecision}
         baudOptions={BAUD_OPTIONS}
         dataBitsOptions={DATA_BITS_OPTIONS}
         stopBitsOptions={STOP_BITS_OPTIONS}
