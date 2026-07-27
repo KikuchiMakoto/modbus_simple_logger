@@ -2292,12 +2292,15 @@ function App() {
                 <span className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
                 </span>
-                {/* The wire rate, not the recording rate: this is the number
-                    that says whether the link is keeping up. What reaches the
-                    file is the Sampling Rate in Connection Config, and its
-                    progress is the point count to the left. */}
+                {/* Measured only, no nominal alongside it: the wire rate is now
+                    a fixed constant rather than something the user chose, so
+                    printing the target next to it would just be a reminder of
+                    what 100 is. What this answers is whether the link is
+                    keeping up. What reaches the file is the Sampling Rate in
+                    Connection Config, and its progress is the count to the
+                    left. */}
                 <span className="tabular-nums">
-                  Polling: {pollIntervalMsFor(pollingRate.valueMs)} ms({actualPollIntervalMs})
+                  Polling: {actualPollIntervalMs > 0 ? `${actualPollIntervalMs} ms` : '-'}
                 </span>
               </div>
             </div>
