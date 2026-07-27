@@ -16,14 +16,18 @@ type HamburgerMenuProps = {
 
 const MENU_ITEMS = [
   { key: 'modbusConfig', label: 'Connection Config', icon: '🔌', wip: false },
-  // The three AI-side windows share an "Input …" prefix and sit together, so
-  // the menu reads as range → derive coefficients → inspect coefficients.
-  { key: 'inputConfig', label: 'Input Config', icon: '⚡', wip: false },
+  // The three AI-side windows share an "Input …" prefix and sit together, in
+  // the order they are reached for: the coefficient table is what gets opened
+  // day to day, the calibrator is what fills it in, and the range is set once
+  // per sensor.
+  { key: 'calibration', label: 'Input Calib Value', icon: '⚙️', wip: false },
   // One entry for both front-ends: the HX711 and ADS1115 windows differed only
   // in which channels they offered and which reference units the Spec tab
   // listed, and both of those follow the channel number the user picks.
   { key: 'inputCalibrator', label: 'Input Calibrator', icon: '⚖️', wip: false },
-  { key: 'calibration', label: 'Input Calib Value', icon: '⚙️', wip: false },
+  // A mixer/knob panel rather than the old ⚡: what this sets is each channel's
+  // range, and a lightning bolt read as "power" next to Connection Config.
+  { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
   { key: 'scriptRunner', label: 'PyScriptRunner', icon: '📜', wip: false },
   { key: 'mcp', label: 'MCP Access', icon: '🤖', wip: false },

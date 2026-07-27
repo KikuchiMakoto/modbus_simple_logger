@@ -2533,7 +2533,7 @@ function App() {
                 <em>Phy</em> = <em>a</em>&middot;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&middot;(<em>Raw</em>) + <em>c</em>
               </p>
               <p className="text-[0.6rem]">
-                <em>a</em>, <em>b</em>, <em>c</em> : Calibration Value
+                <em>a</em>, <em>b</em>, <em>c</em> : Input Calib Value
               </p>
             </div>
             <CollapseButton collapsed={aiCollapsed} onToggle={() => setAiCollapsed((v) => !v)} label="Analog Input" />
