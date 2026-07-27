@@ -93,6 +93,7 @@ import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { McpPanel } from './components/McpPanel';
+import { ThemeToggle } from './components/ThemeToggle';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -367,46 +368,6 @@ const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 // header reads as one icon set. Inlined rather than pulled from an icon package:
 // the app must precache every asset for offline use, and these are two paths.
 //
-// Not a Unicode glyph (☀ / ☾): those render from whatever font the platform
-// picks — colour emoji on some, a thin outline on others — and would be the one
-// element in the UI not drawn from the bundled Iosevka stack.
-function SunIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <circle cx="12" cy="12" r="4.5" />
-      <path d="M12 1.5v2M12 20.5v2M3.6 3.6l1.4 1.4M19 19l1.4 1.4M1.5 12h2M20.5 12h2M3.6 20.4 5 19M19 5l1.4-1.4" />
-    </svg>
-  );
-}
-
-function MoonIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
-
 function CollapseButton({
   collapsed,
   onToggle,
@@ -2377,30 +2338,11 @@ function App() {
                 becomes the only item on its own line and would otherwise sit at
                 the left edge, away from the window controls it belongs with. */}
             <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={isDarkMode}
-                aria-label="Toggle dark mode"
-                onClick={toggleTheme}
-                className="relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border border-slate-300 bg-white px-1 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
-              >
-                <span className="sr-only">Toggle theme</span>
-                <span className="absolute left-1 text-slate-400 dark:text-slate-500" aria-hidden>
-                  <SunIcon className="h-3.5 w-3.5" />
-                </span>
-                <span className="absolute right-1 text-slate-400 dark:text-slate-500" aria-hidden>
-                  <MoonIcon className="h-3.5 w-3.5" />
-                </span>
-                {/* The knob covers whichever side icon is active, so the pair
-                    below reads as "current mode" rather than duplicating it. */}
-                <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-[26px]' : 'translate-x-0'}`}
-                  aria-hidden
-                >
-                  {isDarkMode ? <MoonIcon className="h-3.5 w-3.5" /> : <SunIcon className="h-3.5 w-3.5" />}
-                </span>
-              </button>
+              {/* The theme toggle's home is the Menu panel's header. A viewer
+                  has no menu button (see below), so it keeps one here rather
+                  than losing light/dark entirely — a monitor is exactly the
+                  window someone leaves on a wall display and wants dimmed. */}
+              {isViewerMode && <ThemeToggle isDarkMode={isDarkMode} onToggle={toggleTheme} />}
               {/* A viewer gets no controls at all — not disabled ones. Every
                   action here (connect, save, and everything behind the menu)
                   acts on hardware this machine does not have, so offering them
@@ -2747,6 +2689,8 @@ function App() {
         open={hamburgerMenuOpen}
         onClose={() => setHamburgerMenuOpen(false)}
         onSelectItem={handleMenuSelect}
+        isDarkMode={isDarkMode}
+        onToggleTheme={toggleTheme}
         showMcp={mcpBridge.bridgeConnected || mcpBridge.mcpEnabled}
         showRemoteViewer={viewerHost.status !== null}
       />
