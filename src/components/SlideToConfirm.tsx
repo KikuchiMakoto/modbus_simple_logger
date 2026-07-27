@@ -90,12 +90,12 @@ export function SlideToConfirm({
         }`}
         style={{ width: `${knobX + knobPx}px` }}
       />
-      {/* Centred in the track MINUS the knob's parking spot, not in the whole
-          track: the knob sits at the left until it is dragged, and a label
-          centred across the full width starts underneath it. */}
+      {/* Centred in the track MINUS wherever the knob is, not in the whole
+          track: it parks at the left and ends at the right, so the free space
+          — and with it the label — swaps sides once the swipe is armed. */}
       <span
-        style={{ left: `${knobPx}px` }}
-        className={`pointer-events-none absolute inset-y-0 right-0 flex items-center justify-center whitespace-nowrap px-1 font-semibold ${labelClassName} ${
+        style={armed ? { left: 0, right: `${knobPx}px` } : { left: `${knobPx}px`, right: 0 }}
+        className={`pointer-events-none absolute inset-y-0 flex items-center justify-center whitespace-nowrap px-1 font-semibold ${labelClassName} ${
           disabled
             ? 'text-slate-400 dark:text-slate-600'
             : armed
