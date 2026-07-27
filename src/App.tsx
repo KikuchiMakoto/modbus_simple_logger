@@ -2450,7 +2450,12 @@ function App() {
                       knobLabel="→"
                       onConfirm={handleToggleConnection}
                       knobPx={30}
-                      className="h-[30px] w-[6.2rem]"
+                      // Exactly the Connect button's 6rem: the two swap places
+                      // in the same slot, so the header must not reflow when
+                      // the link comes up. "Disconnect" is 10 Iosevka chars at
+                      // 0.7rem ≈ 56 px, which clears the 58 px left beside the
+                      // knob — shrink either number and it starts clipping.
+                      className="h-[30px] w-24"
                       labelClassName="text-[0.7rem]"
                       aria-label="Slide to disconnect the device"
                     />
