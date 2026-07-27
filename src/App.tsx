@@ -9,6 +9,7 @@ import {
   SerialSettings,
   ModbusPrecision,
   VoltageMode,
+  DEFAULT_VOLTAGE_CONFIG,
 } from './types';
 import {
   AI_CHANNELS,
@@ -45,7 +46,7 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
   rawToDisplayValue,
-  isUnknownMode,
+  sanitizeVoltageConfig,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -1056,7 +1057,9 @@ function App() {
     setAiFreeLabels((prev) => replaceIfChanged(prev, state.aiLabels));
     setAoFreeLabels((prev) => replaceIfChanged(prev, state.aoLabels));
     setParamFreeLabels((prev) => replaceIfChanged(prev, state.paramLabels));
-    setVoltageConfig((prev) => replaceIfChanged(prev, state.voltageConfig as VoltageMode[]));
+    // Sanitized, not cast: the host may be running a different version of this
+    // app and sending a mode this build does not know.
+    setVoltageConfig((prev) => replaceIfChanged(prev, sanitizeVoltageConfig(state.voltageConfig)));
     setAiCalibration((prev) => replaceIfChanged(prev, state.calibration));
     setParamValues((prev) => replaceIfChanged(prev, state.paramValues));
     setAoChannels((prev) =>
@@ -1273,7 +1276,7 @@ function App() {
       const aoRaw = new Float32Array(aoRawSourceRef.current);
       const aiVoltage = new Float32Array(aiRaw.length);
       for (let i = 0; i < aiRaw.length; i++) {
-        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? 'unknown').value;
+        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? DEFAULT_VOLTAGE_CONFIG[i]).value;
       }
       writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, param);
       // The exact count lives in a ref; React only hears about it a few times a
@@ -1983,8 +1986,12 @@ function App() {
     setStatus('Stopped saving');
   };
 
+  // The page background and its full-height box live on <body> (index.css)
+  // rather than on this element: everything below is inside #root, which the UI
+  // scale zooms, and a min-h-screen there is measured in zoomed units — a
+  // quarter too tall at 125%, for a scrollbar on an otherwise empty page.
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
+    <div>
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
         {/* The header is sticky, so every pixel it takes is a pixel the channel
             grid never gets back. Title, serial settings and the save status sit
@@ -2166,7 +2173,6 @@ function App() {
             const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
             const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
             const aiMeterHeight = Math.max(2, aiRatio * 100);
-            const showVoltage = !isUnknownMode(mode);
             return (
             <div
               key={ch.id}
@@ -2203,7 +2209,6 @@ function App() {
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
-                  {showVoltage && (
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
                       {display.unit}
@@ -2212,7 +2217,6 @@ function App() {
                       {display.value.toFixed(3)}
                     </span>
                   </div>
-                  )}
                 </div>
               </div>
               <div className="flex w-1 items-end overflow-hidden rounded-r">

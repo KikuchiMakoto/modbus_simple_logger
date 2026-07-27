@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { readJsonCookie, writeJsonCookie } from '../utils/cookies';
+import { readJsonCookie, writeLocalPreference } from '../utils/cookies';
 
 type ThemeMode = 'light' | 'dark';
 const THEME_COOKIE_KEY = 'theme_preference_v1';
@@ -17,7 +17,11 @@ export function useTheme() {
 
   useEffect(() => {
     if (!hasUserPreference) return;
-    writeJsonCookie(THEME_COOKIE_KEY, theme);
+    // Not writeJsonCookie: the theme is a property of the screen in front of
+    // you, not of the measurement, so it has to stick in viewer mode too — and
+    // the viewer is where a mismatched theme is most likely to be fixed, on
+    // whatever spare monitor the run is being watched from.
+    writeLocalPreference(THEME_COOKIE_KEY, theme);
   }, [theme, hasUserPreference]);
 
   useEffect(() => {

@@ -20,6 +20,7 @@
 | **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御、`set_notify()` で通知 |
 | **バックグラウンド耐性** | ポーリング・チャート反映・TSV フラッシュのタイマーを専用 Worker で駆動。ウィンドウを最小化してもブラウザのタイマー抑制（1Hz→1分に1回）で計測が止まりません。デスクトップ版はブラウザ起動フラグでも抑制を無効化 |
 | **通知** | ScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ） |
+| **UI 拡大率** | 画面全体を 50〜200%（11 段）で拡大・縮小し、その端末に記憶します（Application Info の `[-] [100%] [+]`）。ブラウザのズームが使えない・保持されない環境（Android のインストール済み PWA など）向け |
 | **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
 | **リモート監視** | デスクトップ版限定。他 PC やスマホのブラウザから、チャートとチャネル値を**閲覧のみ**できます（LAN 直接 / インターネット経由・QR 表示・既定オフ） |
 | **PWA** | Service Worker プリキャッシュで完全オフライン動作。COOP/COEP で SharedArrayBuffer を有効化。更新確認は起動直後と Application Info の「Check for Updates」ボタンのみで、デバイス接続中は停止（計測中に確認ウィンドウが割り込まない） |

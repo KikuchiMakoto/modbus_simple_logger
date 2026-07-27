@@ -48,7 +48,7 @@ src/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
-│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
+│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋UI 拡大率・通知トグル（UI 名: Application Info）
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
 │   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
@@ -70,7 +70,8 @@ src/
     ├── notifications.ts             # Web Notification のゲート（トグル永続化＋許可判定）と notify()
     ├── appMode.ts                   # 実行形態の判定（web / launcher / viewer）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
-    ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
+    ├── cookies.ts                   # 設定の永続化（localStorage 本体・Cookie は旧値の読込移行とフォールバックのみ）
+    ├── uiScale.ts                   # UI 拡大率（#root の CSS zoom）。localStorage 永続・共有ストア。AppInfoPanel が操作し FloatingWindow が座標補正に使う
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
 public/
 ├── sw.js                            # Service Worker（COOP/COEP ヘッダー注入付き）
@@ -137,6 +138,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
 - UI は **Application Info パネルのトグル1つだけ**。通知専用パネルやメニュー項目を作らないこと（設定が1個しかない）
 
+### UI 拡大率（`utils/uiScale.ts`）
+- **OS のスケーリング倍率はブラウザから取得できない**。唯一の候補である `devicePixelRatio` は「OS のスケーリング」「ブラウザ自身のズーム」「パネルの物理 DPI」の3つを掛けた値であり、1.25 が Windows 125% なのか Chrome 125% なのか 1.25x パネルなのか区別できない。**ここから自動で拡大率を決めてはならない** — ブラウザが既に OS スケーリングを反映している環境（＝ほぼ全て）で二重適用になる。倍率はユーザーが選ぶ（Application Info の `[-] [100%] [+]`、50〜200% の 11 段）
+- 実装は **`#root` への CSS `zoom`**（`index.css`、値は `<html>` の `--ui-scale`）。`transform: scale()` ではない: `zoom` はレイアウトに参加するので拡大後のサイズで再フローしスクロール範囲も正しくなるが、transform は同じレイアウトを大きく描くだけで右端が画面外に出たまま届かなくなる。対応は Chrome/Edge/Safari 全て・Firefox 126+（Win/mac/Linux/Android で本アプリが動く全ブラウザ）
+- **ページ背景と全画面ボックスは `<body>` に置く**（`index.css`）。`#root` の内側で `min-h-screen` を書くと 100vh が**ズーム後の座標系**で解決され、125% では画面より 1/4 高い箱になって空のページにスクロールバーが出る
+- **ズーム内側の座標を扱うコードは補正が要る**。`window.innerWidth/Height` は非ズームの CSS px、`FloatingWindow` のジオメトリはズーム内側の px なので、クランプ側で `getUiScale()` で割る。ドラッグ量も同様にずれるため `Rnd` に `scale` を渡す（Plotly は `_invScaleX/Y` で自前に補正するので不要）
+- 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
+- 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
+
 ### ScriptRunner（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
   - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
@@ -196,6 +205,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 途中参加用に `viewerHub` が直近 2048 点（`CHART_MAX_POINTS` と同値）のバックログを保持する。**ビューアのチャートは「直近 N 点」でホストの「全区間を間引いた図」とは一致しない** — 完全な記録はホストが書く TSV であり、この差は仕様
 - ビューア側の受信は**ホストと同じ `pendingDataPoints` → `flushPendingDataPoints` を通す**（描画経路を二重に持たない）。`flushPendingDataPoints` の viewer 分岐は IndexedDB 書込みを行わない（監視は記録ではない）
 - **ビューアでは設定を永続化しない**（`utils/cookies.ts` の `writeJsonStorage` が `isViewerMode` で no-op）。ホストのラベル・キャリブレーションが毎秒流れてくるため、閲覧している PC 自身のロガー設定を上書きしてしまう。ゲートは各呼び出し側ではなくこの1箇所に置くこと
+  - **例外は「その画面の見え方」だけ**（テーマ・UI 拡大率）。これらは `writeLocalPreference` を使いビューアでも保存する — ホストのフィードが一切書かない値であり、監視用の空きモニタこそ拡大率やテーマを直したい場所だから。**計測に関わる値をこちらへ移してはならない**
+- **ホストから来た `voltageConfig` は `sanitizeVoltageConfig()` を通す**（`as VoltageMode[]` のキャストで受けない）。ホストが別バージョンの本アプリであることは普通にあり、この build に無いモードが届くと `rawToDisplayValue()` が `undefined` を返して次のフレームでチャンネルグリッドごと落ちる
 
 ### データ保存
 - **IndexedDB**: セッション中の全データポイントを蓄積（`keepLatestPoints` で自動トリム）
@@ -206,8 +217,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
   - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は Normal（i16）では `toString()` の整数、Extended（f32）では init の `aiRawAsFloat` により浮動小数フォーマッタを通す
   - `Float32Array` / `number[]` の両方を受け付ける
-- **設定永続化**: **localStorage** にテーマ・チャート軸・キャリブレーションを JSON 保存
-  - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）
+- **設定永続化**: **localStorage** にテーマ・UI 拡大率・チャート軸・キャリブレーションを JSON 保存
+  - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
+  - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
@@ -295,7 +307,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`CalibrationWizardPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **キャリブレーションウィザードの2方式**（`CalibrationWizardPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) 共通コンポーネントを2インスタンスで使用。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
-  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出、レンジ Unknown 時は 0 件 → 「Voltage Config を先に設定」と案内）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。
 
 ## package.json のバージョン更新の絶対的なルール
