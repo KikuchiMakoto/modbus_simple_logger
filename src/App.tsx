@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -86,15 +86,21 @@ import {
 } from './utils/backgroundTimer';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
-import { CalibrationWizardPanel, DenominatorOption } from './components/CalibrationWizardPanel';
+import {
+  InputCalibratorPanel,
+  CalibratorChannelInfo,
+  DenominatorOption,
+} from './components/InputCalibratorPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { ModbusConfigPanel } from './components/ModbusConfigPanel';
-import { VoltageConfigPanel } from './components/VoltageConfigPanel';
+import { InputConfigPanel } from './components/InputConfigPanel';
+import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
-import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
+import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
 import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
+import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
@@ -237,7 +243,7 @@ const formatAiChannelDisplayLabel = (idx: number): string =>
   `CH ${idx.toString().padStart(2, '0')}`;
 
 // The hard limits below come from the converter ICs, not from this app: they
-// cannot be raised by changing a Voltage Config or a calibration coefficient,
+// cannot be raised by changing an Input Config range or a calibration coefficient,
 // and a reading that sits against one of them is clipped rather than large.
 // Nothing else on the page says which IC is behind which channel block, so it
 // is said on the channel label — the one part of a card that is the same in
@@ -490,11 +496,11 @@ function App() {
   // the WebGL context explicitly, which is what the timer was really after.
   const [chartEpoch, setChartEpoch] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
-  const [hx711CalibrationPanelOpen, setHx711CalibrationPanelOpen] = useState(false);
-  const [ads1115CalibrationPanelOpen, setAds1115CalibrationPanelOpen] = useState(false);
+  const [inputCalibratorPanelOpen, setInputCalibratorPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
-  const [voltageConfigPanelOpen, setVoltageConfigPanelOpen] = useState(false);
+  const [inputConfigPanelOpen, setInputConfigPanelOpen] = useState(false);
+  const [outputTesterPanelOpen, setOutputTesterPanelOpen] = useState(false);
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
@@ -608,14 +614,14 @@ function App() {
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
       setCalibrationPanelOpen(true);
-    } else if (item === 'hx711Calibration') {
-      setHx711CalibrationPanelOpen(true);
-    } else if (item === 'ads1115Calibration') {
-      setAds1115CalibrationPanelOpen(true);
+    } else if (item === 'inputCalibrator') {
+      setInputCalibratorPanelOpen(true);
     } else if (item === 'modbusConfig') {
       setModbusConfigPanelOpen(true);
-    } else if (item === 'voltageConfig') {
-      setVoltageConfigPanelOpen(true);
+    } else if (item === 'inputConfig') {
+      setInputConfigPanelOpen(true);
+    } else if (item === 'outputTester') {
+      setOutputTesterPanelOpen(true);
     } else if (item === 'appInfo') {
       setAppInfoPanelOpen(true);
     } else if (item === 'manual') {
@@ -1032,7 +1038,7 @@ function App() {
   // raise one without a component in the way.
   const notifications = useNotifications();
 
-  // Mirror AO values into the ScriptRunner share so get_ao() can read them, in
+  // Mirror AO values into the PyScriptRunner share so get_ao() can read them, in
   // volts to match the unit set_ao() takes (AO state is held in millivolts).
   // The share is created lazily with the worker, so this also keys on
   // scriptRunning to seed it on the first run.
@@ -1062,9 +1068,9 @@ function App() {
   //
   // The launcher's MCP server owns no state; it relays tool calls here. The
   // handlers below deliberately reuse the same sources the polling loop and the
-  // ScriptRunner use (aiRawSourceRef / aoRawSourceRef / the Parameter share /
+  // PyScriptRunner use (aiRawSourceRef / aoRawSourceRef / the Parameter share /
   // setAo / handleTareCalibration), so the MCP tools and the Python API cannot
-  // drift apart. There is exactly one ScriptRunner, so a script started over MCP
+  // drift apart. There is exactly one PyScriptRunner, so a script started over MCP
   // and one started from the panel are the same run — never two.
   const [mcpWriteEnabled, setMcpWriteEnabled] = useState(false);
   const mcpApiRef = useRef<McpApi>(null as unknown as McpApi);
@@ -1072,7 +1078,7 @@ function App() {
     getAiRaw: (ch) => aiRawSourceRef.current[ch] ?? 0,
     getAiPhy: (ch) =>
       aiToPhysical(aiRawSourceRef.current[ch] ?? 0, aiCalibrationRef.current[ch] ?? { a: 0, b: 1, c: 0 }),
-    // AO state is held in millivolts; set_ao/get_ao speak volts like ScriptRunner.
+    // AO state is held in millivolts; set_ao/get_ao speak volts like PyScriptRunner.
     getAo: (ch) => (aoRawSourceRef.current[ch] ?? 0) / 1000,
     getParam: (ch) => scriptRunner.paramShareRef.current?.[ch] ?? 0,
     getStatus: () => ({
@@ -1089,7 +1095,7 @@ function App() {
       scriptSource: scriptRunner.scriptSource,
       writeEnabled: mcpWriteEnabled,
     }),
-    // Same source and shape as the ScriptRunner panel's AI-prompt button, padded
+    // Same source and shape as the PyScriptRunner panel's AI-prompt button, padded
     // to full channel counts so index always equals ch.
     getLabels: () => ({
       ai: Array.from({ length: AI_CHANNELS }, (_, i) => aiFreeLabels[i] ?? ''),
@@ -1634,7 +1640,7 @@ function App() {
         aiPhysicalShare.set(aiPhysical);
       }
 
-      // Snapshot ScriptRunner Parameter values at capture time so the chart,
+      // Snapshot PyScriptRunner Parameter values at capture time so the chart,
       // IndexedDB, and TSV all see the same per-point values.
       const paramShare = scriptRunner.paramShareRef.current;
       const param = paramShare
@@ -2103,23 +2109,38 @@ function App() {
   // Live raw for a channel (freshest value; used by the capture button).
   const getAiRawValue = useCallback((ch: number) => aiRawSourceRef.current[ch] ?? 0, []);
 
-  // Spec-method reference units per sensor. HX711: fixed electrical-unit slopes.
-  // ADS1115: only the channel's V/mV slope (from its Voltage Config range).
-  // The earlier 'Raw' option (slope = 1) was a meaningless b=sensitivity update,
-  // so it has been dropped — set the voltage range first if the dropdown is
-  // empty.
-  const getHx711DenominatorOptions = useCallback(
-    (): DenominatorOption[] =>
-      HX711_DENOMINATOR_UNITS.map((u) => ({
-        value: u.value,
-        label: u.label,
-        slopePerRaw: hx711SlopePerRaw(u.value),
-      })),
-    [],
+  // AO state is held in millivolts; the Output Tester speaks volts, like the AO
+  // cards and set_ao(). Derived from state rather than the ref so the panel's
+  // readout follows a value written from anywhere — a script, MCP, or itself.
+  const aoVoltages = useMemo(
+    () => aoChannels.map((ch) => ch.physical / 1000),
+    [aoChannels],
   );
 
-  const getAds1115DenominatorOptions = useCallback(
-    (ch: number): DenominatorOption[] => {
+  // Spec-method reference units per sensor. HX711: fixed electrical-unit slopes.
+  // ADS1115: only the channel's V/mV slope (from its Input Config range).
+  // The earlier 'Raw' option (slope = 1) was a meaningless b=sensitivity update,
+  // so it has been dropped — set the input range first if the dropdown is
+  // empty.
+  //
+  // Which of the two a channel is on is the low half / high half of the AI map,
+  // the same split Input Config uses. The Input Calibrator asks per channel
+  // rather than being opened twice, so this is one function with a branch
+  // instead of two panels' worth of props.
+  const getCalibratorChannelInfo = useCallback(
+    (ch: number): CalibratorChannelInfo => {
+      if (ch < AI_CHANNELS / 2) {
+        return {
+          tag: 'HX711',
+          referenceLabel: 'Reference unit (electrical)',
+          defaultDenomUnit: 'mv_per_v',
+          options: HX711_DENOMINATOR_UNITS.map((u): DenominatorOption => ({
+            value: u.value,
+            label: u.label,
+            slopePerRaw: hx711SlopePerRaw(u.value),
+          })),
+        };
+      }
       const options: DenominatorOption[] = [];
       const mode = voltageConfig[ch];
       if (mode) {
@@ -2128,7 +2149,12 @@ function App() {
           options.push({ value: 'volt', label: unit, slopePerRaw: slope });
         }
       }
-      return options;
+      return {
+        tag: 'ADS1115',
+        referenceLabel: 'Reference (V)',
+        defaultDenomUnit: 'volt',
+        options,
+      };
     },
     [voltageConfig],
   );
@@ -2343,11 +2369,18 @@ function App() {
                   ModbusSimpleLogger
                 </a>
               </h1>
-              <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
-                {isViewerMode
-                  ? remoteSerialLabel || 'Waiting for the host window…'
-                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)} - ${precisionLabel}`}
-              </p>
+              {/* Link details have moved to Connection Config in full — baud
+                  and parity, the transport name, and the resolved precision.
+                  None of them is something to act on while a run is in flight
+                  (they are all locked once connected), and the header is
+                  sticky, so every line here is a line the channel grid never
+                  gets back. A viewer has no local link at all: what it shows
+                  is the host's, which no panel of its own can report. */}
+              {isViewerMode && (
+                <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
+                  {remoteSerialLabel || 'Waiting for the host window…'}
+                </p>
+              )}
               <div
                 role="status"
                 aria-live="polite"
@@ -2404,20 +2437,59 @@ function App() {
                 </span>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className={`button-touch min-w-[6rem] ${connected ? 'button-secondary' : 'button-primary'}`}
-                    onClick={handleToggleConnection}
-                  >
-                    {connected ? 'Disconnect' : 'Connect'}
-                  </button>
+                  {/* Connect is a button; Disconnect is a swipe. They are not
+                      the same kind of action: connecting is recoverable by
+                      clicking again, while disconnecting mid-run drops the link
+                      a save is being written from, and the two sit at the same
+                      spot — so the destructive one is the one a mis-click must
+                      not reach. Same gesture as the Output Tester's zero. */}
+                  {connected ? (
+                    <SlideToConfirm
+                      label="Disconnect"
+                      armedLabel="Release"
+                      knobLabel="→"
+                      onConfirm={handleToggleConnection}
+                      // Grey, not the Output Tester's rose: disconnecting is
+                      // guarded because it should not happen by accident, not
+                      // because it is alarming — and a permanently red control
+                      // in the header would be shouting at someone who is only
+                      // ever looking at the channel grid behind it.
+                      tone="neutral"
+                      knobPx={28}
+                      // Exactly the Connect button's 6rem: the two swap places
+                      // in the same slot, so the header must not reflow when
+                      // the link comes up. "Disconnect" is 10 Iosevka chars at
+                      // 0.7rem ≈ 56 px, which clears the 58 px left beside the
+                      // knob — shrink either number and it starts clipping.
+                      className="h-[30px] w-24"
+                      labelClassName="text-[0.7rem]"
+                      aria-label="Slide to disconnect the device"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="button-touch button-primary min-w-[6rem]"
+                      onClick={handleToggleConnection}
+                    >
+                      Connect
+                    </button>
+                  )}
                   {/* Next to Start Save, not in Connection Config, because it is
                       a property of the run rather than of the link: the poll
                       rate is set once for a device, this is chosen per
                       measurement — and unlike the poll rate it stays live
                       mid-run. */}
-                  <label className="flex items-center gap-1 text-[0.7rem] text-slate-600 dark:text-slate-400">
-                    Save Rate
+                  {/* "Save" over "Rate" rather than on one line: the header
+                      row is the app's widest fixed element and this label was
+                      the longest thing in it that is not a control. Two short
+                      lines at leading-none still measure less than the
+                      button-touch height next to it, so the row does not grow. */}
+                  <label className="flex items-center gap-1 text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
+                    <span className="shrink-0 text-right">
+                      Save
+                      <br />
+                      Rate
+                    </span>
                     <select
                       value={saveRate.valueMs}
                       onChange={(e) => {
@@ -2499,7 +2571,7 @@ function App() {
                 <em>Phy</em> = <em>a</em>&middot;(<em>Raw</em>)<sup>2</sup> + <em>b</em>&middot;(<em>Raw</em>) + <em>c</em>
               </p>
               <p className="text-[0.6rem]">
-                <em>a</em>, <em>b</em>, <em>c</em> : Calibration Value
+                <em>a</em>, <em>b</em>, <em>c</em> : Input Calib Value
               </p>
             </div>
             <CollapseButton collapsed={aiCollapsed} onToggle={() => setAiCollapsed((v) => !v)} label="Analog Input" />
@@ -2744,6 +2816,8 @@ function App() {
         stopBitsOptions={STOP_BITS_OPTIONS}
         parityOptions={PARITY_OPTIONS}
         precisionOptions={PRECISION_OPTIONS}
+        transportLabel={serialTransportLabel}
+        resolvedPrecisionLabel={precisionLabel}
         pollingRate={pollingRate}
         onPollingRateChange={setPollingRate}
         pollingOptions={POLLING_OPTIONS}
@@ -2761,41 +2835,35 @@ function App() {
         locked={scriptRunner.scriptRunning}
       />
 
-      <CalibrationWizardPanel
-        open={hx711CalibrationPanelOpen}
-        onClose={() => setHx711CalibrationPanelOpen(false)}
+      <InputCalibratorPanel
+        open={inputCalibratorPanelOpen}
+        onClose={() => setInputCalibratorPanelOpen(false)}
         locked={scriptRunner.scriptRunning}
-        title="HX711 Calib (CH00–07)"
-        subtitle="Phy = a·Raw²+b·Raw+c"
+        title="Input Calibrator"
+        subtitle="Calibration Wizard · Phy = a·Raw²+b·Raw+c"
         channelStart={0}
-        channelCount={8}
-        referenceLabel="Reference unit (electrical)"
-        defaultDenomUnit="mv_per_v"
-        getDenominatorOptions={getHx711DenominatorOptions}
+        channelCount={AI_CHANNELS}
+        getChannelInfo={getCalibratorChannelInfo}
         getAiRaw={getAiRawValue}
         onApply={applyAiCalibrationValues}
       />
 
-      <CalibrationWizardPanel
-        open={ads1115CalibrationPanelOpen}
-        onClose={() => setAds1115CalibrationPanelOpen(false)}
-        locked={scriptRunner.scriptRunning}
-        title="ADS1115 Calib (CH08–15)"
-        subtitle="Phy = a·Raw²+b·Raw+c"
-        channelStart={8}
-        channelCount={8}
-        referenceLabel="Reference (V)"
-        defaultDenomUnit="volt"
-        getDenominatorOptions={getAds1115DenominatorOptions}
-        getAiRaw={getAiRawValue}
-        onApply={applyAiCalibrationValues}
-      />
-
-      <VoltageConfigPanel
-        open={voltageConfigPanelOpen}
-        onClose={() => setVoltageConfigPanelOpen(false)}
+      <InputConfigPanel
+        open={inputConfigPanelOpen}
+        onClose={() => setInputConfigPanelOpen(false)}
         voltageConfig={voltageConfig}
         onVoltageConfigChange={setVoltageConfig}
+      />
+
+      <OutputTesterPanel
+        open={outputTesterPanelOpen}
+        onClose={() => setOutputTesterPanelOpen(false)}
+        channelCount={AO_CHANNELS}
+        voltages={aoVoltages}
+        labels={aoFreeLabels}
+        onSetVoltage={setAo}
+        connected={connected}
+        locked={scriptRunner.scriptRunning}
       />
 
       <AppInfoPanel
@@ -2810,7 +2878,7 @@ function App() {
         onClose={() => setManualPanelOpen(false)}
       />
 
-      <ScriptRunnerPanel
+      <PyScriptRunnerPanel
         open={scriptRunnerPanelOpen}
         onClose={() => setScriptRunnerPanelOpen(false)}
         scriptRunner={scriptRunner}

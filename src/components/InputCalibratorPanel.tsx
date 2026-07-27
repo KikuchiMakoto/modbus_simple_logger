@@ -16,8 +16,22 @@ type MeasureRow = { phy: string; raw: string };
 
 // A reference (denominator) unit for the spec method and its raw→unit slope.
 //   HX711:   fixed electrical units (μV/V, mV/V, με)
-//   ADS1115: only the channel's V/mV slope (Voltage Config range must be set)
+//   ADS1115: only the channel's V/mV slope (Input Config range must be set)
 export type DenominatorOption = { value: string; label: string; slopePerRaw: number };
+
+// Everything that differs between the two front-ends behind one channel number.
+// This panel used to be instantiated twice — once per chip — with the split
+// expressed as two sets of props; now the channel dropdown spans the whole AI
+// map and the caller answers per channel instead.
+export type CalibratorChannelInfo = {
+  /** Chip name shown next to the channel number, e.g. "HX711". */
+  tag: string;
+  /** Heading for the spec method's denominator selector. */
+  referenceLabel: string;
+  /** Denominator unit selected when the channel is first opened. */
+  defaultDenomUnit: string;
+  options: DenominatorOption[];
+};
 
 // Captured raw is kept to sub-count precision (averaging reduces noise) but
 // trimmed to 3 decimals so the cell stays readable.
@@ -210,7 +224,7 @@ function CalibrationPlot({ points, fit }: { points: CalibrationFitPoint[]; fit: 
   );
 }
 
-type CalibrationWizardPanelProps = {
+type InputCalibratorPanelProps = {
   open: boolean;
   onClose: () => void;
   // scriptRunning — freezes Apply (writing scale coefficients).
@@ -219,15 +233,12 @@ type CalibrationWizardPanelProps = {
   subtitle?: string;
   channelStart: number;
   channelCount: number;
-  // Reference-unit label shown for the spec method's denominator selector.
-  referenceLabel: string;
-  defaultDenomUnit: string;
-  getDenominatorOptions: (ch: number) => DenominatorOption[];
+  getChannelInfo: (ch: number) => CalibratorChannelInfo;
   getAiRaw: (ch: number) => number;
   onApply: (ch: number, cal: AiCalibration) => void;
 };
 
-export function CalibrationWizardPanel({
+export function InputCalibratorPanel({
   open,
   onClose,
   locked,
@@ -235,12 +246,10 @@ export function CalibrationWizardPanel({
   subtitle,
   channelStart,
   channelCount,
-  referenceLabel,
-  defaultDenomUnit,
-  getDenominatorOptions,
+  getChannelInfo,
   getAiRaw,
   onApply,
-}: CalibrationWizardPanelProps) {
+}: InputCalibratorPanelProps) {
   const [channel, setChannel] = useState(channelStart);
   const [method, setMethod] = useState<CalibMethod>('measure');
   const [drafts, setDrafts] = useState<Record<number, ChannelDraft>>({});
@@ -256,19 +265,23 @@ export function CalibrationWizardPanel({
     return () => window.clearInterval(id);
   }, [open]);
 
-  const draft = drafts[channel] ?? makeDefaultDraft(defaultDenomUnit);
+  // Per-channel because the two front-ends share this window: the chip tag, the
+  // reference-unit heading and the denominator list all follow the channel
+  // number rather than a mode the user has to pick first.
+  const info = getChannelInfo(channel);
+  const draft = drafts[channel] ?? makeDefaultDraft(info.defaultDenomUnit);
 
   const patch = (partial: Partial<ChannelDraft>) => {
     setDrafts((prev) => ({
       ...prev,
-      [channel]: { ...(prev[channel] ?? makeDefaultDraft(defaultDenomUnit)), ...partial },
+      [channel]: { ...(prev[channel] ?? makeDefaultDraft(info.defaultDenomUnit)), ...partial },
     }));
     setApplied(null);
     setDownloaded(null);
   };
 
   // --- Spec preview ---
-  const denomOptions = getDenominatorOptions(channel);
+  const denomOptions = info.options;
   const selectedDenom =
     denomOptions.find((o) => o.value === draft.denomUnit) ?? denomOptions[0];
   const denomLabel = selectedDenom?.label ?? '';
@@ -326,6 +339,7 @@ export function CalibrationWizardPanel({
     if (!canDownload) return;
     const name = downloadCalibrationTsv({
       title,
+      sensor: info.tag,
       channel,
       result: measureResult,
       points: validPoints,
@@ -363,9 +377,12 @@ export function CalibrationWizardPanel({
               }}
               className="flex-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
             >
+              {/* The chip is named in the option rather than being chosen
+                  first: which front-end a channel is on is a fact about the
+                  channel, not a mode to select. */}
               {Array.from({ length: channelCount }, (_, i) => channelStart + i).map((ch) => (
                 <option key={ch} value={ch}>
-                  CH {ch.toString().padStart(2, '0')}
+                  CH {ch.toString().padStart(2, '0')} — {getChannelInfo(ch).tag}
                 </option>
               ))}
             </select>
@@ -484,7 +501,7 @@ export function CalibrationWizardPanel({
               {/* Reference (denominator) unit — the only unit that affects b */}
               <div>
                 <label className="mb-0.5 block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                  {referenceLabel} — sets slope b
+                  {info.referenceLabel} — sets slope b
                 </label>
                 <select
                   value={selectedDenom?.value ?? ''}
@@ -503,7 +520,7 @@ export function CalibrationWizardPanel({
                 </select>
                 {denomOptions.length === 0 && (
                   <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
-                    Set the voltage range in the main app's Voltage Config first, then come back.
+                    Set this channel's range in the main app's Input Config first, then come back.
                   </p>
                 )}
               </div>

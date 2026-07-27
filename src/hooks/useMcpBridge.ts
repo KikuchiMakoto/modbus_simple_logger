@@ -6,10 +6,10 @@ import { isLauncherMode } from '../utils/appMode';
 // Page side of the MCP bridge (desktop exe only).
 //
 // The launcher process hosts the MCP server but owns no logger state: AI/AO
-// values, the Modbus connection and the Pyodide ScriptRunner all live here. This
+// values, the Modbus connection and the Pyodide PyScriptRunner all live here. This
 // hook answers method calls relayed over a WebSocket to the launcher's own
 // origin, dispatching them to the very same SharedArrayBuffers and callbacks the
-// ScriptRunner uses — so the MCP tools and the Python API are two doors into one
+// PyScriptRunner uses — so the MCP tools and the Python API are two doors into one
 // implementation rather than two implementations.
 //
 // Launcher mode comes from utils/appMode (a marker the launcher injects into the
@@ -29,7 +29,7 @@ export type McpRecentSample = {
  * Free-text labels the user typed on the AI / AO / Parameter cards. Index = ch,
  * '' = unlabeled. Returned as one object rather than per channel: a client that
  * has to correlate 16+8+16 channels would otherwise need 40 round trips, and
- * this is the same shape the ScriptRunner panel's AI-prompt button emits.
+ * this is the same shape the PyScriptRunner panel's AI-prompt button emits.
  */
 export type McpLabels = {
   ai: string[];
@@ -147,7 +147,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
       const api = apiRef.current;
       const requireWrite = () => {
         if (!writeEnabledRef.current) {
-          throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
+          throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Server).');
         }
         // A running script owns the outputs; letting an external write interleave
         // with a control loop would fight it. Mirrors the in-app rule that
@@ -203,7 +203,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
           // Not gated by scriptRunning here: runScript itself refuses to replace
           // a running script, and its message names the conflict precisely.
           if (!writeEnabledRef.current) {
-            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
+            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Server).');
           }
           if (typeof params.code !== 'string' || params.code.trim() === '') {
             throw new Error('code must be a non-empty string.');
@@ -220,7 +220,7 @@ export function useMcpBridge(apiRef: { current: McpApi }, writeEnabled: boolean)
         }
         case 'stop_script': {
           if (!writeEnabledRef.current) {
-            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Access).');
+            throw new Error('MCP write access is disabled. Enable it in the app menu (MCP Server).');
           }
           return { stopped: true, ...describeRun(api, api.stopScript(), RUN_RESULT_LOG_LINES) };
         }

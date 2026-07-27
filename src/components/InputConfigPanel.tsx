@@ -11,25 +11,25 @@ const ADS1115_MODES = new Set<string>([
   'ads1115_2048mv', 'ads1115_1024mv', 'ads1115_512mv', 'ads1115_256mv',
 ]);
 
-type VoltageConfigPanelProps = {
+type InputConfigPanelProps = {
   open: boolean;
   onClose: () => void;
   voltageConfig: VoltageMode[];
   onVoltageConfigChange: (config: VoltageMode[]) => void;
 };
 
-export function VoltageConfigPanel({
+export function InputConfigPanel({
   open,
   onClose,
   voltageConfig,
   onVoltageConfigChange,
-}: VoltageConfigPanelProps) {
+}: InputConfigPanelProps) {
   return (
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="Voltage Config"
-      subtitle="AI Channel Display Mode"
+      title="Input Config"
+      subtitle="AI Channel Range / Display Mode"
       accent="blue"
       defaultWidth={380}
       defaultHeight={460}

@@ -69,7 +69,7 @@ export function parseRecoveryName(opfsName: string): RecoveryNameParts | null {
 }
 
 /**
- * The name a recovered run is downloaded under: `<stem>_autorestore<ext>`.
+ * The name a recovered run is downloaded under: `<stem>_recovered<ext>`.
  *
  * Deliberately NOT the original name. A recovered file is not the file the run
  * was supposed to produce — it is what a crash left behind, and it can be
@@ -84,6 +84,6 @@ export function parseRecoveryName(opfsName: string): RecoveryNameParts | null {
 export function recoveredDownloadName(originalName: string): string {
   const dot = originalName.lastIndexOf('.');
   // A leading dot is the whole name of a dotfile, not an extension.
-  if (dot <= 0) return `${originalName}_autorestore`;
-  return `${originalName.slice(0, dot)}_autorestore${originalName.slice(dot)}`;
+  if (dot <= 0) return `${originalName}_recovered`;
+  return `${originalName.slice(0, dot)}_recovered${originalName.slice(dot)}`;
 }

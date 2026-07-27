@@ -12,15 +12,15 @@
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境は `web-serial-polyfill` 経由の WebUSB フォールバック |
 | **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（25ms / 50ms / 100ms、既定 100ms、接続中は固定）と **Save Rate**（200ms〜30分、既定 1s、いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
-| **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
+| **AO 8ch 制御** | GP8403（Holding Register）への書き込み。PyScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
 | **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。非保存時は直近 768 点（≒77秒）のプレビュー、保存中は保存開始〜現在の全区間を 2048 点へ間引いて表示。描画バックエンド（GPU/CPU）バッジ表示 |
 | **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み）。書き込み周期は Save Rate に従います。IndexedDB でセッション中データを FIFO 管理 |
-| **クラッシュ復旧** | 保存中の全行を OPFS へ同期ミラーします（ピッカーで選んだファイルは Stop Save まで 0 バイトのため）。異常終了後の初回起動で復旧を提示し、`<元の名前>_autorestore.tsv` としてダウンロードします。提示を Cancel すると復旧コピーは削除されます |
-| **ScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御、`set_notify()` で通知 |
+| **クラッシュ復旧** | 保存中の全行を OPFS へ同期ミラーします（ピッカーで選んだファイルは Stop Save まで 0 バイトのため）。異常終了後の初回起動で復旧を提示し、`<元の名前>_recovered.tsv` としてダウンロードします。提示を Cancel すると復旧コピーは削除されます |
+| **PyScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御、`set_notify()` で通知 |
 | **バックグラウンド耐性** | ポーリング・チャート反映・TSV フラッシュのタイマーを専用 Worker で駆動。ウィンドウを最小化してもブラウザのタイマー抑制（1Hz→1分に1回）で計測が止まりません。デスクトップ版はブラウザ起動フラグでも抑制を無効化 |
-| **通知** | ScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ） |
+| **通知** | PyScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ） |
 | **UI 拡大率** | 画面全体を 50〜200%（11 段）で拡大・縮小し、その端末に記憶します（Menu ヘッダーの `[-] [100%] [+]`。ダーク/ライト切替も同じ場所）。ブラウザのズームが使えない・保持されない環境（Android のインストール済み PWA など）向け |
 | **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
 | **リモート監視** | デスクトップ版限定。他 PC やスマホのブラウザから、チャートとチャネル値を**閲覧のみ**できます（LAN 直接 / インターネット経由・QR 表示・既定オフ） |
@@ -58,7 +58,7 @@ Web 版（GitHub Pages / PWA）に加えて、**単一の実行ファイルで�
 
 - **完全オフライン動作** — Pyodide を含む全アセットを exe に同梱。外部ネットワークへは一切アクセスしません。
 - **キャッシュ不使用** — ランチャーモードでは Service Worker を登録せず（過去に登録済みの SW があれば解除）、全レスポンスに `Cache-Control: no-store` を付与。ETag / Last-Modified も返しません。exe を再ビルドすれば、再起動時に必ず最新の内容が表示されます（陳腐化キャッシュ事故が原理的に起きません）。
-- **クロスオリジン分離** — 配信サーバーが全レスポンスに COOP/COEP を付与するため、SharedArrayBuffer（Pyodide Worker）と ScriptRunner がそのまま動作します。
+- **クロスオリジン分離** — 配信サーバーが全レスポンスに COOP/COEP を付与するため、SharedArrayBuffer（Pyodide Worker）と PyScriptRunner がそのまま動作します。
 - **専用プロファイル** — ブラウザは専用の `--user-data-dir` で起動するため、通常のブラウザ設定・ディスクキャッシュと混ざりません。
 - **MCP サーバー内蔵**（デスクトップ版限定） — 生成 AI クライアントから計測値の読み取りと制御が行えます（下記）。
 - **リモート監視**（デスクトップ版限定） — 他 PC のブラウザから計測画面を閲覧できます（下記）。
@@ -96,18 +96,18 @@ claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
 | 読取り（常時可） | `get_status` / `get_labels()` / `get_ai_raw(ch)` / `get_ai_phy(ch)` / `get_ao(ch)` / `get_param(ch)` / `read_recent(n)` / `get_script()` / `get_script_log(n)` |
 | 書込み（要許可） | `set_ao(ch, volt)` / `set_param(ch, value)` / `set_ai_tare(ch)` / `run_script(code, wait_ms)` / `stop_script()` |
 
-`get_labels()` は各チャネルカードに入力した自由記述ラベルを `{ ai, ao, param }`（index = ch）で返します。チャネル番号だけでは分からない「何を測っているか」を AI 側が把握するためのもので、ScriptRunner の Python API には含みません（制御ループ内では不要なため）。
+`get_labels()` は各チャネルカードに入力した自由記述ラベルを `{ ai, ao, param }`（index = ch）で返します。チャネル番号だけでは分からない「何を測っているか」を AI 側が把握するためのもので、PyScriptRunner の Python API には含みません（制御ループ内では不要なため）。
 
-その他の API は ScriptRunner の Python API と同一面です。実装も共通で、MCP ツールは ScriptRunner と同じ共有メモリ・同じコールバックを経由します（`set_ao` は必ずアプリ側の送信経路を通るため、Modbus フレーム間隔などの制約はそのまま維持されます）。
+その他の API は PyScriptRunner の Python API と同一面です。実装も共通で、MCP ツールは PyScriptRunner と同じ共有メモリ・同じコールバックを経由します（`set_ao` は必ずアプリ側の送信経路を通るため、Modbus フレーム間隔などの制約はそのまま維持されます）。
 
 **動作ルール**
 
-- **書込みは既定で無効**。アプリのメニュー「MCP Access」で明示的に許可した場合のみ通ります。読取りは常時可能です。
-- **ScriptRunner は1つだけ**。MCP から実行したスクリプトと画面から実行したスクリプトは同一の実行系・同一のエディタ内容を共有するため、二重実行は起こりません。実行中は反対側からの起動を拒否し、`get_script()` でいつでも内容と状態を確認できます。MCP から投入したコードは実行前に退避され、ScriptRunner パネルの「Restore」で復元できます。
+- **書込みは既定で無効**。アプリのメニュー「MCP Server」で明示的に許可した場合のみ通ります。読取りは常時可能です。
+- **PyScriptRunner は1つだけ**。MCP から実行したスクリプトと画面から実行したスクリプトは同一の実行系・同一のエディタ内容を共有するため、二重実行は起こりません。実行中は反対側からの起動を拒否し、`get_script()` でいつでも内容と状態を確認できます。MCP から投入したコードは実行前に退避され、PyScriptRunner パネルの「Restore」で復元できます。
 - **直接書込みはスクリプト実行中は拒否**されます（制御ループと外部書込みの競合を防ぐため）。停止は `stop_script` で行えます。
 - **多重起動は先勝ち**。2つ目以降のインスタンスはポートを取得できないため MCP 無効で通常起動します（アプリ自体は問題なく動作します）。
 - 高速な制御ループは MCP の往復では回せません。`run_script` で Python をハードウェア側に投入してください。
-- **スクリプトのエラーは結果として返ります**。投入した Python は別ワーカーで走るため、失敗しても MCP のツール呼び出し自体は成功します。そこで `run_script` は既定で最大 3 秒（`wait_ms` で変更、0 で即時復帰）だけ完了を待ち、`{ outcome, error, traceback, log }` を返します。起動直後に落ちるスクリプト（構文エラー・NameError・import 失敗など）はこの時点でトレースバックごと返り、制御ループのように走り続けるものは `outcome: "running"` で返ります。実行中・実行後の `print()` 出力とトレースバックは `get_script_log(n)` で取得でき、最後の実行の結果は `get_script()` の `lastRun` にも入ります。ログは実行ごとにクリアされ、直近 300 行を保持します。同じ内容は ScriptRunner パネルの **Output** 欄にも表示されます。
+- **スクリプトのエラーは結果として返ります**。投入した Python は別ワーカーで走るため、失敗しても MCP のツール呼び出し自体は成功します。そこで `run_script` は既定で最大 3 秒（`wait_ms` で変更、0 で即時復帰）だけ完了を待ち、`{ outcome, error, traceback, log }` を返します。起動直後に落ちるスクリプト（構文エラー・NameError・import 失敗など）はこの時点でトレースバックごと返り、制御ループのように走り続けるものは `outcome: "running"` で返ります。実行中・実行後の `print()` 出力とトレースバックは `get_script_log(n)` で取得でき、最後の実行の結果は `get_script()` の `lastRun` にも入ります。ログは実行ごとにクリアされ、直近 300 行を保持します。同じ内容は PyScriptRunner パネルの **Output** 欄にも表示されます。
 
 ---
 
@@ -119,8 +119,8 @@ claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
 
 1. 計測している PC で、メニューの **Remote Monitoring** を開きます。
 2. 公開方法を選んでオンにします。
-   - **This network** — LAN 直接。インターネット不要。`192.168.*.*` の PC だけが到達できます。
-   - **Internet link** — HTTPS のリンクを発行します。モバイル回線のスマホでも開けます（インターネット必要）。
+   - **Local Network** — 直結。インターネット不要。この PC に経路が届くところ（研究室 LAN、大学のグローバルアドレス、Tailscale など）から見えます。
+   - **SmartPhone Link** — HTTPS のリンクを発行。モバイル回線のスマホでも開けます（インターネット必要）。
 3. 表示された **QR コードをスマホで撮る**か、URL を見る側の PC のブラウザで開きます。
 
 見る側の画面には、AI / AO / Parameter の各チャネルとチャートがそのまま出ますが、**Connect / Start Save / メニューのボタンは存在しません**。ヘッダーには "Monitor (read-only)" と表示されます。
@@ -130,8 +130,14 @@ claude mcp add --transport http modbus-logger http://127.0.0.1:8765/mcp
 - **閲覧専用は接続の性質です。** 見る側の PC にはシリアルポートが繋がっておらず、こちらへ送り返す通信路もありません（フィードは一方通行で、見る側が送ったデータは一切読まれません）。ボタンが無いのは説明であって、制限そのものはページの外側にあります。
 - **リンクを知らなければページすら出ません。** 最初のアクセスで URL の `?k=` を確認し、以降は Cookie で通します。トークンが合わなければ、HTML もアセットも 403 です。
 - **URL は毎回変わります。** アプリを再起動すると、古いリンクも古い QR コードも無効になります。
-- **This network は平文の HTTP** で、LAN の外には出ません。**Internet link は HTTPS** ですが、アドレス自体は公開インターネット上にあります。**リンクそのものが鍵**だと考えてください。
-- Internet link は Cloudflare の Quick Tunnel（アカウント不要・無料）です。**稼働保証はありません**。誰かが頼りにしている計測なら This network を使ってください。
+- QR / URL は **NIC ごとに 1 つ** 出ます（有線・無線・Tailscale など）。見る側と同じネットワークのものを渡してください。他のものは相手側で単に開けません。
+
+**警告**
+
+- **NAT 超えが許可されていないネットワークで SmartPhone Link を使わないこと。** 実体は Cloudflare Quick Tunnel で、NAT とファイアウォールを外向きに貫きます。大学・企業ネットではこれは技術ではなく規程の問題です。先に確認してください。
+- **Local Network は平文 HTTP で、常にローカルとは限りません。** グローバル IP が振られたキャンパスネットでは「この PC のネットワーク」がインターネットを意味します。
+- **アクセスは計測に影響します。** リクエストはこのプロセス自身が処理します。DoS でも、外部スキャナの流れ弾でも、大量アクセスは取得ループと競合し、計測タイミングを乱し得ます。
+- **SmartPhone Link に稼働保証はありません**（アカウント不要・無料の Quick Tunnel）。誰かが頼りにしている計測なら Local Network を使ってください。
 - **見る側のチャートは直近のサンプルだけ**です。長時間の Save 中でも、見えるのは最新部分に限られます。完全な記録は計測 PC が書いている TSV ファイルです。
 - 見る側では設定（ラベル・キャリブレーション等）は保存されません。表示は計測 PC の設定をそのまま映しているだけです。
 
