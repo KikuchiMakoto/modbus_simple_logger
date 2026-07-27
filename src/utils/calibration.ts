@@ -21,15 +21,25 @@ export const loadAiCalibration = (channels: number): AiCalibration[] => {
 
 export const saveAiCalibration = (values: AiCalibration[]) => writeJsonCookie(AI_COOKIE_KEY, values);
 
-export const loadVoltageConfig = (): VoltageMode[] => {
-  const raw = readJsonCookie<string[]>(VOLTAGE_CONFIG_COOKIE_KEY);
-  const validValues = new Set(VOLTAGE_MODES.map(m => m.value));
+const VALID_VOLTAGE_MODES = new Set<string>(VOLTAGE_MODES.map((m) => m.value));
+
+// Every voltage config that comes from outside this build goes through here:
+// localStorage written by an older version, and the state a remote host pushes
+// to a viewer. Both can carry a mode this build no longer has (the retired
+// 'unknown', say), and rawToDisplayValue has no case for one — it would return
+// undefined and take the whole channel grid down on the next frame.
+export const sanitizeVoltageConfig = (raw: unknown): VoltageMode[] => {
   if (!Array.isArray(raw)) return [...DEFAULT_VOLTAGE_CONFIG];
   return Array.from({ length: AI_CHANNELS }, (_, i) => {
     const v = raw[i];
-    return v && validValues.has(v as VoltageMode) ? v as VoltageMode : DEFAULT_VOLTAGE_CONFIG[i];
+    return typeof v === 'string' && VALID_VOLTAGE_MODES.has(v)
+      ? (v as VoltageMode)
+      : DEFAULT_VOLTAGE_CONFIG[i];
   });
 };
+
+export const loadVoltageConfig = (): VoltageMode[] =>
+  sanitizeVoltageConfig(readJsonCookie<string[]>(VOLTAGE_CONFIG_COOKIE_KEY));
 
 export const saveVoltageConfig = (config: VoltageMode[]) => writeJsonCookie(VOLTAGE_CONFIG_COOKIE_KEY, config);
 
@@ -71,12 +81,8 @@ export const hx711RawToMicroStrain = (raw: number): number =>
 export const ads1115RawToVolt = (raw: number): number =>
   raw / 32768.0 * 6.144;
 
-export const isUnknownMode = (mode: VoltageMode): boolean => mode === 'unknown';
-
 export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: number; unit: string } => {
   switch (mode) {
-    case 'unknown':
-      return { value: NaN, unit: '' };
     case 'hx711_mv_per_v':
       return { value: hx711RawToMvPerV(raw), unit: 'mV/V' };
     case 'hx711_micro_strain':

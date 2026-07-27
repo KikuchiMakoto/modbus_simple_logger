@@ -1,4 +1,4 @@
-import { ModbusPrecision, PollingRateOption, SerialSettings } from '../types';
+import { ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
 type ModbusConfigPanelProps = {
@@ -8,8 +8,8 @@ type ModbusConfigPanelProps = {
   onSlaveIdChange: (value: number) => void;
   serialSettings: SerialSettings;
   onSerialSettingsChange: (settings: SerialSettings) => void;
-  modbusPrecision: ModbusPrecision;
-  onModbusPrecisionChange: (value: ModbusPrecision) => void;
+  modbusPrecision: ModbusPrecisionSetting;
+  onModbusPrecisionChange: (value: ModbusPrecisionSetting) => void;
   pollingRate: PollingRateOption;
   onPollingRateChange: (value: PollingRateOption) => void;
   pollingOptions: PollingRateOption[];
@@ -17,7 +17,7 @@ type ModbusConfigPanelProps = {
   dataBitsOptions: SerialSettings['dataBits'][];
   stopBitsOptions: SerialSettings['stopBits'][];
   parityOptions: SerialSettings['parity'][];
-  precisionOptions: { label: string; value: ModbusPrecision }[];
+  precisionOptions: { label: string; value: ModbusPrecisionSetting }[];
   connected: boolean;
 };
 
@@ -149,7 +149,7 @@ export function ModbusConfigPanel({
           <label className="block text-xs text-slate-600 dark:text-slate-400">Precision</label>
           <select
             value={modbusPrecision}
-            onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecision)}
+            onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecisionSetting)}
             className="w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             disabled={connected}
           >

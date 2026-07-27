@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Rnd } from 'react-rnd';
+import { getUiScale, useUiScalePercent } from '../utils/uiScale';
 
 type WindowGeometry = { x: number; y: number; width: number; height: number };
 
@@ -13,11 +14,22 @@ let cascadeCounter = 0;
 
 const VIEWPORT_MARGIN = 8;
 
+// window.innerWidth/Height are unzoomed CSS pixels, but every number in
+// WindowGeometry is a length inside #root, which the UI scale zooms. At 150% a
+// 1600 px window is only 1067 px of room as far as this geometry is concerned,
+// so the clamp has to divide — otherwise the panels are free to sit at
+// coordinates that render past the right edge of the screen.
+function viewportBounds(): { width: number; height: number } {
+  const scale = getUiScale();
+  return { width: window.innerWidth / scale, height: window.innerHeight / scale };
+}
+
 function clampToViewport(geometry: WindowGeometry): WindowGeometry {
-  const width = Math.min(geometry.width, window.innerWidth - VIEWPORT_MARGIN * 2);
-  const height = Math.min(geometry.height, window.innerHeight - VIEWPORT_MARGIN * 2);
-  const x = Math.max(VIEWPORT_MARGIN, Math.min(geometry.x, window.innerWidth - width - VIEWPORT_MARGIN));
-  const y = Math.max(VIEWPORT_MARGIN, Math.min(geometry.y, window.innerHeight - height - VIEWPORT_MARGIN));
+  const viewport = viewportBounds();
+  const width = Math.min(geometry.width, viewport.width - VIEWPORT_MARGIN * 2);
+  const height = Math.min(geometry.height, viewport.height - VIEWPORT_MARGIN * 2);
+  const x = Math.max(VIEWPORT_MARGIN, Math.min(geometry.x, viewport.width - width - VIEWPORT_MARGIN));
+  const y = Math.max(VIEWPORT_MARGIN, Math.min(geometry.y, viewport.height - height - VIEWPORT_MARGIN));
   return { x, y, width, height };
 }
 
@@ -58,6 +70,7 @@ export function FloatingWindow({
 }: FloatingWindowProps) {
   const [geometry, setGeometry] = useState<WindowGeometry | null>(null);
   const [zIndex, setZIndex] = useState(zIndexCounter);
+  const uiScalePercent = useUiScalePercent();
 
   useEffect(() => {
     if (open) {
@@ -67,6 +80,28 @@ export function FloatingWindow({
       setGeometry(null);
     }
   }, [open, title, defaultWidth, defaultHeight]);
+
+  // The window is only clamped when it opens, so anything that shrinks the room
+  // it has afterwards — resizing the browser, or scaling the UI up, which does
+  // exactly that in this geometry's units — could otherwise strand it off
+  // screen with its title bar (the only drag handle) out of reach.
+  useEffect(() => {
+    if (!open) return;
+    const reclamp = () => {
+      setGeometry((prev) => {
+        if (!prev) return prev;
+        const next = clampToViewport(prev);
+        if (next.x === prev.x && next.y === prev.y && next.width === prev.width && next.height === prev.height) {
+          return prev;
+        }
+        geometryStore.set(title, next);
+        return next;
+      });
+    };
+    reclamp();
+    window.addEventListener('resize', reclamp);
+    return () => window.removeEventListener('resize', reclamp);
+  }, [open, title, uiScalePercent]);
 
   if (!open || !geometry) return null;
 
@@ -91,6 +126,10 @@ export function FloatingWindow({
         minWidth={280}
         minHeight={180}
         bounds="parent"
+        // Pointer deltas arrive in unzoomed screen pixels while the window is
+        // positioned in zoomed ones; without this the panel drifts away from
+        // the cursor by exactly the scale factor on every drag and resize.
+        scale={uiScalePercent / 100}
         dragHandleClassName="floating-window-drag-handle"
         onDragStart={bringToFront}
         onResizeStart={bringToFront}

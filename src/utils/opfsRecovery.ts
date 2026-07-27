@@ -6,11 +6,12 @@
  * Stop Save ever deleted, offers them to the user, and removes them once the
  * user says the download arrived.
  *
- * Nothing here deletes a non-empty mirror on its own. The user confirms the
- * download landed before the copy goes away, because the alternative — a failed
- * or blocked download plus an automatic cleanup — destroys the very data this
- * feature exists to protect. A mirror the user does not resolve is simply
- * offered again at the next startup.
+ * Nothing here deletes a non-empty mirror on its own, and nothing deletes one
+ * on the strength of having started a download: an <a download> reports neither
+ * completion nor failure, so the only evidence that the data arrived is the user
+ * saying so. A mirror the user does not resolve is simply offered again at the
+ * next startup — the alternative, a failed or blocked download plus an automatic
+ * cleanup, destroys the very data this feature exists to protect.
  */
 import {
   RECOVERY_DIR,

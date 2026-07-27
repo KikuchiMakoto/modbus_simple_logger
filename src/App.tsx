@@ -8,7 +8,9 @@ import {
   DataPoint,
   SerialSettings,
   ModbusPrecision,
+  ModbusPrecisionSetting,
   VoltageMode,
+  DEFAULT_VOLTAGE_CONFIG,
 } from './types';
 import {
   AI_CHANNELS,
@@ -17,6 +19,9 @@ import {
   AI_START_REGISTER,
   AI_FLOAT_START_REGISTER,
   AO_START_REGISTER,
+  PRECISION_PROBE_ATTEMPTS,
+  PRECISION_PROBE_CHANNELS,
+  PRECISION_PROBE_TIMEOUT_MS,
   RETRY_DELAY_MS,
   INPUT_READ_RETRY_WINDOW_MS,
   INPUT_READ_MAX_FAILURES_PER_WINDOW,
@@ -45,7 +50,7 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
   rawToDisplayValue,
-  isUnknownMode,
+  sanitizeVoltageConfig,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -141,10 +146,16 @@ const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 4
 const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
 const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
 const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
-const PRECISION_OPTIONS: { label: string; value: ModbusPrecision }[] = [
+const PRECISION_OPTIONS: { label: string; value: ModbusPrecisionSetting }[] = [
+  { label: 'Auto', value: 'auto' },
   { label: 'Normal(i16t)', value: 'normal' },
   { label: 'Extended(f32t)', value: 'extended' },
 ];
+
+const PRECISION_LABEL: Record<ModbusPrecision, string> = {
+  normal: 'i16t',
+  extended: 'f32t',
+};
 const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
   dataBits: 8,
@@ -391,6 +402,46 @@ function CollapseButton({
   );
 }
 
+/**
+ * Ask the device whether it has the float32 register map, by reading the first
+ * PRECISION_PROBE_CHANNELS float channels at AI_FLOAT_START_REGISTER.
+ *
+ * Run once per connect, never during polling: the answer is a property of the
+ * firmware on the other end, so re-asking mid-run could only ever change the
+ * register map underneath a recording.
+ *
+ * Silence is read as "no f32 map" and repeated PRECISION_PROBE_ATTEMPTS times
+ * before it is believed. The asymmetry is deliberate — being wrong towards
+ * 'normal' lands on the mode this app used by default before Auto existed,
+ * while being wrong towards 'extended' would decode 16-bit registers as
+ * halves of floats and record numbers that look plausible and are nonsense.
+ *
+ * The values are required to be finite for the same reason: an unimplemented
+ * register block that answers with 0xFFFF padding decodes to NaN, which is a
+ * structurally valid float32 frame and would otherwise pass. A device that
+ * legitimately reports NaN on channel 0 or 1 will fall back to Normal, and can
+ * be set to Extended by hand.
+ */
+async function probeExtendedPrecision(client: WebSerialModbusClient): Promise<boolean> {
+  for (let attempt = 1; attempt <= PRECISION_PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      const values = await client.readInputRegistersAsFloat32Abcd(
+        AI_FLOAT_START_REGISTER,
+        PRECISION_PROBE_CHANNELS,
+        PRECISION_PROBE_TIMEOUT_MS,
+      );
+      if (values.length >= PRECISION_PROBE_CHANNELS && values.every((v) => Number.isFinite(v))) {
+        console.info('[App] precision probe: float block answered', { attempt, values });
+        return true;
+      }
+      console.warn('[App] precision probe: answer was not a usable float block', { attempt, values });
+    } catch (err) {
+      console.info(`[App] precision probe: no float block (attempt ${attempt}/${PRECISION_PROBE_ATTEMPTS})`, err);
+    }
+  }
+  return false;
+}
+
 // Module scope, not a ref: StrictMode mounts the app twice in development, and
 // the recovery prompt is a blocking dialog the user would have to dismiss twice
 // for every leftover run.
@@ -407,7 +458,15 @@ function App() {
 
   const [slaveId, setSlaveId] = useState(1);
   const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
-  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
+  // What the user picked, and what the link ended up using. Auto is the
+  // default: the probe can only improve on a fixed 'normal', which is what an
+  // f32 device got here before if nobody remembered to change this.
+  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecisionSetting>('auto');
+  const [resolvedPrecision, setResolvedPrecision] = useState<ModbusPrecision>('normal');
+  // Read by the polling loop, which keeps a closure alive across renders. Set
+  // in handleConnect before polling is allowed to start, so no cycle can run
+  // against the previous connection's answer.
+  const resolvedPrecisionRef = useRef<ModbusPrecision>('normal');
   const [pollingRate, setPollingRate] = useState<PollingRateOption>(POLLING_OPTIONS.find(p => p.valueMs === 200)!);
   const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
   const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
@@ -484,6 +543,16 @@ function App() {
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
   const aoWriteInProgressRef = useRef(false);
+  // Level-triggered, like the evt_cmd_send event in the reference desktop
+  // implementation: an AO change that lands while a write is already on the
+  // wire sets this instead of being dropped, and the driver runs one more pass
+  // when the current transfer finishes. However many changes arrive during a
+  // write, they cost exactly one extra frame, and it carries the newest values.
+  const aoWriteRequestedRef = useRef(false);
+  // Assigned during render further down, once doAoWriteAsync exists. The AO
+  // setters are declared above it and must not take a dependency on its
+  // identity, so the kick goes through a ref rather than a captured callback.
+  const requestAoWriteRef = useRef<() => void>(() => {});
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
   // While saving, the chart shows the whole capture downsampled to
@@ -561,31 +630,51 @@ function App() {
       requestPersistentStorage().catch(() => {});
 
       const keepNote = 'Cancel keeps it and offers it again next time.';
-      for (const found of await listRecoverableRuns()) {
-        const started = new Date(found.startedAt).toLocaleString();
-        const offer =
-          `An unsaved recording was found.\n\n` +
-          `File: ${found.originalName}\n` +
-          `Started: ${started}\n` +
-          `Size: ${formatRunSize(found.size)}\n\n` +
-          `OK downloads it now. ${keepNote}`;
-        if (!window.confirm(offer)) continue;
+      const runs = await listRecoverableRuns();
+      if (runs.length === 0) return;
 
-        try {
-          await downloadRecoveredRun(found);
-        } catch (err) {
-          window.alert(
-            `Could not recover ${found.originalName}.\n\n${(err as Error).message}\n\n` +
-              `The copy has been kept.`,
-          );
-          continue;
-        }
+      // One run per startup, not a loop over all of them. Each download here is
+      // an <a download>.click() with no transient user activation — dismissing a
+      // confirm() does not grant one — and Chromium blocks the second and later
+      // such download from a page. The loop would then tell the user that files
+      // 2..n "were sent to your downloads" and offer to delete copies that were
+      // never written anywhere.
+      const [found] = runs;
+      const alsoWaiting =
+        runs.length > 1
+          ? `\n\n${runs.length - 1} more unsaved recording(s) will be offered the next time the app starts.`
+          : '';
 
-        const cleanup =
-          `${found.originalName} was sent to your downloads.\n\n` +
-          `OK deletes the recovery copy. ${keepNote}`;
-        if (window.confirm(cleanup)) await discardRecoveredRun(found);
+      const started = new Date(found.startedAt).toLocaleString();
+      const offer =
+        `An unsaved recording was found.\n\n` +
+        `File: ${found.originalName}\n` +
+        `Started: ${started}\n` +
+        `Size: ${formatRunSize(found.size)}\n\n` +
+        `OK downloads it now. ${keepNote}${alsoWaiting}`;
+      if (!window.confirm(offer)) return;
+
+      try {
+        await downloadRecoveredRun(found);
+      } catch (err) {
+        window.alert(
+          `Could not recover ${found.originalName}.\n\n${(err as Error).message}\n\n` +
+            `The copy has been kept.`,
+        );
+        return;
       }
+
+      // Nothing here can observe when the download finishes — an <a download>
+      // fires no completion event, and the copy is still streaming out of OPFS
+      // when click() returns. So the prompt asks the user to check rather than
+      // announcing success: deleting the mirror while the browser is still
+      // reading it truncates the very file being rescued, and a run this feature
+      // exists for can be hundreds of megabytes.
+      const cleanup =
+        `${found.originalName} was sent to your browser's downloads.\n\n` +
+        `Once the download has finished and the file opens, press OK to delete the recovery copy.\n\n` +
+        `${keepNote}`;
+      if (window.confirm(cleanup)) await discardRecoveredRun(found);
     };
 
     run().catch((err) => console.warn('TSV recovery check failed:', err));
@@ -594,6 +683,15 @@ function App() {
   useEffect(() => {
     pollingRateRef.current = pollingRate.valueMs;
   }, [pollingRate.valueMs]);
+
+  // A manual choice is its own answer — no probe involved — so it takes effect
+  // as soon as it is picked rather than at the next connect. (The control is
+  // disabled while connected, so this can only run between sessions.)
+  useEffect(() => {
+    if (modbusPrecision === 'auto') return;
+    resolvedPrecisionRef.current = modbusPrecision;
+    setResolvedPrecision(modbusPrecision);
+  }, [modbusPrecision]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -815,6 +913,16 @@ function App() {
         return { ...channel, raw: value, physical: value };
       }),
     );
+    // Put the frame on the wire now rather than at the end of the next polling
+    // cycle. The old path cost a control loop up to one full polling interval
+    // of dead time per command — 200 ms by default and minutes at the slow
+    // sampling rates — for a transfer that takes single-digit milliseconds.
+    //
+    // Nothing here waits or paces: the inter-frame gap and the exclusion
+    // against a concurrent AI read are both the transport's job
+    // (transfer()'s AsyncMutex and minMessageIntervalMs), and a second
+    // implementation of either would just fight it.
+    requestAoWriteRef.current();
   }, []);
 
   const setAo = useCallback((ch: number, data: number) => {
@@ -1056,7 +1164,9 @@ function App() {
     setAiFreeLabels((prev) => replaceIfChanged(prev, state.aiLabels));
     setAoFreeLabels((prev) => replaceIfChanged(prev, state.aoLabels));
     setParamFreeLabels((prev) => replaceIfChanged(prev, state.paramLabels));
-    setVoltageConfig((prev) => replaceIfChanged(prev, state.voltageConfig as VoltageMode[]));
+    // Sanitized, not cast: the host may be running a different version of this
+    // app and sending a mode this build does not know.
+    setVoltageConfig((prev) => replaceIfChanged(prev, sanitizeVoltageConfig(state.voltageConfig)));
     setAiCalibration((prev) => replaceIfChanged(prev, state.calibration));
     setParamValues((prev) => replaceIfChanged(prev, state.paramValues));
     setAoChannels((prev) =>
@@ -1273,7 +1383,7 @@ function App() {
       const aoRaw = new Float32Array(aoRawSourceRef.current);
       const aiVoltage = new Float32Array(aiRaw.length);
       for (let i = 0; i < aiRaw.length; i++) {
-        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? 'unknown').value;
+        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? DEFAULT_VOLTAGE_CONFIG[i]).value;
       }
       writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, param);
       // The exact count lives in a ref; React only hears about it a few times a
@@ -1292,27 +1402,11 @@ function App() {
     }
   }, [setStatus]);
 
-  const doAoWriteAsync = useCallback(async () => {
-    if (aoWriteInProgressRef.current) return;
-    const currentAoRaw = aoRawSourceRef.current;
-    if (!hasAoValuesChanged(lastSentAoRawRef.current, currentAoRaw)) return;
-    if (!clientRef.current) return;
-
-    const failureCount = pruneFailuresInWindow(
-      outputHoldingFailureTimestampsRef,
-      OUTPUT_HOLDING_RETRY_WINDOW_MS,
-    );
-    if (failureCount >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
-      console.warn('[App] AO write skipped due to retry limit', {
-        failureCount: outputHoldingFailureTimestampsRef.current.length,
-      });
-      return;
-    }
-
-    aoWriteInProgressRef.current = true;
+  /** One AO block write and its single retry. Both read the newest values. */
+  const writeAoBlockOnce = useCallback(async () => {
     try {
       const latest = aoRawSourceRef.current;
-      await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
+      await clientRef.current!.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
       lastSentAoRawRef.current = [...latest];
     } catch (writeError) {
       outputHoldingFailureTimestampsRef.current.push(Date.now());
@@ -1322,7 +1416,7 @@ function App() {
       try {
         await waitMs(RETRY_DELAY_MS);
         const latest = aoRawSourceRef.current;
-        await clientRef.current.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
+        await clientRef.current!.writeMultipleHoldingRegisters(AO_START_REGISTER, latest);
         lastSentAoRawRef.current = [...latest];
       } catch (retryError) {
         outputHoldingFailureTimestampsRef.current.push(Date.now());
@@ -1330,10 +1424,62 @@ function App() {
           retryError instanceof Error ? retryError : new Error(String(retryError));
         console.warn('[App] AO write failed after retry', normalizedRetryError);
       }
+    }
+  }, [waitMs]);
+
+  /**
+   * Send the AO block if it differs from what the device was last told.
+   *
+   * Called on every AO change (immediately, from applyAoRawValues) and once
+   * more at the end of each polling cycle, which is the catch-up for a change
+   * that arrived while the retry limiter was tripped.
+   *
+   * Re-entry does not drop the request: a call that arrives mid-write re-arms
+   * aoWriteRequestedRef and the loop below runs one more pass. Dropping was
+   * survivable while writes only left once per cycle, but with a control loop
+   * setting outputs at its own rate it would silently discard commands — and
+   * the one that gets discarded is by definition the most recent.
+   */
+  const doAoWriteAsync = useCallback(async () => {
+    if (aoWriteInProgressRef.current) {
+      aoWriteRequestedRef.current = true;
+      return;
+    }
+
+    aoWriteInProgressRef.current = true;
+    try {
+      for (;;) {
+        aoWriteRequestedRef.current = false;
+        if (!clientRef.current) break;
+        if (!hasAoValuesChanged(lastSentAoRawRef.current, aoRawSourceRef.current)) break;
+
+        const failureCount = pruneFailuresInWindow(
+          outputHoldingFailureTimestampsRef,
+          OUTPUT_HOLDING_RETRY_WINDOW_MS,
+        );
+        if (failureCount >= OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW) {
+          console.warn('[App] AO write skipped due to retry limit', {
+            failureCount: outputHoldingFailureTimestampsRef.current.length,
+          });
+          break;
+        }
+
+        await writeAoBlockOnce();
+        // Only loop for changes that arrived during the transfer just made. A
+        // failed write leaves the values "changed", so without this the loop
+        // would keep retrying a dead device until the limiter caught it.
+        if (!aoWriteRequestedRef.current) break;
+      }
     } finally {
       aoWriteInProgressRef.current = false;
     }
-  }, [pruneFailuresInWindow, waitMs]);
+  }, [pruneFailuresInWindow, writeAoBlockOnce]);
+
+  // Direct assignment during render, like mcpApiRef/viewerStateRef below: an
+  // effect would leave the first AO change of the session with no writer.
+  requestAoWriteRef.current = () => {
+    void doAoWriteAsync();
+  };
 
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
@@ -1356,7 +1502,7 @@ function App() {
       );
     } else {
       try {
-        aiSourceValues = modbusPrecision === 'extended'
+        aiSourceValues = resolvedPrecisionRef.current === 'extended'
           ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
           : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
       } catch (readError) {
@@ -1367,7 +1513,7 @@ function App() {
           console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
-            aiSourceValues = modbusPrecision === 'extended'
+            aiSourceValues = resolvedPrecisionRef.current === 'extended'
               ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
               : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
           } catch (retryReadError) {
@@ -1420,11 +1566,13 @@ function App() {
       firstError = new Error('AI read failed');
     }
 
+    // Catch-up, not the main path: AO changes go out the moment they happen
+    // (applyAoRawValues). This picks up a value that was still owed because
+    // the write retry limiter was tripped when it arrived.
     void doAoWriteAsync();
 
     setStatus(firstError ? firstError.message : 'Polling');
   }, [
-    modbusPrecision,
     enqueueDisplayUpdate,
     enqueueSaveUpdate,
     pruneFailuresInWindow,
@@ -1587,6 +1735,8 @@ function App() {
         slaveId,
         serialSettings,
         serial,
+        // Auto opens on the Normal timing (the wider inter-frame gap) and is
+        // corrected by setPrecisionMode() once the probe has answered.
         modbusPrecision === 'extended',
         shouldUsePolyfill,
       );
@@ -1605,6 +1755,23 @@ function App() {
         console.error('[App] Sync AO holding registers failed', err);
         throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
       }
+
+      // Resolve Auto here, after the AO sync has already proved the link works
+      // end to end. Probing first would make "device is not talking at all"
+      // and "device has no float registers" the same silence, and the app
+      // would settle on a register map on the strength of a dead cable.
+      //
+      // Both the ref and the state are set before setAcquiring(true) below, so
+      // the polling loop cannot start against a stale answer.
+      const resolved: ModbusPrecision =
+        modbusPrecision === 'auto'
+          ? (await probeExtendedPrecision(client)) ? 'extended' : 'normal'
+          : modbusPrecision;
+      console.info('[App] precision resolved', { setting: modbusPrecision, resolved });
+      client.setPrecisionMode(resolved === 'extended');
+      resolvedPrecisionRef.current = resolved;
+      setResolvedPrecision(resolved);
+
       clientRef.current = client;
       pendingClient = null;
       outputHoldingFailureTimestampsRef.current = [];
@@ -1613,7 +1780,12 @@ function App() {
       setConnected(true);
       acquiringRef.current = true;
       setAcquiring(true);
-      setStatus(`Connected @ ${formatSerialSettings(serialSettings)}`);
+      // Always names the mode, including when it was chosen by the probe: an
+      // Auto that got it wrong has to be visible somewhere the user looks.
+      setStatus(
+        `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL[resolved]}` +
+          (modbusPrecision === 'auto' ? ' (auto)' : ''),
+      );
       await requestWakeLock();
       keepLatestCountRef.current = 0;
       console.info('[App] handleConnect complete');
@@ -1673,6 +1845,9 @@ function App() {
       }
       lastSentAoRawRef.current = null;
       aoWriteInProgressRef.current = false;
+      // Cleared with the rest: a request left armed here would fire one write
+      // into the next connection, before anything has set an output on it.
+      aoWriteRequestedRef.current = false;
       inputReadFailureTimestampsRef.current = [];
       outputHoldingFailureTimestampsRef.current = [];
       lastAiReadCompletedAtRef.current = 0;
@@ -1888,7 +2063,15 @@ function App() {
         3,
         PARAM_CHANNELS,
         TSV_FLUSH_MAX_ROWS,
-        (message) => {
+        (message, severity) => {
+          // A warning means the TSV itself is being written correctly and only
+          // the crash-recovery mirror is missing. Prefixing it with "TSV write
+          // error" would have the user stop a healthy run to investigate.
+          if (severity === 'warning') {
+            console.warn('TSV worker warning:', message);
+            setStatus(message);
+            return;
+          }
           console.error('TSV worker error:', message);
           setStatus(`TSV write error: ${message}`);
         },
@@ -1898,7 +2081,7 @@ function App() {
           // polling schedule has drifted; resync from now.
           idealScheduleRef.current = 0;
         },
-        modbusPrecision === 'extended',
+        resolvedPrecision === 'extended',
       );
       try {
         const startedAt = Date.now();
@@ -1983,8 +2166,17 @@ function App() {
     setStatus('Stopped saving');
   };
 
+  // Auto has no answer until it has connected once, and saying "i16t" before
+  // the probe has run would be a claim about a device nobody has asked yet.
+  const precisionLabel =
+    modbusPrecision === 'auto' && !connected ? 'auto' : PRECISION_LABEL[resolvedPrecision];
+
+  // The page background and its full-height box live on <body> (index.css)
+  // rather than on this element: everything below is inside #root, which the UI
+  // scale zooms, and a min-h-screen there is measured in zoomed units — a
+  // quarter too tall at 125%, for a scrollbar on an otherwise empty page.
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
+    <div>
       <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
         {/* The header is sticky, so every pixel it takes is a pixel the channel
             grid never gets back. Title, serial settings and the save status sit
@@ -2008,7 +2200,7 @@ function App() {
               <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
                 {isViewerMode
                   ? remoteSerialLabel || 'Waiting for the host window…'
-                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`}
+                  : `${serialTransportLabel} - ${formatSerialSettings(serialSettings)} - ${precisionLabel}`}
               </p>
               <div
                 role="status"
@@ -2166,7 +2358,6 @@ function App() {
             const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
             const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
             const aiMeterHeight = Math.max(2, aiRatio * 100);
-            const showVoltage = !isUnknownMode(mode);
             return (
             <div
               key={ch.id}
@@ -2194,7 +2385,11 @@ function App() {
                   <div className="flex justify-between items-center leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {modbusPrecision === 'extended' ? Math.trunc(ch.raw) : ch.raw}
+                      {/* Extended reads float32 registers, so truncating the
+                          readout to an integer threw away the only thing that
+                          mode is for. Normal carries int16 counts, where a
+                          decimal point would be noise. */}
+                      {resolvedPrecision === 'extended' ? ch.raw.toFixed(3) : ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
@@ -2203,7 +2398,6 @@ function App() {
                       {ch.physical.toFixed(3)}
                     </span>
                   </div>
-                  {showVoltage && (
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
                       {display.unit}
@@ -2212,7 +2406,6 @@ function App() {
                       {display.value.toFixed(3)}
                     </span>
                   </div>
-                  )}
                 </div>
               </div>
               <div className="flex w-1 items-end overflow-hidden rounded-r">

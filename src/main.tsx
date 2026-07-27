@@ -10,6 +10,11 @@ import App from './App';
 // default 400, so only those four weights are imported.
 import './index.css';
 import { setupServiceWorker } from './utils/swUpdate';
+import { initUiScale } from './utils/uiScale';
+
+// Before the first render, not from inside a component: restoring the stored UI
+// scale after mount would paint one frame at 100% and reflow the entire page.
+initUiScale();
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },

@@ -42,9 +42,23 @@
   src: url('@fontsource/iosevka/files/iosevka-latin-700-normal.woff2') format('woff2');
 }
 
+/* The page background lives on <body>, not on the app's root <div>, because
+   #root is the element the UI scale zooms (below). A `min-h-screen` inside a
+   zoomed element resolves 100vh in the zoomed coordinate space, which at 125%
+   would make the background box a quarter taller than the window and leave a
+   scrollbar on an empty page. <body> is outside the zoom, so 100vh is the
+   window and the gradient covers it at every scale. */
 body {
-  @apply bg-slate-50 text-slate-900 min-h-screen dark:bg-slate-950 dark:text-slate-100;
+  @apply min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-200 text-slate-900 transition-colors dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100;
   font-family: 'Iosevka', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono CJK JP', 'Courier New', monospace;
+}
+
+/* UI scale (utils/uiScale.ts sets --ui-scale on <html>; unset means 100%).
+   `zoom` and not `transform: scale()`: zoom is a layout property, so the page
+   reflows to the scaled size and stays fully scrollable, whereas a transform
+   would paint the same layout larger and push its right edge out of reach. */
+#root {
+  zoom: var(--ui-scale, 1);
 }
 
 .card {

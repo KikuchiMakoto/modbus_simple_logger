@@ -48,7 +48,7 @@ src/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
-│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
+│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋UI 拡大率・通知トグル（UI 名: Application Info）
 │   ├── CalibrationPanel.tsx         # Calibration Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── CalibrationWizardPanel.tsx   # 共通キャリブレーションウィザード（実測最小二乗 / スペック計算）。HX711(CH00-07)・ADS1115(CH08-15) 両方で使用
 │   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
@@ -63,6 +63,8 @@ src/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
+    ├── opfsRecoveryShared.ts        # OPFS ミラーの命名規約（Worker と主スレッドで共有）
+    ├── opfsRecovery.ts              # 起動時の残存ミラー検出・ダウンロード・削除（主スレッド側）
     ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し AppInfoPanel が表示
@@ -70,7 +72,8 @@ src/
     ├── notifications.ts             # Web Notification のゲート（トグル永続化＋許可判定）と notify()
     ├── appMode.ts                   # 実行形態の判定（web / launcher / viewer）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
-    ├── cookies.ts                   # 後方互換: Cookie 読込 → localStorage 移行
+    ├── cookies.ts                   # 設定の永続化（localStorage 本体・Cookie は旧値の読込移行とフォールバックのみ）
+    ├── uiScale.ts                   # UI 拡大率（#root の CSS zoom）。localStorage 永続・共有ストア。AppInfoPanel が操作し FloatingWindow が座標補正に使う
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
 public/
 ├── sw.js                            # Service Worker（COOP/COEP ヘッダー注入付き）
@@ -98,11 +101,26 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **この制約をアプリケーション層で再実装してはならない**（`transfer()` が単一責任）
 - `constants.ts` に追加の Wait 定数を定義しないこと（`transfer()` の待機と二重になる）
 - AO書込みを非ブロック化する場合も、`transfer()` の `AsyncMutex` により AI/AO 送信間の最低間隔が自動保証される
-- AO書込みは `doAoWriteAsync` で独立実行され、`aoWriteInProgressRef` で二重投入を防止する
+- **「出力直後の InputRegisters 読みを少し遅らせる」も `transfer()` が既に担保している**。参照実装（`DigitShowModbusDoc.cpp`）の `sleep_time_after_cmd_ms`（非 usb_cdc_direct で 10ms / direct で 0）に対応するのが `minMessageIntervalMs`（Normal 10ms / Extended = 5文字時間 ≒ 1.3ms@38400)。**アプリ側に「書込み後ウェイト」を足さないこと** — 二重待機になるだけで、片方だけ直すと必ず食い違う
+
+### AO 出力（`App.tsx` の `doAoWriteAsync`）
+- **AO の変更は即時送信**。`applyAoRawValues`（`set_ao` / MCP の唯一の着地点）が `requestAoWriteRef.current()` で書込みを起こす。ポーリング周期末尾まで待たせていた頃は、制御ループが1コマンドあたり最大1周期（既定 200ms、遅いサンプリングでは数分）の死に時間を払っていた — 実際の転送は数 ms なのに
+- **待たない・間隔を計らない**。フレーム間隔も AI 読取りとの排他も `transfer()` の責任（`AsyncMutex` + `minMessageIntervalMs`）。ここで待つと二重待機になる
+- **再入は落とさず畳む**。書込み中に来た変更は `aoWriteRequestedRef` を立て、転送完了後にもう1周だけ回す（参照実装の `evt_cmd_send` と同じレベルトリガ）。**`return` で捨ててはならない** — 捨てられるのは定義上いちばん新しい値であり、制御ループが自分の周期で出力を動かすと黙って取りこぼす
+- ループを回す条件は「**直前の転送中に**新しい変更が来たこと」だけにすること。失敗した書込みは値が「変更済み」のまま残るため、これを条件にすると死んだデバイスへ延々と再送する
+- `pollOnce` 末尾の `doAoWriteAsync()` は**取りこぼしの拾い直し**（リトライ制限に当たっていた変更）であって主経路ではない
+
+### 精度モードの自動判定（`App.tsx` の `probeExtendedPrecision`）
+- Precision の選択肢は **Auto（既定）/ Normal(i16t) / Extended(f32t)**。型を2つに分けてあり、`ModbusPrecisionSetting`（ユーザーの選択・`'auto'` を含む）と `ModbusPrecision`（実際に線上で使う地図・2値のみ）は**別物**。`'auto'` を下流（ポーリング・TSV 列整形・読み値表示）へ流してはならない
+- 判定は **接続時に1回だけ**。`AI_FLOAT_START_REGISTER`(5000) の先頭2ch を `PRECISION_PROBE_TIMEOUT_MS`(100ms) で読み、返れば Extended、返らなければ Normal。**実行中に再判定しないこと** — 相手のファームウェアの性質であり、記録中にレジスタ地図が変わる余地を作るだけ
+- **プローブは AO Holding Registers 同期の後に置く**。先に置くと「デバイスが全く喋っていない」と「float レジスタが無い」が同じ沈黙になり、断線を根拠にレジスタ地図を決めてしまう
+- **`PRECISION_PROBE_ATTEMPTS`(3回) 失敗して初めて Normal に落とす**。float レジスタを持たないデバイスは Modbus 例外フレーム（`transfer()` が待つ長さより短い）を返すため、これもタイムアウトとして現れる。つまり「例外」「無応答」「1フレーム落ち」が外から区別できない。**間違うなら Normal 側へ**倒すこと — Auto 以前の既定がまさに Normal であり、逆に誤って Extended にすると i16 レジスタを float の半分として解釈し、**もっともらしい嘘の値を記録する**
+- 応答値は**有限であることまで要求する**。未実装レジスタが 0xFFFF 詰めで応答すると NaN にデコードされるが、フレームとしては妥当なので構造チェックだけでは通ってしまう
+- 決まったモードは**ヘッダーと接続ステータスに必ず出す**（`i16t` / `f32t`、Auto 時は `(auto)` 付き）。自動判定が外した場合に、ユーザーが気づける場所が無いという状態を作らないこと
 
 ### ポーリング（`App.tsx`）
 - 50ms〜5分の定期ポーリング（`App.tsx` の `POLLING_OPTIONS`、既定 200ms。`setBackgroundTimeout` 再帰スケジュール）
-- **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行
+- **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ内最大10回）
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
 - **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
@@ -136,6 +154,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **通知は tag で潰す**（`NOTIFY_TAG`）。`while True:` の中の `set_notify()` でデスクトップが埋まらないようにするため。連投は「最新1件が残る」挙動になる
 - 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
 - UI は **Application Info パネルのトグル1つだけ**。通知専用パネルやメニュー項目を作らないこと（設定が1個しかない）
+
+### UI 拡大率（`utils/uiScale.ts`）
+- **OS のスケーリング倍率はブラウザから取得できない**。唯一の候補である `devicePixelRatio` は「OS のスケーリング」「ブラウザ自身のズーム」「パネルの物理 DPI」の3つを掛けた値であり、1.25 が Windows 125% なのか Chrome 125% なのか 1.25x パネルなのか区別できない。**ここから自動で拡大率を決めてはならない** — ブラウザが既に OS スケーリングを反映している環境（＝ほぼ全て）で二重適用になる。倍率はユーザーが選ぶ（Application Info の `[-] [100%] [+]`、50〜200% の 11 段）
+- 実装は **`#root` への CSS `zoom`**（`index.css`、値は `<html>` の `--ui-scale`）。`transform: scale()` ではない: `zoom` はレイアウトに参加するので拡大後のサイズで再フローしスクロール範囲も正しくなるが、transform は同じレイアウトを大きく描くだけで右端が画面外に出たまま届かなくなる。対応は Chrome/Edge/Safari 全て・Firefox 126+（Win/mac/Linux/Android で本アプリが動く全ブラウザ）
+- **ページ背景と全画面ボックスは `<body>` に置く**（`index.css`）。`#root` の内側で `min-h-screen` を書くと 100vh が**ズーム後の座標系**で解決され、125% では画面より 1/4 高い箱になって空のページにスクロールバーが出る
+- **ズーム内側の座標を扱うコードは補正が要る**。`window.innerWidth/Height` は非ズームの CSS px、`FloatingWindow` のジオメトリはズーム内側の px なので、クランプ側で `getUiScale()` で割る。ドラッグ量も同様にずれるため `Rnd` に `scale` を渡す（Plotly は `_invScaleX/Y` で自前に補正するので不要）
+- 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
+- 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
 
 ### ScriptRunner（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
@@ -196,6 +222,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 途中参加用に `viewerHub` が直近 2048 点（`CHART_MAX_POINTS` と同値）のバックログを保持する。**ビューアのチャートは「直近 N 点」でホストの「全区間を間引いた図」とは一致しない** — 完全な記録はホストが書く TSV であり、この差は仕様
 - ビューア側の受信は**ホストと同じ `pendingDataPoints` → `flushPendingDataPoints` を通す**（描画経路を二重に持たない）。`flushPendingDataPoints` の viewer 分岐は IndexedDB 書込みを行わない（監視は記録ではない）
 - **ビューアでは設定を永続化しない**（`utils/cookies.ts` の `writeJsonStorage` が `isViewerMode` で no-op）。ホストのラベル・キャリブレーションが毎秒流れてくるため、閲覧している PC 自身のロガー設定を上書きしてしまう。ゲートは各呼び出し側ではなくこの1箇所に置くこと
+  - **例外は「その画面の見え方」だけ**（テーマ・UI 拡大率）。これらは `writeLocalPreference` を使いビューアでも保存する — ホストのフィードが一切書かない値であり、監視用の空きモニタこそ拡大率やテーマを直したい場所だから。**計測に関わる値をこちらへ移してはならない**
+- **ホストから来た `voltageConfig` は `sanitizeVoltageConfig()` を通す**（`as VoltageMode[]` のキャストで受けない）。ホストが別バージョンの本アプリであることは普通にあり、この build に無いモードが届くと `rawToDisplayValue()` が `undefined` を返して次のフレームでチャンネルグリッドごと落ちる
 
 ### データ保存
 - **IndexedDB**: セッション中の全データポイントを蓄積（`keepLatestPoints` で自動トリム）
@@ -206,8 +234,17 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
   - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は Normal（i16）では `toString()` の整数、Extended（f32）では init の `aiRawAsFloat` により浮動小数フォーマッタを通す
   - `Float32Array` / `number[]` の両方を受け付ける
-- **設定永続化**: **localStorage** にテーマ・チャート軸・キャリブレーションを JSON 保存
-  - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）
+- **OPFS クラッシュリカバリ**（`utils/opfsRecoveryShared.ts` + `opfsRecovery.ts` + `tsvWriterWorker.ts`）: ピッカーで選んだファイルは `FileSystemWritableFileStream` がスワップファイルへ溜め、`close()` で初めて実体へ swing する。つまり **Stop Save まで対象ファイルは 0 バイト**で、途中でクラッシュすると全損する。そこで全行を OPFS へも同期追記する（`createSyncAccessHandle()` は OPFS 限定・Worker 限定・スワップ無し・追記可能）
+  - **ダーティビットは「ミラーファイルが存在すること」そのもの**。別フラグは持たない — クラッシュとは2つの書込みが食い違いうる瞬間そのものであり、この機能が絶対に許容できないのは「別の run の名前や時刻を持つ復旧ファイル」だから。メタデータ（元ファイル名・開始時刻）も**ミラー自身のファイル名にエンコードする**（サイドカーや localStorage にしない）。正常な Stop Save が消すので、起動時に残っているものは定義上「終わらなかった run」
+  - ミラーは**ストリームとは別のバッファ・別のタイマー**（`TSV_MIRROR_FLUSH_INTERVAL_MS` = 1s / `TSV_MIRROR_FLUSH_MAX_ROWS` = 100行）。ストリーム側の 60s に相乗りすると**毎 run の最初の1分間ミラーが空**になり、クラッシュリカバリが最も評価される窓がまさに穴になる
+  - ヘッダーは最初の1行が来るまで保留する（`mirrorPendingHeader`）。0行の run は 0 バイトのまま残り、起動時に無言で掃除される
+  - **ミラーの失敗は絶対に致命傷にしてはならない**。worker → main の `'error'` は init ハンドシェイクを reject して worker を terminate するため、ミラー関連は必ず **`'warning'`** で送ること。`'error'` で送っていた頃は、OPFS が使えない環境で**保存そのものが開始できなかった**（守るはずのデータを守るために失わせていた）
+  - **復旧は起動時の `confirm()` → ダウンロード**。`showSaveFilePicker()` は使えない（起動時に transient user activation が無く、confirm の解除でも付与されない）
+  - **1回の起動で提示するのは1件だけ**。activation の無い `<a download>.click()` は2件目から Chromium の「複数ファイルの自動ダウンロード」ブロックに掛かるため、ループで回すと2件目以降が黙って落ちたまま「ダウンロードしました」と表示して削除を促すことになる。残りは次回起動で提示する
+  - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
+- **設定永続化**: **localStorage** にテーマ・UI 拡大率・チャート軸・キャリブレーションを JSON 保存
+  - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
+  - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
@@ -285,6 +322,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 定数は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
+- **AI Raw の表示桁は精度モードで変える**: Extended(f32t) は `toFixed(3)`、Normal(i16t) は整数そのまま。f32 レジスタを読みながら `Math.trunc()` していた頃は、そのモードの存在理由である小数部を表示だけ捨てていた（TSV には常に入っている）
 - **配色ルール（重要）**: 明示的な指示がない限り、新規 UI 要素の色指定は **他と同じ緑（emerald）か通常のグレー（slate）のみ**を使う。青(blue/sky)・琥珀(amber)・赤(red)などを新規に持ち込まない。
   - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
   - 通知/注意バナー等も緑（成功）かグレー（中立・ロック等）で表現し、赤や琥珀の警告色は使わない
@@ -295,7 +333,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`CalibrationWizardPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **キャリブレーションウィザードの2方式**（`CalibrationWizardPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) 共通コンポーネントを2インスタンスで使用。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
-  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出、レンジ Unknown 時は 0 件 → 「Voltage Config を先に設定」と案内）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getDenominatorOptions(ch)` が供給する: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。
 
 ## package.json のバージョン更新の絶対的なルール

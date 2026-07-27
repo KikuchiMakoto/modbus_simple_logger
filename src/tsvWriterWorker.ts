@@ -75,7 +75,10 @@ async function openMirror(originalName: string): Promise<void> {
     mirror = null;
     mirrorDir = null;
     mirrorName = '';
-    post({ type: 'error', message: `Crash recovery unavailable: ${errorMessage(err)}` });
+    // 'warning', not 'error': this runs inside the init handshake, and an
+    // error there rejects createTsvWriter() and terminates the worker — the
+    // picked file, which opened perfectly well, would never be written at all.
+    post({ type: 'warning', message: `Crash recovery unavailable: ${errorMessage(err)}` });
   }
 }
 
@@ -122,7 +125,10 @@ function mirrorWrite(data: string): void {
       // Already unusable; nothing to salvage.
     }
     disableMirror();
-    post({ type: 'error', message: `Crash recovery stopped: ${errorMessage(err)}` });
+    // Also a warning: the stream write that the user actually asked for is
+    // untouched, and reporting this as "TSV write error" would have them stop a
+    // healthy run to investigate a file that is being written correctly.
+    post({ type: 'warning', message: `Crash recovery stopped: ${errorMessage(err)}` });
   }
 }
 

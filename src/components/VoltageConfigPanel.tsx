@@ -3,11 +3,11 @@ import { AI_CHANNELS } from '../constants';
 import { FloatingWindow } from './FloatingWindow';
 
 const HX711_MODES = new Set<string>([
-  'unknown', 'hx711_mv_per_v', 'hx711_micro_strain',
+  'hx711_mv_per_v', 'hx711_micro_strain',
 ]);
 
 const ADS1115_MODES = new Set<string>([
-  'unknown', 'ads1115_10v', 'ads1115_6144mv', 'ads1115_4096mv',
+  'ads1115_10v', 'ads1115_6144mv', 'ads1115_4096mv',
   'ads1115_2048mv', 'ads1115_1024mv', 'ads1115_512mv', 'ads1115_256mv',
 ]);
 

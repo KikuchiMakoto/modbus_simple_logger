@@ -69,7 +69,20 @@ export interface TsvErrorMessage {
   message: string;
 }
 
+/**
+ * worker → main: something the user should know about, but the save itself is
+ * fine and continues. Distinct from 'error' because the init handshake rejects
+ * on 'error': the crash-recovery mirror is reported during init, and sending it
+ * as an error made a browser that cannot provide OPFS fail Start Save outright —
+ * losing the save this exists to protect, in the name of protecting it.
+ */
+export interface TsvWarningMessage {
+  type: 'warning';
+  message: string;
+}
+
 export type TsvWorkerResponse =
   | TsvReadyMessage
   | TsvClosedMessage
-  | TsvErrorMessage;
+  | TsvErrorMessage
+  | TsvWarningMessage;
