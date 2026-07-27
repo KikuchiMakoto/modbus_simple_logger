@@ -167,7 +167,7 @@ export function ModbusConfigPanel({
               rate is a property of the link, and the loop's schedule, its read
               timeout and its retry budget are all derived from it. Changing it
               mid-run also moves the sample grid the recording deadline is
-              locked to. "Save every" stays live because it is a property of the
+              locked to. "Save Rate" stays live because it is a property of the
               measurement, and re-phasing it costs nothing. */}
           <select
             value={pollingRate.valueMs}
@@ -184,12 +184,6 @@ export function ModbusConfigPanel({
               </option>
             ))}
           </select>
-          <p className="mt-0.5 text-[0.65rem] leading-tight text-slate-500 dark:text-slate-500">
-            How often the device is read, and how often the chart moves — this
-            is the rate a feedback script sees. How often a reading is written
-            to file is <strong>Save every</strong>, next to Start Save. Fixed
-            while connected.
-          </p>
         </div>
       </div>
     </FloatingWindow>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -135,11 +135,11 @@ const AO_FULL_SCALE_MV = 10000;
  * a control loop that sees fresh data. How much of it is kept is SAVE_RATE_OPTIONS.
  */
 const POLLING_OPTIONS: PollingRateOption[] = [
-  // 20 ms is offered but unproven: whether the link sustains 50 Hz depends on
-  // the baud rate and the device's own turnaround, and the read timeout has a
-  // 100 ms floor it cannot honour here. Treat a report of it not holding rate
-  // as expected rather than as a regression.
-  { label: '20 ms', valueMs: 20 },
+  // 25 ms, not 20: 20 ms was tried on the bench and did not hold rate, 25 ms
+  // does. It is still the setting nearest the edge — the read timeout has a
+  // 100 ms floor it cannot honour, so what keeps it working is the device
+  // answering well inside the cycle rather than anything this code enforces.
+  { label: '25 ms', valueMs: 25 },
   { label: '50 ms', valueMs: 50 },
   { label: '100 ms', valueMs: 100 },
 ];
@@ -149,20 +149,20 @@ const DEFAULT_POLLING_RATE_MS = 100;
  * How often a polled sample is written to the TSV file.
  *
  * Only the file: the chart and IndexedDB stay on the poll rate, so the live
- * view is the same whether rows land every 100 ms or every half hour.
+ * view is the same whether rows land every 200 ms or every half hour.
  *
- * The UI only offers entries that are not faster than the current polling rate
- * (see saveRateOptions), so the list a user sees always starts with their poll
- * rate — that first entry is "write every poll". Everything slower is reached
- * by writing one poll out of every N. Where the two divide evenly the written
- * interval lands on the poll grid exactly; where they do not (50 ms saves at a
- * 20 ms poll rate) consecutive rows alternate by one poll around the target,
- * which the recorded timestamps state honestly.
+ * Starts at 200 ms, independently of the poll rate. Faster save rates were
+ * offered briefly and are not on the table: a file written faster than this
+ * buys nothing anyone reads back, while the per-row cost lands in the middle of
+ * the acquisition loop. Every entry is a whole multiple of every poll rate, so
+ * the written interval lands on the poll grid exactly — 200 ms is every 2nd
+ * poll at 100 ms polling, every 8th at 25 ms.
+ *
+ * The floor being above the slowest poll rate is what lets the two lists be
+ * independent. Adding a poll rate slower than 200 ms would break that, and the
+ * save rate would need clamping to it.
  */
 const SAVE_RATE_OPTIONS: PollingRateOption[] = [
-  { label: '20 ms', valueMs: 20 },
-  { label: '50 ms', valueMs: 50 },
-  { label: '100 ms', valueMs: 100 },
   { label: '200 ms', valueMs: 200 },
   { label: '500 ms', valueMs: 500 },
   { label: '1 s', valueMs: 1000 },
@@ -710,23 +710,11 @@ function App() {
     run().catch((err) => console.warn('TSV recovery check failed:', err));
   }, []);
 
-  // Every save rate that is not faster than the poll rate. A save rate below the
-  // poll rate is not an error — the deadline simply comes due every poll — but
-  // offering it would promise a resolution the link is not running at.
-  const saveRateOptions = useMemo(
-    () => SAVE_RATE_OPTIONS.filter((option) => option.valueMs >= pollingRate.valueMs),
-    [pollingRate.valueMs],
-  );
-
   useEffect(() => {
     pollIntervalRef.current = pollingRate.valueMs;
     plotStrideRef.current = Math.max(1, Math.round(CHART_INPUT_INTERVAL_MS / pollingRate.valueMs));
     pollsSincePlotRef.current = 0;
-    // Slowing the poll rate can leave the selection below the new floor (50 ms
-    // save + a switch to 100 ms polling). Snap it up rather than leaving the
-    // select showing a value that is no longer in its own option list.
-    setSaveRate((prev) => (prev.valueMs >= pollingRate.valueMs ? prev : saveRateOptions[0]));
-  }, [pollingRate.valueMs, saveRateOptions]);
+  }, [pollingRate.valueMs]);
 
   useEffect(() => {
     saveIntervalRef.current = saveRate.valueMs;
@@ -1393,7 +1381,7 @@ function App() {
    *
    * @param plot Whether this poll is the one in `plotStrideRef` that reaches
    *   the chart. Fixed at CHART_INPUT_INTERVAL_MS, so the display cost of a run
-   *   is the same at 20 ms polling as at 100 ms.
+   *   is the same at 25 ms polling as at 100 ms.
    */
   const enqueueDisplayUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array, plot: boolean) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
@@ -2327,7 +2315,7 @@ function App() {
                     a fixed constant rather than something the user chose, so
                     printing the target next to it would just be a reminder of
                     what 100 is. What this answers is whether the link is
-                    keeping up. What reaches the file is "Save every", and its
+                    keeping up. What reaches the file is the Save Rate, and its
                     progress is the count to the left. */}
                 <span className="tabular-nums">
                   Polling: {actualPollIntervalMs > 0 ? `${actualPollIntervalMs} ms` : '-'}
@@ -2378,20 +2366,19 @@ function App() {
                   {/* Next to Start Save, not in Connection Config, because it is
                       a property of the run rather than of the link: the poll
                       rate is set once for a device, this is chosen per
-                      measurement. The list starts at the poll rate (see
-                      saveRateOptions) — "100 ms" here means every poll is
-                      kept. */}
+                      measurement — and unlike the poll rate it stays live
+                      mid-run. */}
                   <label className="flex items-center gap-1 text-[0.7rem] text-slate-600 dark:text-slate-400">
-                    Save every
+                    Save Rate
                     <select
                       value={saveRate.valueMs}
                       onChange={(e) => {
-                        const next = saveRateOptions.find((option) => option.valueMs === Number(e.target.value));
+                        const next = SAVE_RATE_OPTIONS.find((option) => option.valueMs === Number(e.target.value));
                         if (next) setSaveRate(next);
                       }}
                       className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
-                      {saveRateOptions.map((option) => (
+                      {SAVE_RATE_OPTIONS.map((option) => (
                         <option key={option.valueMs} value={option.valueMs}>
                           {option.label}
                         </option>
