@@ -38,7 +38,9 @@ const TONE = {
     fill: 'bg-slate-400/25 dark:bg-slate-400/15',
     label: 'text-slate-500 dark:text-slate-400',
     labelArmed: 'text-slate-700 dark:text-slate-200',
-    knob: 'bg-slate-500 text-white dark:bg-slate-600',
+    // Midway between the track and a solid dark knob: it has to read as the
+    // grabbable part without being the darkest thing in the header.
+    knob: 'bg-slate-400 text-slate-800 dark:bg-slate-500 dark:text-slate-50',
   },
 } as const;
 
@@ -119,12 +121,18 @@ export function SlideToConfirm({
           : palette.track
       }`}
     >
-      {/* Fill behind the knob: the gesture's own progress bar. */}
+      {/* The trail the knob leaves, so it ends where the knob begins — NOT
+          knobX + knobPx. Sizing it to include the knob meant its edge and the
+          knob's edge had to land on the same pixel to stay invisible, and any
+          rounding (the UI scale zooms this whole subtree) or a frame's worth of
+          desync between the width and transform transitions showed up as a band
+          bleeding out of the circle. Ending at the knob's left edge cannot
+          overhang it at any width, and at rest it is zero-width. */}
       <div
         className={`absolute inset-y-0 left-0 ${palette.fill} ${
           dragging ? '' : 'transition-[width] duration-200'
         }`}
-        style={{ width: `${knobX + knobPx}px` }}
+        style={{ width: `${knobX}px` }}
       />
       {/* Centred in the track MINUS wherever the knob is, not in the whole
           track: it parks at the left and ends at the right, so the free space
