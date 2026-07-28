@@ -172,7 +172,11 @@ export function AppInfoPanel({
         <div>
           <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Browser Requirements</h4>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-800">
-            <p className="mb-2">Chromium engine only. Safari and Firefox cannot use the serial port.</p>
+            <p className="mb-2">
+              Chromium engine only. Safari and Firefox cannot use the serial
+              port. Mobile relies on the WebUSB fallback when Web Serial is
+              unavailable.
+            </p>
             <table className="w-full border-collapse">
               <tbody>
                 <tr className="border-t border-slate-200 dark:border-slate-700">
@@ -195,49 +199,52 @@ export function AppInfoPanel({
                 </tr>
               </tbody>
             </table>
-            <ul className="mt-2 space-y-0.5">
-              <li>
-                <a
-                  href="https://developer.mozilla.org/docs/Web/API/Web_Serial_API"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-600 hover:underline dark:text-emerald-400"
-                >
-                  Web Serial API
-                </a>{' '}
-                <span className="text-slate-500 dark:text-slate-400">(or WebUSB fallback on mobile)</span>
-              </li>
-              <li>
-                <a
-                  href="https://developer.mozilla.org/docs/Web/API/File_System_Access_API"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-600 hover:underline dark:text-emerald-400"
-                >
-                  File System Access API
-                </a>
-              </li>
-              <li>
-                <a
-                  href="https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-600 hover:underline dark:text-emerald-400"
-                >
-                  Screen Wake Lock API
-                </a>
-              </li>
-              <li>
-                <a
-                  href="https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-600 hover:underline dark:text-emerald-400"
-                >
-                  SharedArrayBuffer
-                </a>
-              </li>
-            </ul>
+            <p className="mt-2 leading-relaxed">
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/Web_Serial_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                Web Serial
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/USB"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}WebUSB
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/File_System_Access_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}File System Access
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}Screen Wake Lock
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}SharedArrayBuffer
+              </a>
+            </p>
           </div>
         </div>
 
