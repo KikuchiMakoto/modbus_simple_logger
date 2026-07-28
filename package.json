@@ -7,6 +7,7 @@
     "dev": "bunx vite dev",
     "build": "bunx vite build",
     "preview": "bunx vite preview",
+    "basic:check": "bun run src/basic/checks.ts",
     "launcher:dev": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/fetch-cloudflared.ts && bun run launcher/main.ts",
     "launcher:build": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/build.ts"
   },
