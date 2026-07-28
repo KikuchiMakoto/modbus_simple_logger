@@ -10,16 +10,47 @@ function getKey(key: string): string {
   return `modbus_logger_${key}`;
 }
 
+// Reads the bare-key cookie that writeCookieFallback() below parks values in.
+// No migration and no delete: the caller may be a plain read on a machine where
+// localStorage still throws, and deleting would destroy the only copy.
+function readCookieRaw(key: string): string | null {
+  try {
+    const entry = document.cookie
+      .split('; ')
+      .find((candidate) => candidate.startsWith(`${key}=`));
+    if (!entry) return null;
+    return decodeURIComponent(entry.substring(key.length + 1));
+  } catch {
+    return null;
+  }
+}
+
+function parseJson<T extends JsonValue>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    console.warn('Failed to parse stored value', err);
+    return null;
+  }
+}
+
 export const readJsonStorage = <T extends JsonValue>(key: string): T | null => {
   if (!isBrowser) return null;
   try {
     const raw = localStorage.getItem(getKey(key));
-    if (raw === null) return null;
-    return JSON.parse(raw) as T;
+    if (raw !== null) return parseJson<T>(raw);
   } catch (err) {
-    console.warn('Failed to parse localStorage item', err);
-    return null;
+    console.warn('Failed to read localStorage item', err);
   }
+  // The cookie lifeboat. This read used to be missing, which made the fallback
+  // write-only: writeRaw() parks a value in a cookie when localStorage throws,
+  // but every caller that reads through this function looked only at
+  // localStorage — so UI scale, the ScriptRunner code and its backup, the
+  // collapsed-section flags and the notification toggle were all lost on reload
+  // in exactly the situation the fallback exists for (a browser with site data
+  // blocked for the origin, or Safari private mode at its quota).
+  const cookie = readCookieRaw(key);
+  return cookie === null ? null : parseJson<T>(cookie);
 };
 
 // Where a write actually landed. The read path needs this: it may only delete a
@@ -90,34 +121,28 @@ export const removeJsonStorage = (key: string): void => {
   }
 };
 
-// Backwards-compatible migration: read from cookie if storage is empty
+/**
+ * Like readJsonStorage(), plus the one-way migration of a legacy cookie into
+ * localStorage. Both functions read cookies now — the difference is only that
+ * this one tries to promote and retire the cookie afterwards.
+ */
 export const readJsonCookie = <T extends JsonValue>(key: string): T | null => {
   if (!isBrowser) return null;
 
-  // Try localStorage first
-  const storageValue = readJsonStorage<T>(key);
-  if (storageValue !== null) return storageValue;
+  const value = readJsonStorage<T>(key);
+  if (value === null) return null;
 
-  // Fallback to cookie for migration
-  const cookie = document.cookie
-    .split('; ')
-    .find((entry) => entry.startsWith(`${key}=`));
-  if (!cookie) return null;
-  const value = cookie.substring(key.length + 1);
-  try {
-    const parsed = JSON.parse(decodeURIComponent(value)) as T;
-    // Clear the cookie only once the value is actually in localStorage. The
-    // write is a no-op in viewer mode and falls back to this very cookie when
-    // localStorage is unavailable — deleting unconditionally, as this used to,
-    // threw the setting away in both cases.
-    if (writeJsonStorage(key, parsed) === 'storage') {
-      document.cookie = `${key}=; max-age=0; path=/`;
-    }
-    return parsed;
-  } catch (err) {
-    console.warn('Failed to parse cookie', err);
-    return null;
+  // Nothing to migrate when localStorage already holds it.
+  if (readCookieRaw(key) === null) return value;
+
+  // Clear the cookie only once the value is actually in localStorage. The write
+  // is a no-op in viewer mode and falls back to this very cookie when
+  // localStorage is unavailable — deleting unconditionally, as this used to,
+  // threw the setting away in both cases.
+  if (writeJsonStorage(key, value) === 'storage') {
+    document.cookie = `${key}=; max-age=0; path=/`;
   }
+  return value;
 };
 
 export const writeJsonCookie = (key: string, value: JsonValue): void => {

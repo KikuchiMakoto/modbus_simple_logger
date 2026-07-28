@@ -78,6 +78,7 @@ import {
   requestPersistentStorage,
 } from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
+import { clearStatusSource, postStatus, reportError } from './utils/appStatus';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import {
   clearBackgroundTimer,
@@ -99,6 +100,7 @@ import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
+import { AppStatusBar } from './components/AppStatusBar';
 import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
@@ -654,16 +656,20 @@ function App() {
     }
   };
 
-  const setStatus = useCallback((_msg: string) => {
-    // Status display removed from header
+  // Progress/announcement channel. This was a no-op ("Status display removed
+  // from header") while remaining the only user-facing message path in the app,
+  // so every connect failure, TSV write error and calibration parse error went
+  // nowhere. Failures now go through reportError() instead — see AppStatusBar.
+  const setStatus = useCallback((msg: string) => {
+    postStatus('info', msg, 'app');
   }, []);
 
   useEffect(() => {
     dataStorage.init().catch((err) => {
       console.error('Failed to initialize IndexedDB:', err);
-      setStatus('IndexedDB initialization failed');
+      reportError('storage', err, 'IndexedDB initialization failed');
     });
-  }, [setStatus]);
+  }, []);
 
   // Offer back any run whose picked file never closed cleanly. Blocking
   // window.confirm() rather than in-app UI: this has to be settled before the
@@ -1503,9 +1509,9 @@ function App() {
       }
     } catch (err) {
       console.error('[App] save update failed', err);
-      setStatus(`TSV write error: ${(err as Error).message}`);
+      reportError('save', err, 'TSV write error');
     }
-  }, [setStatus]);
+  }, []);
 
   /** One AO block write and its single retry. Both read the newest values. */
   const writeAoBlockOnce = useCallback(async () => {
@@ -1730,13 +1736,18 @@ function App() {
     // the write retry limiter was tripped when it arrived.
     void doAoWriteAsync();
 
-    setStatus(firstError ? firstError.message : 'Polling');
+    // Reported as a transition, not per poll. This runs 10-40 times a second,
+    // so posting unconditionally would re-render the status bar at the polling
+    // rate on the thread that must not miss a Modbus deadline. reportError
+    // collapses repeats of an identical message, and clearStatusSource only
+    // emits when there was something to clear.
+    if (firstError) reportError('link', firstError);
+    else clearStatusSource('link');
   }, [
     enqueueDisplayUpdate,
     enqueueSaveUpdate,
     pruneFailuresInWindow,
     waitMs,
-    setStatus,
     doAoWriteAsync,
     scriptRunner.aiRawShareRef,
     scriptRunner.aiPhysicalShareRef,
@@ -1949,6 +1960,9 @@ function App() {
       setConnected(true);
       acquiringRef.current = true;
       setAcquiring(true);
+      // Drop the previous session's link errors: they describe a connection
+      // that no longer exists.
+      clearStatusSource('link');
       // Always names the mode, including when it was chosen by the probe: an
       // Auto that got it wrong has to be visible somewhere the user looks.
       setStatus(
@@ -1973,10 +1987,13 @@ function App() {
       setAcquiring(false);
 
       if (err instanceof DOMException && err.name === 'NotFoundError') {
+        // The user closed the port picker. Not a failure.
         setStatus('Device selection cancelled');
         return;
       }
-      setStatus((err as Error).message);
+      // The worst of the swallowed errors: a wrong baud rate or slave ID left
+      // the button reading "Connect" with nothing said anywhere.
+      reportError('link', err, 'Connect failed');
     } finally {
       connectInProgressRef.current = false;
     }
@@ -2207,7 +2224,11 @@ function App() {
       const data = JSON.parse(text) as Record<string, unknown>;
 
       if (data.type !== 'Calibration') {
-        setStatus('Invalid calibration file format: missing "type": "Calibration" field');
+        postStatus(
+          'error',
+          'Invalid calibration file format: missing "type": "Calibration" field',
+          'calibration',
+        );
         return;
       }
 
@@ -2232,8 +2253,9 @@ function App() {
       setAiCalibration(loadedCalibration);
       setAiChannels((prev) => applyCalibrationToChannels(prev, loadedCalibration));
       setStatus('Calibration loaded successfully');
+      clearStatusSource('calibration');
     } catch (err) {
-      setStatus((err as Error).message);
+      reportError('calibration', err, 'Failed to load calibration file');
     }
   };
 
@@ -2259,11 +2281,11 @@ function App() {
           // error" would have the user stop a healthy run to investigate.
           if (severity === 'warning') {
             console.warn('TSV worker warning:', message);
-            setStatus(message);
+            postStatus('info', message, 'save');
             return;
           }
           console.error('TSV worker error:', message);
-          setStatus(`TSV write error: ${message}`);
+          postStatus('error', `TSV write error: ${message}`, 'save');
         },
         () => {
           filePickerOpenRef.current = false;
@@ -2314,6 +2336,7 @@ function App() {
         lastSaveCountPublishRef.current = 0;
         setSavePointCount(0);
         setStatus('Saving data to file');
+        clearStatusSource('save');
       } catch (setupErr) {
         // Post-creation setup failed (e.g. IndexedDB clear): close the writer
         // so the worker and its open file are never orphaned.
@@ -2322,9 +2345,10 @@ function App() {
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
+        // The user cancelled the file picker. Not a failure.
         return;
       }
-      setStatus((err as Error).message);
+      reportError('save', err, 'Failed to start saving');
     } finally {
       // Belt and braces: onPickerSettled already cleared this, but never leave
       // polling suspended if createTsvWriter threw before reaching the picker.
@@ -2536,10 +2560,10 @@ function App() {
                   {/* The file the picker creates stays 0 bytes until the writer
                       closes it: a FileSystemWritableFileStream buffers into a
                       swap file and only swings it onto the target on close().
-                      Nothing warns about that anywhere else — setStatus() is a
-                      no-op and the header has no room for a permanent notice —
-                      so it is said here, on the two buttons that bracket the
-                      run. No portal/tooltip library: the sticky header (z-10,
+                      Nothing warns about that anywhere else — AppStatusBar
+                      reports failures, not standing properties of the format,
+                      and the header has no room for a permanent notice — so it
+                      is said here, on the two buttons that bracket the run. No portal/tooltip library: the sticky header (z-10,
                       positioned) is the nearest stacking context and clips
                       nothing, so a plain absolute box paints over the page.
                       Keep the last sentence as-is even once a crash-recovery
@@ -2945,6 +2969,11 @@ function App() {
           lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
         />
       )}
+
+      {/* Last, so it stacks above the PyScript bar. Unlike that one it is
+          rendered on a viewer too: a viewer can still lose its feed, and
+          nothing else on that window would say so. */}
+      <AppStatusBar />
     </div>
   );
 }

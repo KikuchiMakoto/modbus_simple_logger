@@ -2,6 +2,11 @@ const DB_NAME = 'ModbusLoggerDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'dataPoints';
 
+// Backstop so init() can never fail to settle. Generous, because a first-run
+// upgrade on a slow disk is legitimately slow; it exists to convert a hang into
+// a reportable error, not to police normal timing.
+const INIT_TIMEOUT_MS = 10000;
+
 export type StoredDataPoint = {
   id?: number;
   seq: number;
@@ -19,14 +24,39 @@ class DataStorage {
     if (this.db) return;
     if (this.initPromise) return this.initPromise;
 
-    this.initPromise = new Promise((resolve, reject) => {
+    const attempt = new Promise<void>((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-      request.onerror = () => reject(new Error(`Database initialization failed: ${request.error?.message}`));
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
+      // Every path below must settle this promise. It used to be possible for
+      // none of them to fire: `onblocked` was unhandled, so another tab holding
+      // a connection open across a version change left init() pending forever —
+      // and because handleConnect awaits clearAllData(), which awaits this,
+      // Connect hung or failed with "Database not initialized" and no hint as
+      // to why.
+      const timeoutId = setTimeout(
+        () => reject(new Error(`Database initialization timed out after ${INIT_TIMEOUT_MS} ms`)),
+        INIT_TIMEOUT_MS,
+      );
+      const settle = (fn: () => void) => {
+        clearTimeout(timeoutId);
+        fn();
       };
+
+      request.onerror = () =>
+        settle(() => reject(new Error(`Database initialization failed: ${request.error?.message}`)));
+      request.onblocked = () =>
+        settle(() =>
+          reject(
+            new Error(
+              'Database initialization blocked: another tab or window has this app open. Close it and retry.',
+            ),
+          ),
+        );
+      request.onsuccess = () =>
+        settle(() => {
+          this.db = request.result;
+          resolve();
+        });
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
@@ -37,7 +67,16 @@ class DataStorage {
       };
     });
 
-    return this.initPromise;
+    // Do not cache a rejection. Caching one poisoned the singleton for the rest
+    // of the session: every later init() returned the same rejected promise, so
+    // a transient failure (or a blocking tab the user then closed) could never
+    // be recovered from without a reload.
+    this.initPromise = attempt;
+    attempt.catch(() => {
+      if (this.initPromise === attempt) this.initPromise = null;
+    });
+
+    return attempt;
   }
 
   private ensureInitialized(): void {
