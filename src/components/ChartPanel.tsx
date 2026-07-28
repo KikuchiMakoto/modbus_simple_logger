@@ -355,8 +355,11 @@ function ChartPanelComponent({
                     : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
               }`}
             >
-              {backend.api}
-              {backend.accel ? ` · ${backend.accel}` : ''}
+              {/* GPU / CPU is the only part worth a badge; the API name is in
+                  the hover note below. `||` not `??`: accel is '' (not null)
+                  on the SVG/Canvas2D path, where the API name is all there
+                  is to show. */}
+              {backend.accel || backend.api}
             </span>
             <div
               id={backendNoteId}
