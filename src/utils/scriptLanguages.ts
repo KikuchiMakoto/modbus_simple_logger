@@ -133,7 +133,7 @@ const BASIC: ScriptLanguage = {
       desc: 'Raise an OS notification (needs Notifications on in the menu). Always written to Output.',
     },
     { name: 'Elapsed', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
-    { name: 'Sleep ms', desc: 'Wait, in MILLISECONDS. Sleep 1000 is one second.' },
+    { name: 'Sleep s', desc: 'Wait, in SECONDS (fractions OK). Sleep 0.1 is 100 ms.' },
     { name: 'Timer', desc: 'Seconds since midnight, as in VB6 - rolls over at 00:00. Use Elapsed for durations.' },
     { name: 'Print x; y', desc: 'Write to Output. `;` keeps the line open, `,` moves to the next 14-column zone.' },
     { name: 'Round / Log10 / Asin / Deg', desc: 'Round is banker’s (VB6 and JIS Z 8401 rule A). Log10, Asin/Acos and Deg/Rad are additions.' },
@@ -141,14 +141,14 @@ const BASIC: ScriptLanguage = {
   promptIntro:
     'Write a BASIC script for ModbusSimpleLogger Script Runner. The dialect is VB6, and also accepts N88/QBasic habits (optional line numbers, optional type sigils) and a few VB.NET spellings (End While, AndAlso/OrElse, +=).',
   promptRules: [
-    'Wait with `Sleep ms` — MILLISECONDS, so `Sleep 1000` is one second.',
+    'Wait with `Sleep s` — SECONDS, so `Sleep 0.1` is 100 ms. The same unit in all three languages.',
     'Loop with For/Next, While/Wend or Do/Loop. Stop works at any point; no DoEvents is needed.',
     'True is -1 and And/Or/Not are BITWISE, as in VB6. Use AndAlso/OrElse when you need short-circuit evaluation.',
     'Mod and \\ are integer operators: 7.5 Mod 2 is 1, not 1.5.',
     'There is no Sub or Function; use GoSub/Return.',
     'Procedures are called without parentheses (`SetAo 0, 1.5`); functions with them (`GetAiPhy(0)`).',
   ],
-  defaultScript: `' Sleep is in MILLISECONDS: Sleep 1000 waits one second.
+  defaultScript: `' Sleep is in SECONDS: Sleep 0.1 waits 100 ms.
 ' Loop with For/Next, While/Wend or Do/Loop.
 ' Press Stop to halt at any time - no DoEvents needed.
 
@@ -159,7 +159,7 @@ Do
     ' example: slow sine wave on Parameter ch0
     SetParam 0, Sin(T)
     T += StepSize
-    Sleep 1000
+    Sleep 1
 Loop`,
 };
 

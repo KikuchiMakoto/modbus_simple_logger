@@ -56,11 +56,11 @@ const MAX_GOSUB_DEPTH = 1000;
 const DEADLINE_CHECK_INTERVAL = 256;
 
 /**
- * Below this, a Sleep argument was probably meant as QBasic seconds. See
- * 'sleep'. Set under the polling interval's own floor, so no wait anybody
- * writes on purpose falls beneath it.
+ * At or above this many seconds, a Sleep argument was plausibly meant as VBA
+ * milliseconds (`Sleep 1000` for one second). See the 'sleep' case: this only
+ * raises a notice, because a wait this long is legitimate in a soil test.
  */
-const SLEEP_UNITS_NOTICE_MS = 20;
+const SLEEP_UNITS_NOTICE_SECONDS = 100;
 
 export class BasicInterpreter {
   private readonly instrs: Instr[];
@@ -240,26 +240,34 @@ export class BasicInterpreter {
       }
 
       case 'sleep': {
-        const ms = toNum(this.evaluate(instr.milliseconds), instr.line);
-        if (Number.isNaN(ms)) throw new BasicRuntimeError('Sleep needs a number of milliseconds', instr.line);
+        const seconds = toNum(this.evaluate(instr.seconds), instr.line);
+        if (Number.isNaN(seconds)) throw new BasicRuntimeError('Sleep needs a number of seconds', instr.line);
         this.pc += 1;
-        // Sleep is in MILLISECONDS: VB6 has no Sleep statement of its own, and
-        // both ways a VB6/VBA user actually waits — the kernel32 Declare and
-        // VB.NET's Thread.Sleep — take milliseconds.
+        // Sleep is in SECONDS, fractions allowed: `Sleep 0.1` is 100 ms.
         //
-        // The cost is that QBasic and N88 spell the same wait in seconds, so
-        // `Sleep 1` from that direction means one second and gets one
-        // millisecond: a loop that hammers the Modbus link rather than an
-        // obvious hang. Hence the notice, once per run, below the point where
-        // any deliberate wait would land.
-        if (ms > 0 && ms < SLEEP_UNITS_NOTICE_MS && !this.warnedAboutSleepUnits) {
+        // Three reasons, in order of weight. It matches the other two languages
+        // this app runs (Python's asyncio.sleep and Lua's sleep are both in
+        // seconds), so the unit is one fewer thing that changes when a script is
+        // translated. It is also what VB6 itself implies: VB6 has no Sleep
+        // statement, and its native wait — a busy loop on Timer — is in seconds.
+        // Milliseconds only appear once you reach for the kernel32 Declare or
+        // VB.NET's Thread.Sleep.
+        //
+        // And it fails in the safe direction. A VBA user's `Sleep 1000` waits
+        // 16.7 minutes, which looks wrong immediately; the same habit under
+        // milliseconds turns a QBasic user's `Sleep 1` into a one-millisecond
+        // loop that hammers the Modbus link — quiet, and actually harmful.
+        if (seconds >= SLEEP_UNITS_NOTICE_SECONDS && !this.warnedAboutSleepUnits) {
           this.warnedAboutSleepUnits = true;
+          // Deliberately neutral: waiting an hour between readings is correct in
+          // a consolidation test, so this has to read as a confirmation there
+          // and as a correction for someone who meant milliseconds.
           this.host.warn(
-            `Sleep ${cstr(ms)} waits ${cstr(ms)} ms: Sleep takes milliseconds, not seconds. ` +
-              `Use Sleep ${cstr(bankersRound(ms * 1000))} for ${cstr(ms)} second(s) (line ${instr.line}).`,
+            `Sleep ${cstr(seconds)} waits ${cstr(bankersRound(seconds / 60, 1))} minutes` +
+              ` — Sleep takes seconds (line ${instr.line}).`,
           );
         }
-        return Math.max(0, ms);
+        return Math.max(0, seconds * 1000);
       }
 
       case 'call': {

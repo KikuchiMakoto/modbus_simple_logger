@@ -214,15 +214,16 @@ expect('orelse short circuits', 'N = 0\nIf (N = 0) OrElse (10 / N > 1) Then Prin
 // --- DoEvents: accepted, and unnecessary -----------------------------------
 expect('doevents accepted', 'For I = 1 To 2\nDoEvents\nNext\nPrint "ok"', 'ok\n');
 
-// --- Sleep is milliseconds -------------------------------------------------
-expect('sleep units notice once', 'Sleep 1\nSleep 1\nPrint "x"',
-  '<warn Sleep 1 waits 1 ms: Sleep takes milliseconds, not seconds. Use Sleep 1000 for 1 second(s) (line 1).>x\n');
-expect('normal sleep is quiet', 'Sleep 1000\nPrint "x"', 'x\n');
+// --- Sleep is seconds ------------------------------------------------------
+expect('sleep units notice once', 'Sleep 1000\nSleep 1000\nPrint "x"',
+  '<warn Sleep 1000 waits 16.7 minutes \u2014 Sleep takes seconds (line 1).>x\n');
+expect('an ordinary wait is quiet', 'Sleep 1\nPrint "x"', 'x\n');
+expect('a fractional wait is quiet', 'Sleep 0.1\nPrint "x"', 'x\n');
 
 // --- sleep ------------------------------------------------------------------
 {
   checks += 1;
-  const { text, sleeps } = run('Print "a"\nSleep 250\nPrint "b"');
+  const { text, sleeps } = run('Print "a"\nSleep 0.25\nPrint "b"');
   if (text !== 'a\nb\n' || sleeps.length !== 1 || sleeps[0] !== 250) {
     failures += 1;
     console.log(`FAIL sleep: text=${JSON.stringify(text)} sleeps=${JSON.stringify(sleeps)}`);

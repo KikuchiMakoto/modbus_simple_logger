@@ -38,7 +38,7 @@ export type Instr =
   | { op: 'forNext'; name: string; top: number; line: number }
   | { op: 'gosub'; target: number; line: number }
   | { op: 'return'; line: number }
-  | { op: 'sleep'; milliseconds: Expr; line: number }
+  | { op: 'sleep'; seconds: Expr; line: number }
   | { op: 'call'; name: string; spelling: string; args: Expr[]; line: number }
   | { op: 'end'; line: number };
 
@@ -531,7 +531,7 @@ class Parser {
 
   private parseSleep(line: number): void {
     this.expectKeyword('SLEEP');
-    this.emit({ op: 'sleep', milliseconds: this.parseExpr(), line });
+    this.emit({ op: 'sleep', seconds: this.parseExpr(), line });
   }
 
   /**
@@ -545,7 +545,7 @@ class Parser {
    */
   private parseDoEvents(line: number): void {
     this.pos += 1;
-    this.emit({ op: 'sleep', milliseconds: { kind: 'num', value: 0 }, line });
+    this.emit({ op: 'sleep', seconds: { kind: 'num', value: 0 }, line });
   }
 
   private parseGoto(line: number, op: 'jump' | 'gosub'): void {

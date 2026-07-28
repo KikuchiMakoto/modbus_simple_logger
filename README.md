@@ -58,13 +58,14 @@ BASIC のみ、手続きは括弧なしで呼びます（`SetAo 0, 1.5`）。
 | | Python | BASIC | Lua |
 |---|---|---|---|
 | 実行系 | Pyodide (Python 3.14) | 自前実装（VB6 方言） | wasmoon (Lua 5.4) |
-| 待ち方 | `await asyncio.sleep(s)` | `Sleep ms` | `sleep(s)` |
-| **待ちの単位** | **秒** | **ミリ秒** | **秒** |
+| 待ち方 | `await asyncio.sleep(s)` | `Sleep s` | `sleep(s)` |
+| 待ちの単位 | 秒 | 秒 | 秒 |
 | 起動時間 | 数秒（初回のみ） | 即時 | ほぼ即時 |
 
-> **待ちの単位が BASIC だけミリ秒**なのは、VB6/VBA/VB.NET で実際に待つ手段（kernel32 の
-> `Sleep` 宣言、`Thread.Sleep`）がどちらもミリ秒だからです。各言語がそれぞれの流儀に従っており、
-> パネル内の API 一覧にも明記されています。
+> 待ちの単位は**3 言語とも秒**です。BASIC の `Sleep` が秒なのは、VB6 の言語ネイティブな待ち
+> （`Timer` を使ったループ）と QBasic/N88 の `SLEEP` がどちらも秒だからで、ミリ秒になるのは
+> VBA/VB.NET が Win32 API を取り込んだ経路だけです。その流儀で `Sleep 1000` と書いた場合は
+> 1 回だけ注意書きが出ます（16.7 分待つことになるため）。
 
 **Stop はどの言語でもいつでも効きます** — `while True:` / `Do ... Loop` / `while true do end` の
 ような出口の無いループの中でも、スクリプト側に何の配慮も要りません。

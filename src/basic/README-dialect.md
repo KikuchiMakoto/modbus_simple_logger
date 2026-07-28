@@ -57,7 +57,7 @@ End Select
 
 GoTo ラベル                    GoSub ラベル ... Return
 Print [式][; | ,] ...
-Sleep ミリ秒                   ' 小数可。Sleep 1000 で 1 秒
+Sleep 秒                       ' 小数可。Sleep 0.1 で 100 ms
 DoEvents                       ' 受理するが何もしない（不要）
 End / Stop
 ```
@@ -183,13 +183,16 @@ PascalCase を共通の綴りに選べた理由でもある。
 `Stop` はいつでも効く。インタプリタがフラットな命令配列上のプログラムカウンタなので、
 **出口のない `Do ... Loop` でも数 ms ごとに制御が戻る**。スクリプト側の配慮は要らない。
 
-`Sleep` の単位は**ミリ秒**。`Sleep 1000` で 1 秒、`Sleep 100` で 100 ms。小数も可。
+`Sleep` の単位は**秒**。小数可で、`Sleep 0.1` は 100 ms。
 
-VB6 自体に `Sleep` 文は無く、VB6/VBA で実際に待つ 2 つの方法 — `Declare Sub Sleep Lib "kernel32"` と
-VB.NET の `Thread.Sleep` — がどちらもミリ秒なので、それに合わせている。
+VB6 自体に `Sleep` 文は無いが、VB6 の言語ネイティブな待ち（下の `Timer` ループ）は秒であり、
+QBasic / N88 の `SLEEP` も秒。加えて本アプリの他の 2 言語（Python の `asyncio.sleep`、
+Lua の `sleep`）も秒なので、**3 言語で単位が揃う**。
 
-> QBasic / N88 の `SLEEP` は**秒**なので、その流儀で `Sleep 1` と書くと 1 ミリ秒になる。
-> 20 ms 未満の `Sleep` には 1 回だけ注意書きを出す（エラーにはしない）。
+> VBA / VB.NET で待つときに使う `Declare Sub Sleep Lib "kernel32"` と `Thread.Sleep` は
+> **ミリ秒**なので、その流儀で `Sleep 1000` と書くと 16.7 分待つことになる。
+> 100 秒以上の `Sleep` には 1 回だけ注意書きを出す（エラーにはしない — 試験によっては
+> 1 時間待つのが正しいため）。
 
 VB6 の古典的な待ち方 — `Timer` を使ったビジーループ — も**そのまま動く**:
 
@@ -200,7 +203,7 @@ Loop
 ```
 
 `DoEvents` は要らない（停止も UI も構造的に保証されている）。ただしこのループは CPU を
-回し続けるので、待つだけなら `Sleep 1000` を使うこと。
+回し続けるので、待つだけなら `Sleep 1` を使うこと。
 
 ---
 

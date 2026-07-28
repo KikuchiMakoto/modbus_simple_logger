@@ -31,7 +31,7 @@ import {
 const SLICE_MS = 8;
 
 /**
- * Sleep is served in slices too, so a `Sleep 3600000` is still interruptible.
+ * Sleep is served in slices too, so a `Sleep 3600` is still interruptible.
  * Timers in a worker are not throttled when the page is hidden, which is why
  * the polling loop uses one as well (see utils/backgroundTimer.ts).
  */
