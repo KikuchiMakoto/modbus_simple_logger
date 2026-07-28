@@ -142,6 +142,13 @@ export const TSV_FLUSH_INTERVAL_MS = 60_000;
 // periodic main-thread hitch at high sampling rates (e.g. 50/100 Hz). The
 // interval remains the low-sampling-rate durability fallback.
 export const TSV_FLUSH_MAX_ROWS = 500;
+// Hard ceiling on rows held in the writer's buffer. Rows are only dropped from
+// the buffer once their write has actually resolved, so a stream that keeps
+// rejecting would otherwise grow it without limit until the worker died — taking
+// the whole run's unwritten tail with it. At the cap the oldest rows are dropped
+// and reported as data loss, which is the honest outcome: something is gone, and
+// the user is told which end of the file it was.
+export const TSV_MAX_BUFFERED_ROWS = 20_000;
 // Cadence of the OPFS crash-recovery mirror, which the writer worker drives on
 // its own timer rather than piggy-backing on the picked file's flush.
 //

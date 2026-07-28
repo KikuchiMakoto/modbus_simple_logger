@@ -6,7 +6,7 @@
 // here; this worker calls createWritable() and owns everything after that.
 import { createTsvHeader, formatTsvRow } from './utils/tsvFormat';
 import { RECOVERY_DIR, buildRecoveryName } from './utils/opfsRecoveryShared';
-import { TSV_MIRROR_FLUSH_INTERVAL_MS, TSV_MIRROR_FLUSH_MAX_ROWS } from './constants';
+import { TSV_MAX_BUFFERED_ROWS, TSV_MIRROR_FLUSH_INTERVAL_MS, TSV_MIRROR_FLUSH_MAX_ROWS } from './constants';
 import type { FileSystemSyncAccessHandle } from './types';
 import type { TsvWorkerRequest, TsvWorkerResponse } from './utils/tsvWorkerProtocol';
 
@@ -89,6 +89,10 @@ async function openMirror(originalName: string): Promise<void> {
 function mirrorFlush(): void {
   if (mirrorBuffer.length === 0) return;
   const data = mirrorBuffer.join('');
+  // Cleared before the write, unlike drainBuffer() below — deliberately, not by
+  // oversight. mirrorWrite() disables the mirror for good on its first failure,
+  // so there is no later attempt to hold rows for, and the rows themselves are
+  // not at risk: the stream the user asked for still has them.
   mirrorBuffer = [];
   mirrorWrite(data);
 }
@@ -170,9 +174,33 @@ async function drainBuffer(): Promise<void> {
   // mirror's own tick has not picked up yet.
   mirrorFlush();
   if (!stream || writeBuffer.length === 0) return;
-  const data = writeBuffer.join('');
+
+  // Take the batch, but only drop it once the write has resolved. Clearing
+  // first — as this used to — meant one rejected write silently lost the whole
+  // batch: at TSV_FLUSH_MAX_ROWS that is 500 rows, 25 s of capture at 20 Hz,
+  // gone with no marker in the file while savePointCount kept counting them as
+  // saved. flush() is built as flushChain.then(drainBuffer, drainBuffer), so a
+  // rejection does not stop later flushes and the run carries on regardless.
+  const pending = writeBuffer;
   writeBuffer = [];
-  await stream.write(data);
+  try {
+    await stream.write(pending.join(''));
+  } catch (err) {
+    // Put them back at the front so file order is preserved, then let the next
+    // flush try again.
+    writeBuffer = pending.concat(writeBuffer);
+    if (writeBuffer.length > TSV_MAX_BUFFERED_ROWS) {
+      const dropped = writeBuffer.length - TSV_MAX_BUFFERED_ROWS;
+      writeBuffer = writeBuffer.slice(dropped);
+      post({
+        type: 'error',
+        message:
+          `TSV writes are failing; ${dropped} unwritten row(s) were discarded to bound memory. ` +
+          'The file has a gap.',
+      });
+    }
+    throw err;
+  }
 }
 
 function assertLength(name: string, actual: number, expected: number): void {

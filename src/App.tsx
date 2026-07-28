@@ -543,6 +543,13 @@ function App() {
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
+  // Bumped on every connect and disconnect. pollOnce() captures it and refuses to
+  // write shared state if it has moved, so a poll still on the wire when the user
+  // disconnects cannot land in the next session's state.
+  const pollGenerationRef = useRef(0);
+  // The poll currently in flight, so handleDisconnect can await it and make the
+  // ordering deterministic rather than merely harmless.
+  const pollInFlightRef = useRef<Promise<void> | null>(null);
   const lastSentAoRawRef = useRef<number[] | null>(null);
   const outputHoldingFailureTimestampsRef = useRef<number[]>([]);
   const inputReadFailureTimestampsRef = useRef<number[]>([]);
@@ -1595,6 +1602,18 @@ function App() {
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     const client = clientRef.current;
+    // Which connection this poll belongs to. It captures `client` above, so it
+    // survives clientRef.current being nulled — and stopPolling() only clears
+    // the timer, it never awaits a poll already on the wire. Without this fence,
+    // a poll in flight when the user hits Disconnect lands during
+    // handleDisconnect's awaits and writes into state that has just been reset:
+    // it overwrote aiRawSourceRef (so the channel cards showed a reading after
+    // disconnecting), re-armed batchUpdateTimer that stopPolling had just
+    // cleared, pushed a point into the cleared dataBufferRef and IndexedDB (so
+    // the charts drew a one-point trace instead of "No data"), and repopulated
+    // inputReadFailureTimestampsRef so the *next* connection started out already
+    // holding failure timestamps.
+    const generation = pollGenerationRef.current;
     let firstError: Error | null = null;
     const pruneAndCountAI = () =>
       pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
@@ -1655,6 +1674,15 @@ function App() {
           );
         }
       }
+    }
+
+    // Everything above only read; everything below mutates shared state. If the
+    // connection this poll belonged to is gone, stop here — the failure
+    // timestamps pushed on the read paths above are pruned by window anyway, and
+    // handleDisconnect clears them after awaiting the in-flight poll.
+    if (generation !== pollGenerationRef.current) {
+      console.info('[App] discarding poll result from a previous connection', { generation });
+      return;
     }
 
     if (aiSourceValues) {
@@ -1766,7 +1794,13 @@ function App() {
       // Skip the request while the save-file picker holds the foreground; the
       // schedule below still advances, so polling resumes on its own tick.
       if (!filePickerOpenRef.current) {
-        await pollOnce();
+        const inFlight = pollOnce();
+        pollInFlightRef.current = inFlight;
+        try {
+          await inFlight;
+        } finally {
+          if (pollInFlightRef.current === inFlight) pollInFlightRef.current = null;
+        }
       }
     } finally {
       pollingInProgressRef.current = false;
@@ -1892,6 +1926,9 @@ function App() {
       modbusPrecision,
       connected,
     });
+    // Fence off anything still owed to a previous session, so a straggler cannot
+    // write into the connection being set up here.
+    pollGenerationRef.current += 1;
     let pendingClient: WebSerialModbusClient | null = null;
     try {
       if (clientRef.current) {
@@ -2006,7 +2043,21 @@ function App() {
     scriptRunner.stopScriptRunner('Stopped');
     acquiringRef.current = false;
     setAcquiring(false);
+    // Retire this connection's polls before anything is reset. stopPolling()
+    // cancels the timer but cannot recall a request already on the wire; from
+    // here on that poll's result is discarded rather than written.
+    pollGenerationRef.current += 1;
     stopPolling();
+    // Then wait for it, so the cleanup below runs after it has finished rather
+    // than merely being immune to it.
+    const inFlightPoll = pollInFlightRef.current;
+    if (inFlightPoll) {
+      try {
+        await inFlightPoll;
+      } catch (err) {
+        console.warn('In-flight poll failed during disconnect:', err);
+      }
+    }
     clearBackgroundTimer(flushTimerRef.current);
     flushTimerRef.current = undefined;
     const writerToClose = tsvWriterRef.current;
