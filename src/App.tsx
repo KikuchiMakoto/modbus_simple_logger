@@ -575,7 +575,8 @@ function App() {
   // True while the save-file picker is open. On Android the picker is a system
   // activity that backgrounds (and can freeze) the page for as long as it is
   // shown, which would blow the deadline of any Modbus transfer started
-  // meanwhile. Polling keeps its schedule but skips issuing requests.
+  // meanwhile. Polling keeps its schedule but skips issuing requests — but only
+  // while the page is actually hidden; see runPollingLoop.
   const filePickerOpenRef = useRef(false);
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
@@ -1791,9 +1792,19 @@ function App() {
       idealScheduleRef.current = loopStart;
     }
     try {
-      // Skip the request while the save-file picker holds the foreground; the
-      // schedule below still advances, so polling resumes on its own tick.
-      if (!filePickerOpenRef.current) {
+      // Skip the request only when the picker has actually backgrounded the
+      // page. This used to skip for as long as the picker was open at all,
+      // which cost the user every sample taken while they were finding a folder
+      // — on desktop that is a minute-long hole in the middle of a run, with
+      // nothing on screen saying why, because the picker there is an OS dialog
+      // that leaves the page running and visible.
+      //
+      // `document.hidden` is exactly the discriminator: a desktop file dialog
+      // does not change the tab's visibility, while Android's picker is a
+      // separate activity that does. And where the page really is frozen the
+      // skip was never doing the work anyway — a frozen page issues no polls
+      // because no timer fires.
+      if (!(filePickerOpenRef.current && document.hidden)) {
         const inFlight = pollOnce();
         pollInFlightRef.current = inFlight;
         try {
