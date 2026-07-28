@@ -109,6 +109,15 @@ export const launchBrowser = (browser: BrowserInfo, url: string) => {
       `--user-data-dir=${dir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      // Initial window size for the `--app` window. Chromium otherwise opens
+      // it at whatever default the profile remembers (often the last size the
+      // user dragged to, including having been shrunk to a sliver). A
+      // measurement dashboard is laid out for a wide window, so give one on
+      // first launch; the user is still free to drag it afterwards. The CSS
+      // min-width on the body (index.css, gated by the runtime class the
+      // launcher stamps onto <html>) keeps the *content* from collapsing past
+      // a readable threshold even when the window is dragged narrower.
+      '--window-size=1280,800',
       // Timer throttling, off. Chromium slows timers in a window it considers
       // background — 1 Hz when hidden, 1/min under the intensive policy after a
       // few minutes — which would turn the polling loop into a gap in the
