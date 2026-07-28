@@ -509,6 +509,21 @@ function App() {
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
   const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
+
+  // Free-text labels keyed by chart axis key, so ChartPanel can show the user's
+  // label as the axis title instead of the raw "raw_0" / "phy_3" key.
+  const chartAxisLabels = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (let i = 0; i < AI_CHANNELS; i++) {
+      const lbl = aiFreeLabels[i] ?? '';
+      if (lbl) { m[`raw_${i}`] = lbl; m[`phy_${i}`] = lbl; }
+    }
+    for (let i = 0; i < PARAM_CHANNELS; i++) {
+      const lbl = paramFreeLabels[i] ?? '';
+      if (lbl) m[`par_${i}`] = lbl;
+    }
+    return m;
+  }, [aiFreeLabels, paramFreeLabels]);
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
   // AO and Parameter start collapsed: AI is what a session is normally watching,
@@ -2756,6 +2771,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart1X}
           yAxis={chart1Y}
           isDarkMode={isDarkMode}
@@ -2768,6 +2784,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart2X}
           yAxis={chart2Y}
           isDarkMode={isDarkMode}
@@ -2780,6 +2797,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart3X}
           yAxis={chart3Y}
           isDarkMode={isDarkMode}
@@ -2792,6 +2810,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart4X}
           yAxis={chart4Y}
           isDarkMode={isDarkMode}
