@@ -512,16 +512,19 @@ function App() {
   const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
 
   // Free-text labels keyed by chart axis key, so ChartPanel can show the user's
-  // label as the axis title instead of the raw "raw_0" / "phy_3" key.
+  // label as the axis title instead of the raw "raw_00" / "phy_03" key. The
+  // index is zero-padded to two digits, exactly as axisOptions builds its keys
+  // — unpadded, the map would miss every channel below 10.
   const chartAxisLabels = useMemo(() => {
     const m: Record<string, string> = {};
     for (let i = 0; i < AI_CHANNELS; i++) {
       const lbl = aiFreeLabels[i] ?? '';
-      if (lbl) { m[`raw_${i}`] = lbl; m[`phy_${i}`] = lbl; }
+      const n = i.toString().padStart(2, '0');
+      if (lbl) { m[`raw_${n}`] = lbl; m[`phy_${n}`] = lbl; }
     }
     for (let i = 0; i < PARAM_CHANNELS; i++) {
       const lbl = paramFreeLabels[i] ?? '';
-      if (lbl) m[`par_${i}`] = lbl;
+      if (lbl) m[`par_${i.toString().padStart(2, '0')}`] = lbl;
     }
     return m;
   }, [aiFreeLabels, paramFreeLabels]);
