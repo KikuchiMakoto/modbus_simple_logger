@@ -2358,7 +2358,7 @@ function App() {
   // quarter too tall at 125%, for a scrollbar on an otherwise empty page.
   return (
     <div>
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/70 backdrop-blur dark:border-slate-800 dark:bg-slate-950/70">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/50 backdrop-blur dark:border-slate-800 dark:bg-slate-950/50">
         {/* The header is sticky, so every pixel it takes is a pixel the channel
             grid never gets back. Title, serial settings and the save status sit
             on ONE row (wrapping only when the window is too narrow for it)
