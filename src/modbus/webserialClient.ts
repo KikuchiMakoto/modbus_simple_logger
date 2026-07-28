@@ -73,6 +73,11 @@ const TEARDOWN_STEP_TIMEOUT_MS = 1500;
 // post-failure flush (30/80 ms): this one runs on the critical path of a poll,
 // and it only has to sweep up bytes that are already sitting there — the
 // polyfill gets more because its reads resolve in coarser batches.
+// How long a device may take to assemble a response before its first byte
+// appears, independent of baud rate. Measured, not guessed: a 16-channel
+// float32 read on the reference hardware takes ~90-100 ms of device time.
+const DEVICE_RESPONSE_ALLOWANCE_MS = 200;
+
 const STALE_PREWRITE_FLUSH_MS_NATIVE = 5;
 const STALE_PREWRITE_FLUSH_MS_POLYFILL = 15;
 
@@ -222,18 +227,43 @@ export class WebSerialModbusClient {
     // Base interval depends on precision mode
     const baseIntervalMs = this.isExtendedPrecision ? 1 : 10;
 
-    // Calculate 5 character times based on serial settings
-    // 1 character = 1 start bit + data bits + parity bit (if any) + stop bits
-    const bitsPerChar = 1 +
-                        this.serialSettings.dataBits +
-                        (this.serialSettings.parity !== 'none' ? 1 : 0) +
-                        this.serialSettings.stopBits;
-
     // 5 characters worth of time in milliseconds
-    const silentIntervalMs = (bitsPerChar * 5 * 1000) / this.serialSettings.baudRate;
+    const silentIntervalMs = (this.bitsPerChar() * 5 * 1000) / this.serialSettings.baudRate;
 
     // Use the larger of the two
     return Math.max(baseIntervalMs, silentIntervalMs);
+  }
+
+  /** 1 start bit + data bits + parity bit (if any) + stop bits. */
+  private bitsPerChar(): number {
+    return 1 +
+           this.serialSettings.dataBits +
+           (this.serialSettings.parity !== 'none' ? 1 : 0) +
+           this.serialSettings.stopBits;
+  }
+
+  /**
+   * Smallest read deadline that can be met by a healthy device for a response
+   * of `expectedLength` bytes.
+   *
+   * The caller's timeout is a policy number derived from the polling rate; it
+   * knows nothing about how big this particular response is. That was fine
+   * while every read was 16 int16 registers (37 bytes), which is what the 100 ms
+   * floor in App.tsx was sized against — but an Extended-precision read of the
+   * same 16 channels is 69 bytes, and on real hardware the device needs roughly
+   * 90-100 ms just to assemble it before the first byte appears. The deadline
+   * and the device's own latency then landed on top of each other, so a poll
+   * failed whenever the device was a few milliseconds slow: the log showed
+   * "Timeout waiting for response (23/69 bytes)" followed by the remaining 46
+   * bytes being flushed as stale a moment later.
+   *
+   * Sized as device latency plus twice the wire time — doubled because the
+   * bytes do not necessarily arrive back-to-back, and because at 4800 baud the
+   * wire time alone (144 ms for 69 bytes) already exceeds the old floor.
+   */
+  private minimumReadTimeoutMs(expectedLength: number): number {
+    const wireMs = (expectedLength * this.bitsPerChar() * 1000) / this.serialSettings.baudRate;
+    return DEVICE_RESPONSE_ALLOWANCE_MS + wireMs * 2;
   }
 
   /**
@@ -710,6 +740,8 @@ export class WebSerialModbusClient {
       // full untouched response in the buffer for the next request to mistake
       // for its own.
       const readStart = Date.now();
+      // The caller's timeout is a floor, not a ceiling: see minimumReadTimeoutMs.
+      const effectiveTimeout = Math.max(timeout, this.minimumReadTimeoutMs(expectedLength));
 
       // Read and frame the response. The expected header comes from the request
       // itself — buildFrame() puts the slave ID at [0] and the function code at
@@ -740,7 +772,7 @@ export class WebSerialModbusClient {
           break;
         }
 
-        const remainingMs = timeout - (Date.now() - readStart);
+        const remainingMs = effectiveTimeout - (Date.now() - readStart);
         if (remainingMs <= 0) {
           throw new Error(
             `Timeout waiting for response (${buffer.length}/${scan.atLeast} bytes)`,
@@ -808,6 +840,7 @@ export class WebSerialModbusClient {
       console.error(`${this.debugPrefix} transfer() failed`, {
         expectedLength,
         timeout,
+        effectiveTimeout: Math.max(timeout, this.minimumReadTimeoutMs(expectedLength)),
         txLength: frame.length,
         elapsedMs: Date.now() - startTime,
         error: err,
