@@ -17,6 +17,7 @@
 //     `while true do end` — a loop with no sleep never yields, so the coroutine
 //     alone cannot stop it.
 import { LuaFactory, type LuaEngine } from 'wasmoon';
+import { INTERRUPT_MARKER, RUNNER_SETUP } from './lua/scaffolding';
 import {
   INTERRUPT_NONE,
   INTERRUPT_PENDING,
@@ -24,19 +25,8 @@ import {
   type ScriptWorkerResponse,
 } from './utils/scriptWorkerProtocol';
 
-/**
- * VM instructions between hook calls.
- *
- * Small enough that Stop lands within a millisecond or so of a tight loop, large
- * enough that the hook is not a measurable tax on a script doing real work.
- */
-const HOOK_INSTRUCTION_COUNT = 5000;
-
 /** Long sleeps are served in slices so Stop does not have to wait them out. */
 const SLEEP_SLICE_MS = 25;
-
-/** Marker error raised by the hook. Matched to report a Stop, not a failure. */
-const INTERRUPT_MARKER = '__msl_interrupt__';
 
 let engine: LuaEngine | null = null;
 let initPromise: Promise<void> | null = null;
@@ -91,51 +81,6 @@ async function interruptibleSleep(totalMs: number): Promise<boolean> {
   }
 }
 
-/**
- * Lua-side scaffolding.
- *
- * `sleep` yields rather than blocking, and the hook is armed here rather than
- * in JS because `debug.sethook` wants a Lua function. `__msl_should_stop` is
- * injected from JS and reads the shared interrupt byte.
- */
-const RUNNER_SETUP = `
-function sleep(seconds)
-  coroutine.yield(tonumber(seconds) or 0)
-end
-
--- Everything print() would send to stdout goes to the Output pane instead; a
--- worker's console is not visible in the page's devtools.
-function print(...)
-  local parts = {}
-  for i = 1, select('#', ...) do
-    parts[i] = tostring((select(i, ...)))
-  end
-  __msl_write(table.concat(parts, '\\t') .. '\\n')
-end
-
-function __msl_make(source)
-  local chunk, err = load(source, 'script', 't')
-  if not chunk then error(err, 0) end
-  return coroutine.create(function()
-    debug.sethook(function()
-      if __msl_should_stop() then error('${INTERRUPT_MARKER}', 0) end
-    end, '', ${HOOK_INSTRUCTION_COUNT})
-    chunk()
-  end)
-end
-
--- Returns a table, not three values: how wasmoon marshals multiple Lua returns
--- is version-dependent, and a table comes back as a plain JS object either way.
-function __msl_step(co)
-  local ok, value = coroutine.resume(co)
-  return {
-    ok = ok,
-    value = value,
-    dead = coroutine.status(co) == 'dead',
-  }
-end
-`;
-
 async function initialize(args: Extract<ScriptWorkerRequest, { type: 'init' }>): Promise<void> {
   post({ type: 'status', message: 'Initializing Lua...' });
 
@@ -187,13 +132,12 @@ async function runProgram(code: string): Promise<void> {
   if (!engine) throw new Error('Lua is not available');
   startedAt = Date.now();
 
-  const make = engine.global.get('__msl_make') as (source: string) => unknown;
-  const step = engine.global.get('__msl_step') as (
-    co: unknown,
-  ) => { ok: boolean; value: unknown; dead: boolean };
-
-  // A compile error surfaces here, before anything has run.
-  const coroutine = make(code);
+  // Driven through doStringSync rather than global.get(): calling a Lua
+  // function fetched into JS is the path that broke on thread values, and this
+  // one only ever moves a string in and a table out.
+  engine.global.set('__msl_source', code);
+  const compileError = engine.doStringSync('return __msl_start(__msl_source)');
+  if (typeof compileError === 'string') throw new Error(compileError);
 
   for (;;) {
     if (stopRequested()) {
@@ -202,7 +146,11 @@ async function runProgram(code: string): Promise<void> {
       return;
     }
 
-    const { ok, value, dead } = step(coroutine);
+    const { ok, value, dead } = engine.doStringSync('return __msl_step()') as {
+      ok: boolean;
+      value: unknown;
+      dead: boolean;
+    };
     flushOutput();
 
     if (!ok) {
