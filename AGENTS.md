@@ -9,7 +9,7 @@
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
-- Pyodide（Web Worker + SharedArrayBuffer）による PyScriptRunner 機能
+- Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python / BASIC / Lua** の3言語）
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
 - Wake Lock API による計測中の画面スリープ抑止
 
@@ -36,20 +36,31 @@ src/
 │   ├── webserialClient.ts           # Web Serial トランスポート + Modbus RTU フレーム送受信
 │   └── frameScan.ts                 # 応答フレーミングの純粋関数（scanModbusFrame）＋ ModbusExceptionError。slaveId/fc/CRC 検証と例外フレーム判定
 ├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
-├── pyodideWorker.ts                 # Pyodide PyScriptRunner 用 Web Worker
+├── pyodideWorker.ts                 # Python(Pyodide) 実行 Worker
+├── basicWorker.ts                   # BASIC 実行 Worker（インタプリタのステップループ + 割込み可能な Sleep）
+├── luaWorker.ts                     # Lua(wasmoon) 実行 Worker（コルーチン + debug.sethook）
+├── basic/                           # BASIC 方言の実装。README-dialect.md が仕様、checks.ts が 122 件の検証
+│   ├── README-dialect.md            # **方言仕様（日本語）。BASIC を触る前にこれを読む**
+│   ├── lexer.ts / parser.ts         # パーサは**フラット命令列**を吐く（Stop がどこでも効く理由）
+│   ├── interpreter.ts               # 期限までステップ実行して制御を返すステップマシン
+│   ├── values.ts / builtins.ts      # VB6 の値意味論 / 組込関数・計測 API
+│   └── checks.ts                    # `bun run basic:check`
+├── lua/
+│   ├── scaffolding.ts               # Lua 側の足場（sleep=coroutine.yield, 停止フック）
+│   └── checks.ts                    # `bun run lua:check`
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
 ├── timerWorker.ts                   # タイマー抑制回避用 Worker（setTimeout/setInterval をワーカースレッドで保持）
 ├── hooks/
 │   ├── useTheme.ts                  # テーマ管理（localStorage 永続化）
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
-│   ├── useScriptRunner.ts           # Pyodide Worker 管理 + SAB 先行確保
+│   ├── useScriptRunner.ts           # 言語ごとの Worker 管理（1言語1つ・生成後は保持）+ SAB 先行確保 + 言語別コード永続化
 │   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
-│   ├── ScriptStatusBar.tsx          # 画面下端固定の PyScript 状態バー（md 以上のみ・常設なので h-8 スペーサを持つ）
-│   ├── AppStatusBar.tsx             # 画面下端固定のエラーバー（**失敗のみ**。正常時は出ない）。PyScript バーの上に重なる。何も無ければ null（スペーサを持たない純オーバーレイ）・全ブレークポイントで表示
-│   ├── PyScriptRunnerPanel.tsx      # PyScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
+│   ├── ScriptStatusBar.tsx          # 画面下端固定の ScriptRunner 状態バー（選択中の言語名を出す・md 以上のみ・常設なので h-8 スペーサを持つ）
+│   ├── AppStatusBar.tsx             # 画面下端固定のエラーバー（**失敗のみ**。正常時は出ない）。ScriptRunner バーの上に重なる。何も無ければ null（スペーサを持たない純オーバーレイ）・全ブレークポイントで表示
+│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／言語セレクタ／実行・停止・Output ログ・API 一覧（UI 名: Script Runner）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
 │   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー（ビューアのみアプリヘッダーにも出す）
@@ -62,7 +73,7 @@ src/
 │   ├── HamburgerMenu.tsx            # スライドインメニュー（Remote Monitoring 項目は exe 限定で表示）
 │   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
 │   ├── QrCode.tsx                   # QR をインライン SVG で描画（qrcode-generator・1 path に集約）
-│   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Tester の全ch 0V / PyScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
+│   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Tester の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/
@@ -181,7 +192,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### 通知（`utils/notifications.ts` + `useNotifications.ts`）
 - 通知の可否は**モジュールレベルの1箇所**（`utils/notifications.ts` の `enabled` + 許可状態）で判定する。`notify()` は Worker のメッセージハンドラなど React の外から呼ばれるため、React state をゲートにしないこと
-- 対象は PyScriptRunner の開始 / 停止 / 完了 / エラーと、Python の `set_notify(msg)`。**通知した内容は必ず `scriptLog` にも書く**（通知 OFF や許可なしでも情報が消えないように）
+- 対象は ScriptRunner の開始 / 停止 / 完了 / エラーと、スクリプトの `set_notify(msg)`。**通知した内容は必ず `scriptLog` にも書く**（通知 OFF や許可なしでも情報が消えないように）
 - **許可要求は起動時に1回**（`useNotifications` の effect、トグル ON かつ `permission === 'default'` のときだけ）。計測は「開始したら人が離れる」使い方なので、失敗した瞬間に許可ダイアログを出しても誰も答えられない。拒否された場合はトグルを自動で OFF にして、UI と実態を合わせる
 - **通知は tag で潰す**（`NOTIFY_TAG`）。`while True:` の中の `set_notify()` でデスクトップが埋まらないようにするため。連投は「最新1件が残る」挙動になる
 - 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
@@ -196,7 +207,33 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
 - 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
 
-### PyScriptRunner（`pyodideWorker.ts`）
+### ScriptRunner（`pyodideWorker.ts` / `basicWorker.ts` / `luaWorker.ts`）
+
+**3言語共通の約束**
+- **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイルに集約**。3つの実行系に共通点は無いが *契約* は同じ（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）。`useScriptRunner` が3つを同一に扱えるのはこれのため
+- **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `set_ao` 直後の `get_ao` は前の値を返す（3言語とも同じ）
+- **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
+- **Worker は言語ごとに1つ作り、以後保持する**。Pyodide は起動に数秒かかるので、BASIC の例を覗いただけで破棄すると戻ったときに壊れて見える
+- **コードは言語ごとに別キーで永続化する**（Python は既存の `scriptRunnerCode` を維持）。実行中の言語切替は拒否する（実行中の Worker は旧言語のもので、エディタだけ入れ替わると Stop が画面に無いスクリプトを指す）
+- **Stop は3言語とも「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること。実現手段は言語ごとに違う（下記）
+- **待ちの単位は言語ごとに違う**: Python `asyncio.sleep` = 秒、Lua `sleep` = 秒、**BASIC `Sleep` = ミリ秒**。BASIC だけ違うのは VB6/VBA/VB.NET で実際に待つ手段がミリ秒だから。**統一しないこと** — 各言語のユーザーが知っている流儀を優先する判断であり、API 一覧と AI プロンプトの両方に明記してある
+
+**BASIC（`basicWorker.ts` + `src/basic/`）**
+- **方言仕様は `src/basic/README-dialect.md`。BASIC を変更する前に必ず読む**（VB6 準拠の範囲、受理する N88/QBasic/VB.NET の綴り、組込関数）
+- **方言の優先順位は VB6 → VB.NET → VBA**。ただし実態としては **VBA は VB6 とほぼ同一言語**なので発動せず、**VB.NET は「綴りの追加元」であって「意味論の上書き元」ではない**（`End While`・`AndAlso`/`OrElse`・`+=` は受理するが、`And` はビット演算のまま、`Mod` は整数演算のまま、`GoSub` は残す）
+- **パーサはフラットな `Instr[]` を吐く。これが Stop が効く理由**（実行が配列上の PC なので、任意の2命令の間で割込みを見て、どこにいても中断できる）。木を歩くインタプリタに変えないこと
+- `interpreter.resume(deadline)` は**期限が来たら制御を返す**。Sleep も待たずに呼び出し元へ返し、Worker が 25ms スライスで待つ（`Sleep 3600000` も中断可能）
+- Print 出力はスライスごとにバッチ送信する（毎文 postMessage すると構造化複製がメインスレッドを叩く）
+- **検証は `bun run basic:check`（122件）**。`bun run build` は `7.5 Mod 2` が 1 か 1.5 かを判定できないので、言語仕様を触ったらこちらを必ず通す
+
+**Lua（`luaWorker.ts` + `src/lua/`）**
+- **コルーチンを JS 側へ渡さないこと**。`sleep` は `coroutine.yield(秒)`、駆動は `doStringSync('return __msl_step()')` で、**境界を越えるのは文字列とプレーンなテーブルだけ**。以前スレッドを JS に渡して戻していたが、wasmoon はスレッドを往復できず WASM レベルの `call_indirect signature mismatch` と nil になった upvalue になった（何も動かない）
+- **`debug.sethook` のカウントフック（5000命令ごと）が `while true do end` を殺す唯一の手段**。sleep の無いループは yield しないのでコルーチンだけでは止まらない
+- Lua 文字列内の `	` `
+` は TS のテンプレートリテラルで**先に実体化される**ので `\t` と書くこと（一度これで setup チャンク全体が "unfinished string" で壊れた）
+- **検証は `bun run lua:check`（14件）**。wasmoon のマーシャリングの仮定は実際に走らせるまで一切見えない
+
+**Python（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
   - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
   - バージョンは **`package.json` の `pyodide` 依存（現在 `^314.0.3`）が一次情報源**。アセットは `node_modules` の実インストール版からコピーされるためバージョンずれは構造的に起きない。URL 直書き・他ファイルへのバージョン直書きは禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
@@ -262,14 +299,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
 - **復旧ファイル名は `<stem>_recovered<ext>`**（`recoveredDownloadName()`、v4.1〜）。元の名前のまま返してはならない — 復旧ファイルは「その run が本来出すはずだったファイル」ではなく**クラッシュが残した残骸**であり、ページが死んだ時点でバッファに載っていた行を欠いている可能性がある。元の名前でダウンロードフォルダに置くと正常な保存と見分けが付かず、**そもそも run が失敗したこと自体に気付けない**。OPFS 側のエントリ名は `buildRecoveryName()` のまま（あちらはパースされる名前、こちらは人間だけが読む名前）
 - **2つの `confirm()` で Cancel の意味は逆**（v4.1〜）。1つ目（提示）の Cancel は**ミラーを削除する** — 名前・開始時刻・サイズを見た上で「要らない」と答えたのだから、起動の度に同じ死んだ run を出し続けるのはデータ保護ではなく催促である。2つ目（削除確認）の Cancel は**保持する** — こちらの Cancel は「ダウンロードが届いていない」の意であり、消せば救出対象そのものを壊す。**この非対称を「一貫性」を理由に揃えてはならない**。どちらもダイアログ本文に Cancel の挙動を明記すること
-- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`notificationsEnabled`・`scriptRunnerCode` / `scriptRunnerCodeBackup`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
-  - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・PyScript のコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
+- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`notificationsEnabled`・`scriptRunnerCode`（Python）/ `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
+  - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・スクリプトのコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
-- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は PyScriptRunner 含め完全オフライン動作。
+- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
   - `CACHE_VERSION` も同プラグインがマニフェスト内容のハッシュへ置換（`'dev'` → 8桁ハッシュ）。デプロイ毎に新キャッシュへ切替わり旧キャッシュは activate で削除
   - 未ビルドの `vite dev` ではプレースホルダのまま（空配列／`'dev'`）。dev は base が `/` で BASE_PATH 不一致のため SW は実質無効、問題なし
@@ -331,7 +368,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 ## 変更時の注意
 
 - 通信方式は「Web Serial API」を基準に記述する（WebUSB は polyfill 経由のフォールバック）
-- PyScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
+- ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
 - **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
 - **`scattergl` は性能上の選択ではなくデータモデル上の必然**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。scatter トレースは点列を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**scatter 相当のパラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`
 - **`hoverinfo: 'skip'` + `hovermode: false` を外さないこと**（`ChartPanel.tsx`）。scattergl はホバー判定用の空間インデックスを毎更新で構築し、そのコストは `CHART_MAX_POINTS` に比例する。本アプリは `hovertemplate` も `onHover`/`onClick` も使っていないため純粋な無駄であり、これを止めた前提で `CHART_MAX_POINTS` を 2048 に上げている。**ホバーでの値読みを復活させる場合は `CHART_MAX_POINTS` を 1024 に戻すこと**
@@ -345,7 +382,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
-- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info、`PyScriptRunnerPanel` = PyScript Runner（**メニュー表記は2語**。ドキュメント側で "PyScriptRunner" と1語で書いているのは機能全体を指すときで、メニュー項目を指すときは2語）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
+- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
 - **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
 - **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe と cloudflared バイナリ（54MB）は**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isViewerMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため、**別 PC から LAN アドレスで開いた瞬間に web 版と誤認して Service Worker を登録し**、no-store ヘッダーで排除したはずのキャッシュ層を復活させる。マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
@@ -365,12 +402,12 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **色は意味に対して一意に保つこと**。同じ「エラー」を場所によって赤とグレーで出し分けない。逆に、中立的な説明文（ただのヘルプ、機能の解説）に警告色を使わない — **警告かどうかの区別はユーザーが付ける**（v3.18 の Save ボタン注記が amber の初出）
   - 上記4色の外（青/sky・紫・ピンク等）を**装飾目的で新規に持ち込まない**。既存の確立済みセマンティック色（レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを別の意味へ流用しない
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
-- **キャリブレーションのロック**: PyScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
+- **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **Input Calibrator の2方式**（`InputCalibratorPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) を**1ウィンドウ**で扱う。チャネル選択は CH00-15 の単一ドロップダウンで、どちらのフロントエンドかは ch 番号（AI マップの前半/後半）から決まる。チップ種別を先に選ばせるタブは置かない（ch の属性であって、ユーザーが選ぶモードではないため）。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
   - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。TSV エクスポートはウィンドウ名がチップを示さなくなったため、`Sensor` キーで HX711/ADS1115 を別途記録する。
-- **Output Tester**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と PyScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
+- **Output Tester**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と ScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
 
 ## package.json のバージョン更新の絶対的なルール
 
