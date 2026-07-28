@@ -30,9 +30,12 @@ src/
 ├── main.tsx                         # エントリポイント + SW 登録 + Error Boundary
 ├── index.css                        # Tailwind + カスタムクラス
 ├── types.ts                         # 型定義（AiChannel, AoChannel, DataPoint, SerialSettings 等）
+├── types/
+│   └── modules.d.ts                 # 型定義を持たない依存の宣言
 ├── constants.ts                     # 一元化された定数（AI_CHANNELS, MAX_POINTS_* 等）
 ├── modbus/
-│   └── webserialClient.ts           # Web Serial トランスポート + Modbus RTU フレーム送受信
+│   ├── webserialClient.ts           # Web Serial トランスポート + Modbus RTU フレーム送受信
+│   └── frameScan.ts                 # 応答フレーミングの純粋関数（scanModbusFrame）＋ ModbusExceptionError。slaveId/fc/CRC 検証と例外フレーム判定
 ├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
 ├── pyodideWorker.ts                 # Pyodide PyScriptRunner 用 Web Worker
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
@@ -46,6 +49,8 @@ src/
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
+│   ├── ScriptStatusBar.tsx          # 画面下端固定の PyScript 状態バー（md 以上のみ・常設なので h-8 スペーサを持つ）
+│   ├── AppStatusBar.tsx             # 画面下端固定のアプリ状態／エラーバー。PyScript バーの上に重なる。何も無ければ null（スペーサを持たない純オーバーレイ）・全ブレークポイントで表示
 │   ├── PyScriptRunnerPanel.tsx      # PyScriptRunner のエディタ／実行・停止・Restore・Output ログ・API 一覧
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
@@ -56,7 +61,7 @@ src/
 │   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
 │   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
 │   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
-│   ├── HamburgerMenu.tsx            # スライドインメニュー（MCP 項目は exe 限定で表示）
+│   ├── HamburgerMenu.tsx            # スライドインメニュー（MCP・Remote Monitoring 項目は exe 限定で表示）
 │   ├── McpPanel.tsx                 # MCP 状態表示＋書込み許可トグル（exe 限定）
 │   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
 │   ├── QrCode.tsx                   # QR をインライン SVG で描画（qrcode-generator・1 path に集約）
@@ -65,6 +70,8 @@ src/
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
+    ├── calibrationExport.ts         # キャリブレーションの JSON 入出力
+    ├── appStatus.ts                 # アプリ状態／エラーのモジュールレベルストア（同一文言の畳み込み・source 別クリア・error は notify() へ）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
     ├── opfsRecoveryShared.ts        # OPFS ミラーの命名規約（Worker と主スレッドで共有）
@@ -118,7 +125,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - Precision の選択肢は **Auto（既定）/ Normal(i16t) / Extended(f32t)**。型を2つに分けてあり、`ModbusPrecisionSetting`（ユーザーの選択・`'auto'` を含む）と `ModbusPrecision`（実際に線上で使う地図・2値のみ）は**別物**。`'auto'` を下流（ポーリング・TSV 列整形・読み値表示）へ流してはならない
 - 判定は **接続時に1回だけ**。`AI_FLOAT_START_REGISTER`(5000) の先頭2ch を `PRECISION_PROBE_TIMEOUT_MS`(100ms) で読み、返れば Extended、返らなければ Normal。**実行中に再判定しないこと** — 相手のファームウェアの性質であり、記録中にレジスタ地図が変わる余地を作るだけ
 - **プローブは AO Holding Registers 同期の後に置く**。先に置くと「デバイスが全く喋っていない」と「float レジスタが無い」が同じ沈黙になり、断線を根拠にレジスタ地図を決めてしまう
-- **`PRECISION_PROBE_ATTEMPTS`(3回) 失敗して初めて Normal に落とす**。float レジスタを持たないデバイスは Modbus 例外フレーム（`transfer()` が待つ長さより短い）を返すため、これもタイムアウトとして現れる。つまり「例外」「無応答」「1フレーム落ち」が外から区別できない。**間違うなら Normal 側へ**倒すこと — Auto 以前の既定がまさに Normal であり、逆に誤って Extended にすると i16 レジスタを float の半分として解釈し、**もっともらしい嘘の値を記録する**
+- **`PRECISION_PROBE_ATTEMPTS`(3回) 失敗して初めて Normal に落とす**。**間違うなら Normal 側へ**倒すこと — Auto 以前の既定がまさに Normal であり、逆に誤って Extended にすると i16 レジスタを float の半分として解釈し、**もっともらしい嘘の値を記録する**
+- **プローブの catch は広いまま保つこと**。float レジスタを持たないデバイスは Modbus 例外フレームを返す。v4.5 以降 `transfer()` はこれを認識し `ModbusExceptionError`（例外コード付き）として投げるので、以前のように「無応答」と区別できないわけではない（`frameScan.ts`）。それでもプローブ側は**投げられたものすべてを「float ブロック無し」として扱う**のが正しく、`probeExtendedPrecision` の catch を例外種別で分岐させてはならない — 例外・無応答・1フレーム落ちのどれであっても結論は同じ Normal であり、分岐を入れれば「Extended に倒れる経路」を新設することになる。副作用として、例外を返すデバイスでは 3×100ms の沈黙を待たず即座に Normal が決まる
 - 応答値は**有限であることまで要求する**。未実装レジスタが 0xFFFF 詰めで応答すると NaN にデコードされるが、フレームとしては妥当なので構造チェックだけでは通ってしまう
 - 決まったモードは**ヘッダーと接続ステータスに必ず出す**（`i16t` / `f32t`、Auto 時は `(auto)` 付き）。自動判定が外した場合に、ユーザーが気づける場所が無いという状態を作らないこと
 
@@ -128,7 +136,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **Save Rate**（Start Save の横、`SAVE_RATE_OPTIONS` = **200ms〜30分**、既定 1s）＝ **TSV へ書く周期だけ**。「N回に1回書く」で実現する。**接続中・保存中も変更可**（締切を張り直すだけで済む）
   - **チャート・IndexedDB・ビューア配信は保存周期ではなくポーリング側**。ただし**入力レートは `CHART_INPUT_INTERVAL_MS`(100ms) 固定**で、ポーリング回数のストライド（100ms→毎回 / 50ms→2回に1回 / 25ms→4回に1回、`plotStrideRef`）で落とす
     - 保存周期に合わせない理由：30分周期のログで画面が30分に1点しか動かなければ計測を見ていられない
-    - ポーリングに追従させない理由：**チャートの入力レートが固定なら、負荷も軸も間引き計算も1つの前提の上に乗る**。10Hz は既にチャート再描画レート(5fps)の倍で、それ以上の点は個別には見えない — バッファ churn と、速いポーリング時は Modbus 転送の合間に挟まる間引き作業が増えるだけ。ポーリングを制御ループのために上げても表示コストが付いてこない、という性質がここで効く
+    - ポーリングに追従させない理由：**チャートの入力レートが固定なら、負荷も軸も間引き計算も1つの前提の上に乗る**。入力 10Hz に対し再描画は `CHART_REDRAW_INTERVAL_MS`(500ms) = **2fps** なので、1回の描画に5点ぶん入る計算で、それ以上の点は個別には見えない — バッファ churn と、速いポーリング時は Modbus 転送の合間に挟まる間引き作業が増えるだけ。入力レートを再描画レートまで落とさないのは、チャートが**間引き前の点列**を持っていることに意味があるため（軸を Raw/Phy/Parameter に切り替えても再取得が要らない）。ポーリングを制御ループのために上げても表示コストが付いてこない、という性質がここで効く
     - **ストライドは締切ではなく単純なカウンタ**。読取り失敗で1回飛んでも 10Hz のトレースの位相が 100ms ずれるだけで、TSV の1行欠落とは重みが違う
   - **20ms は実機で保たなかったので 25ms にした**（v4.1 の実測）。Normal 精度では 1 サイクルの下限が「フレーム時間 + `minMessageIntervalMs`(最低 10ms)」で、38400bps・AI 16ch の i16 読みなら 11.7ms + 10ms ≒ 22ms — 20ms は構造的に入らない。25ms も余裕は数 ms しかない**最も端の設定**であり、遅いボーレートや応答の遅いデバイスでは保たない。読取りタイムアウトの下限 100ms も守れていないが、これは両者共通で 20/25 の差の原因ではない
   - **理由は FB 制御**。AO を叩くスクリプトは polling が更新した AI 値を読む。ここを保存周期に縛ると、「ディスクには1分に1点で十分だが制御は速く回したい」という真っ当な要求が「1分に1回しか入力が更新されない制御ループ」になる。ファイルサイズと制御品質は別の関心事
@@ -137,7 +145,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 締切を **0 へリセット**（＝「次のポーリングを即記録」）するのは **計測開始時・切断時・保存開始/停止時・Save Rate 変更時**の4系統だけ
     - **`scheduleImmediatePoll` でリセットしてはならない**。これは `visibilitychange` からも呼ばれるため、30分保存中にユーザーが10回タブを切り替えると10行の余計な行が中途半端な位置に入る。締切は絶対時刻なので**凍結明けは放っておけば「期限切れ」として catch-up 節が張り直す** — 手当ては要らない（v4.1 で混入し修正）
     - **保存開始のリセットは `tsvWriterRef.current = writer` の直前に置く**。他のリセット群と一緒に上へ動かしてはならない — 間に `await dataStorage.clearAllData()` があり、ポーリング周期より長く掛かりうる。その隙間に来たポーリングがリセットを消費して締切を1保存周期ぶん進めてしまい、しかも `enqueueSaveUpdate` はまだ writer が無いので書かない。結果として**このリセットが防ごうとしている遅延（30分周期なら1行目が30分後）がそのまま再発する**（v4.1 で混入し修正）
-  - 保存周期がポーリング周期の整数倍でない組み合わせ（20ms ポーリング + 50ms 保存）は、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**
+  - 保存周期がポーリング周期の整数倍でない組み合わせでは、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**。なお**現行の選択肢では起こらない** — ポーリングは 25/50/100ms、保存は下限 200ms でどれも全ポーリング周期の整数倍になっている。どちらかのリストに整数倍でない値を足すときに効いてくる話として残してある
   - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。25/50/100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
   - ヘッダー表示は `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗は同じ行の点数カウンタが示す
   - MCP `get_status` は `pollingIntervalMs` と `saveIntervalMs` の両方を返す。ViewerStatePayload も同様（ビューアは両方を自分の選択肢へ引き当てる）
@@ -155,7 +163,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 共通上限 `CHART_MAX_POINTS`。`MAX_POINTS_IN_MEMORY`(256) は IndexedDB trim 専用
 - ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファ更新と IndexedDB バッチ書込みを実施）
 - **タイムスタンプは AI 読取り完了時刻（`lastAiReadCompletedAtRef`）を1つだけ使い、チャート・IndexedDB・TSV・レート表示すべてに同じ値を渡す**。`updateDataHistory` は Promise チェーンの継続として走るため、**その中で `Date.now()` を読んではならない** — 表示キューが捌けた時刻が記録され、レンダリング遅延が時間軸に混入する（v3.18 以前はチャート/IndexedDB と TSV で同じサンプルの時刻が食い違っていた）
-- **表示系の state 更新には予算を設ける**（`READOUT_PUBLISH_INTERVAL_MS` = 実測レートと保存点数、`CHANNEL_CARD_MIN_INTERVAL_MS` = AI チャネルカード）。値そのものは ref で正確に持ち、React へ渡す頻度だけを絞る。1サンプルごとに setState すると **40枚のカードの再レンダリングが Modbus 転送の合間に挟まり、描画コストがそのままポーリングジッタになる**。カード側の絞りはポーリング周期が閾値より速いときだけ効くので、**Polling Rate = 50ms のときだけ**効く。**記録すると決めたサンプルのデータ経路（`updateDataHistory` 以降）は絞らないこと**
+- **表示系の state 更新には予算を設ける**（`READOUT_PUBLISH_INTERVAL_MS` = 実測レートと保存点数、`CHANNEL_CARD_MIN_INTERVAL_MS` = AI チャネルカード）。値そのものは ref で正確に持ち、React へ渡す頻度だけを絞る。1サンプルごとに setState すると **40枚のカードの再レンダリングが Modbus 転送の合間に挟まり、描画コストがそのままポーリングジッタになる**。カード側の絞りはポーリング周期が `CHANNEL_CARD_MIN_INTERVAL_MS`(100ms) より**速いときだけ**効くので、**Polling Rate = 25ms と 50ms の両方で**効き、既定の 100ms では効かない（100ms 自身は閾値と同じで絞られない）。**記録すると決めたサンプルのデータ経路（`updateDataHistory` 以降）は絞らないこと**
 - `pageshow` / `visibilitychange` による復帰時即時ポーリング（`acquiring` 状態を ref で確認）
 - USB 物理抜けの `disconnect` イベント自動検知
 - **キャリブレーション変更時もポーリングは継続**（`aiCalibrationRef` で最新値を参照）
@@ -166,8 +174,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 逆に**画面表示だけのタイマーは `window.setTimeout` のままにする**（保存経過時間、コピー完了表示、チャート再描画デバウンス、パネルの開閉アニメ）。見ていない画面の時計が止まっても誰も困らず、Worker 往復を足す意味がない
 - **判定基準は「見ていない間に走りうるか」であって「計測ループの一部か」ではない**（v4.1 の棚卸しで2件漏れが見つかった）:
   - `webserialClient.ts` の `settleWithin()`（切断手順の各ステップ 1.5s ガード）。切断はユーザーがボタンを押すものだけではない — **ケーブルを抜けば `disconnect` イベントで走り**、それは最小化中にも起きる。`window` タイマーのままだと 1.5s が抑制後の1分に化ける
-  - `useScriptRunner.ts` の `waitForScriptRun()`（MCP の `wait_for_script`）。呼び手は**ウィンドウの外からこの窓を操作しているエージェント**であり、その窓はたいてい最小化されている。5秒指定が1分の沈黙になる
-  - 残す判断をしたもの: `tsvExport.ts` の close タイムアウト（ハングした worker に対する最後の安全網であり、延びても壊れるものが無い）、ビューア/MCP の再接続バックオフ（そもそも指数バックオフで秒〜分のオーダー）
+  - `useScriptRunner.ts` の `waitForScriptRun()`（MCP では `run_script` の `wait_ms` 引数から使う。`wait_for_script` という独立ツールは存在しない）。呼び手は**ウィンドウの外からこの窓を操作しているエージェント**であり、その窓はたいてい最小化されている。5秒指定が1分の沈黙になる
+  - 残す判断をしたもの: `tsvExport.ts` の close タイムアウト（ハングした worker に対する最後の安全網であり、延びても壊れるものが無い）、ビューア/MCP の再接続バックオフ（そもそも指数バックオフで秒〜分のオーダー）、`AppStatusBar` の info 期限切れ掃除（1s・見えていないバーの表示更新なので抑制されて構わない）
+  - **例外として要検討で残っているもの**: `App.tsx` のリモートビューア向け全状態再送（1s、`window.setInterval`）。ホストウィンドウが見られていない間こそ動くべきもので、上の基準からすると Worker タイマーにすべき側。実害は「ホスト最小化中にビューアの全状態同期が 1s から最大 1分 に延びる」で、差分更新は別経路なので致命ではないが、**基準に合っていないことを承知で残してある**
 - 仕組みはタイマーの**スケジュールだけ**を専用 Worker が持つ形（Worker のタイマーは抑制対象外）。コールバックは従来どおり主スレッドで走る。**ブラウザにページごと凍結された場合は救えない** — そこはスリープ抑制（下記）と Wake Lock の担当
 - **バックエンドは可視状態で切り替える**（`pageVisible()`）。表示中は `window` タイマー（そもそも抑制されないので Worker 往復は純粋な損）、非表示になったら Worker。**この分岐を「常に Worker」に単純化しないこと** — `readChunk()` はフレーム1本につき USB チャンク数だけタイマーを取り直すため、20Hz では毎秒 60〜120 往復になり、実測で 20Hz が 16Hz まで落ちた（v3.17 の回帰）。非表示へ遷移した時点で生存中の `window` タイマーは Worker へ移し替える（delay は振り直しになるので、遷移1回につき最大1周期ぶん遅れる）
 - Worker が落ちた場合は全 live タイマーを `window` タイマーへ張り直す（`fallBackToWindowTimers`）。残り時間は分からないので**元の delay で再スタート**する。1回遅れる方が、ループが二度と回らないより遥かにマシという判断
@@ -216,11 +225,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 書込み許可の判定は**ページ側の1箇所**（`useMcpBridge` の `writeEnabledRef`）に置く。既定 OFF、`McpPanel` のトグルで opt-in。launcher 側にゲートを二重実装しないこと
 - **PyScriptRunner の実体は1つ**なので MCP 実行と UI 実行は同一の実行系・同一のエディタ内容を共有する（二重実行は構造的に起こらない）。実行中は反対側からの起動と直接書込み（`set_ao` 等）を拒否する。**「MCP 接続中は UI 側をロックする」といった所有権フラグを追加しないこと** — ブリッジ WS は exe 起動中ずっと繋がっているため、それを基準にすると UI が常時使用不能になる
 - **MCP ハンドシェイクのバージョンは `package.json` から取得する**（`launcher/mcp.ts` の `import pkg from '../package.json' with { type: 'json' }`）。Bun がビルド時に解決し `bun build --compile` が exe へインライン化する。**バージョン文字列を直書きに戻さないこと**（v3.5 以前は直書きで、実際に 3.3 のまま取り残されていた）
-- **`get_labels` は MCP 専用**（PyScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`ScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
+- **`get_labels` は MCP 専用**（PyScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`PyScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
 - `run_script` はエディタ内容を上書きするため、直前のコードを `scriptRunnerCodeBackup` へ退避し UI の「Restore」で戻せるようにしてある
 - **スクリプトの失敗は「ツールのエラー」ではなく「結果のデータ」として返す**。投入した Python は別ワーカーで非同期に走るので、ツール呼び出し自体は必ず成功してしまう。そのため `run_script` は `wait_ms`（既定 3000ms・最大 60s・0 で即時）だけ完了を待ち、`{ outcome, error, traceback, log }` を返す。起動直後に落ちる失敗（構文エラー等）をここで捕まえるのが目的で、走り続けるループは `outcome: "running"` で返るのが正常。**「起動したら `started: true` だけ返す」形へ戻さないこと**（エラーが一切見えなくなる）
 - `dispatch` は **Promise を返してよい**（`run_script` の待機）。WS ハンドラ側で resolve してから応答フレームを送る。launcher 側の `bridge.call` タイムアウトは `wait_ms + RUN_SCRIPT_HEADROOM_MS` を渡すこと（待機時間を超えると待機自体がタイムアウトになる）
-- 実行中・実行後の出力は `get_script_log(n)`、直近の実行結果は `get_script()` の `lastRun` から取れる。同じログを `ScriptRunnerPanel` の Output 欄が表示する（UI と MCP で同一データ）
+- 実行中・実行後の出力は `get_script_log(n)`、直近の実行結果は `get_script()` の `lastRun` から取れる。同じログを `PyScriptRunnerPanel` の Output 欄が表示する（UI と MCP で同一データ）
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
@@ -272,13 +281,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
 - **復旧ファイル名は `<stem>_recovered<ext>`**（`recoveredDownloadName()`、v4.1〜）。元の名前のまま返してはならない — 復旧ファイルは「その run が本来出すはずだったファイル」ではなく**クラッシュが残した残骸**であり、ページが死んだ時点でバッファに載っていた行を欠いている可能性がある。元の名前でダウンロードフォルダに置くと正常な保存と見分けが付かず、**そもそも run が失敗したこと自体に気付けない**。OPFS 側のエントリ名は `buildRecoveryName()` のまま（あちらはパースされる名前、こちらは人間だけが読む名前）
 - **2つの `confirm()` で Cancel の意味は逆**（v4.1〜）。1つ目（提示）の Cancel は**ミラーを削除する** — 名前・開始時刻・サイズを見た上で「要らない」と答えたのだから、起動の度に同じ死んだ run を出し続けるのはデータ保護ではなく催促である。2つ目（削除確認）の Cancel は**保持する** — こちらの Cancel は「ダウンロードが届いていない」の意であり、消せば救出対象そのものを壊す。**この非対称を「一貫性」を理由に揃えてはならない**。どちらもダイアログ本文に Cancel の挙動を明記すること
-- **設定永続化**: **localStorage** にテーマ・UI 拡大率・チャート軸・キャリブレーションを JSON 保存
+- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`notificationsEnabled`・`scriptRunnerCode` / `scriptRunnerCodeBackup`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
+  - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・PyScript のコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
-- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約14MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は PyScriptRunner 含め完全オフライン動作。
+- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は PyScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
   - `CACHE_VERSION` も同プラグインがマニフェスト内容のハッシュへ置換（`'dev'` → 8桁ハッシュ）。デプロイ毎に新キャッシュへ切替わり旧キャッシュは activate で削除
   - 未ビルドの `vite dev` ではプレースホルダのまま（空配列／`'dev'`）。dev は base が `/` で BASE_PATH 不一致のため SW は実質無効、問題なし
@@ -324,6 +334,18 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 | `TSV_FLUSH_INTERVAL_MS` | 60000 | TSV 定期フラッシュ間隔（低レート時の耐久性フォールバック） |
 | `KEEP_LATEST_TRIM_INTERVAL` | 10 | IndexedDB trim を実行する書込み回数間隔 |
 | `PROMISE_CHAIN_RESET_INTERVAL` | 100 | Promise チェーンをリセットする回数間隔 |
+| `TSV_MAX_BUFFERED_ROWS` | 20000 | writer バッファの上限行数。書込みが成功するまで行を捨てないので、失敗し続けるストリームに対する歯止め。超過分は最古から破棄しデータ損失として報告する |
+| `TSV_MIRROR_FLUSH_INTERVAL_MS` | 1000 | OPFS ミラーの追記間隔（ストリームとは独立。起動直後の空ミラーを避けるため） |
+| `TSV_MIRROR_FLUSH_MAX_ROWS` | 100 | 同・行数キャップ |
+| `CHART_INPUT_INTERVAL_MS` | 100 | チャートへの入力レート（固定。ポーリング回数のストライドで実現） |
+| `CHANNEL_CARD_MIN_INTERVAL_MS` | 100 | AI チャネルカードの state 更新下限。ポーリングがこれより速いときだけ絞りが効く |
+| `READOUT_PUBLISH_INTERVAL_MS` | 250 | 実測レート・保存点数を React へ渡す間隔 |
+| `INPUT_READ_MAX_FAILURE_RATIO` | 0.1 | AI 読取り失敗予算をポーリング頻度に比例させる係数（下限は `INPUT_READ_MAX_FAILURES_PER_WINDOW`） |
+| `PRECISION_PROBE_TIMEOUT_MS` | 100 | 精度プローブ1回の読取りタイムアウト |
+| `PRECISION_PROBE_ATTEMPTS` | 3 | 精度プローブの試行回数（全滅で初めて Normal） |
+| `PRECISION_PROBE_CHANNELS` | 2 | 精度プローブで読む先頭チャネル数 |
+
+**UI の選択肢配列はこの表とファイルの対象外**: `POLLING_OPTIONS` / `DEFAULT_POLLING_RATE_MS` / `SAVE_RATE_OPTIONS` / `DEFAULT_SAVE_RATE_MS` / `BAUD_OPTIONS` / `AO_FULL_SCALE_MV` は `App.tsx` にある。`constants.ts` は「挙動を決めるチューニング値」を持つ場所で、ドロップダウンの中身は UI の一部として使う側に置いてある。下の「定数の一元化」ルールはこの区別を前提にしている。
 
 ## 変更時の注意
 
@@ -342,23 +364,26 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
-- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと**（import・localStorage キー・`FloatingWindow` のジオメトリキーに波及するだけで利得がない）。ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
+- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info、`PyScriptRunnerPanel` = PyScript Runner（**メニュー表記は2語**。ドキュメント側で "PyScriptRunner" と1語で書いているのは機能全体を指すときで、メニュー項目を指すときは2語）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
 - **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
 - **`launcher/` は `.gitignore` 対象**。`launcher/mcp.ts`・`launcher/bridge.ts` のような新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe と cloudflared バイナリ（54MB）は**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isViewerMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため、**別 PC から LAN アドレスで開いた瞬間に web 版と誤認して Service Worker を登録し**、no-store ヘッダーで排除したはずのキャッシュ層を復活させる。マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - **MCP ツールを追加する場合は3箇所を揃える**: `launcher/mcp.ts` の `registerTool`（zod スキーマ）、`useMcpBridge.ts` の `dispatch`（実処理・書込みゲート）、`McpPanel.tsx` のツール一覧。実処理は既存のコールバック / SAB を経由させ、新しい状態を作らないこと
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）
-- 定数は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと
+- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと。**UI のドロップダウンの中身**（`POLLING_OPTIONS`・`SAVE_RATE_OPTIONS`・`BAUD_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **AI Raw の表示桁は精度モードで変える**: Extended(f32t) は `toFixed(3)`、Normal(i16t) は整数そのまま。f32 レジスタを読みながら `Math.trunc()` していた頃は、そのモードの存在理由である小数部を表示だけ捨てていた（TSV には常に入っている）
-- **配色ルール（重要）**: 明示的な指示がない限り、新規 UI 要素の色指定は **他と同じ緑（emerald）か通常のグレー（slate）のみ**を使う。青(blue/sky)・琥珀(amber)・赤(red)などを新規に持ち込まない。
+- **配色ルール（重要）**: 基調は **緑（emerald）とグレー（slate）**。状態を伝える必要が無い新規 UI 要素は、この2色だけで組む。
   - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
-  - 通知/注意バナー等も緑（成功）かグレー（中立・ロック等）で表現し、赤や琥珀の警告色は使わない
   - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）
-  - 既存コードの確立済みセマンティック色（危険表示の red、レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを新規要素へ拡張しない
-  - **例外**: ユーザーが「破棄すると取り戻せないデータ」の危険性を伝える**明示的な警告ツールチップ/バナー**に限り amber を使ってよい（v3.18 の Save ボタン注記が初出）。中性的な記述（単なるヘルプ）では使わないこと。**区別はユーザーが付ける**
+  - **状態色は許可されている**（v4.5 で明文化）。禁止されているのは「装飾として色を増やすこと」であって、状態を色で伝えること自体ではない:
+    - **警告 = 黄／橙**（`amber` / `yellow`）。「このままだと困ったことになる」「取り戻せないデータがある」の類。文字/枠 = `text-amber-600 dark:text-amber-400`、塗り = `bg-amber-500`
+    - **警戒・危険・エラー = 赤**（`red`）。実際に失敗した、または操作すると壊れるもの。ドット = `bg-red-500`、文字 = `text-red-600 dark:text-red-400`（`ScriptStatusBar` / `AppStatusBar` のエラー表示が基準トークン）
+    - **成功・正常 = 緑**、**中立・ロック・無効 = グレー**
+  - **色は意味に対して一意に保つこと**。同じ「エラー」を場所によって赤とグレーで出し分けない。逆に、中立的な説明文（ただのヘルプ、機能の解説）に警告色を使わない — **警告かどうかの区別はユーザーが付ける**（v3.18 の Save ボタン注記が amber の初出）
+  - 上記4色の外（青/sky・紫・ピンク等）を**装飾目的で新規に持ち込まない**。既存の確立済みセマンティック色（レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを別の意味へ流用しない
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
 - **キャリブレーションのロック**: PyScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `set_ai_tare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **Input Calibrator の2方式**（`InputCalibratorPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) を**1ウィンドウ**で扱う。チャネル選択は CH00-15 の単一ドロップダウンで、どちらのフロントエンドかは ch 番号（AI マップの前半/後半）から決まる。チップ種別を先に選ばせるタブは置かない（ch の属性であって、ユーザーが選ぶモードではないため）。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。

@@ -78,6 +78,7 @@ import {
   requestPersistentStorage,
 } from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
+import { clearStatusSource, postStatus, reportError } from './utils/appStatus';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import {
   clearBackgroundTimer,
@@ -99,6 +100,7 @@ import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
+import { AppStatusBar } from './components/AppStatusBar';
 import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
@@ -541,6 +543,13 @@ function App() {
   const aoRawSourceRef = useRef<number[]>(Array(AO_CHANNELS).fill(0));
   const pollTimer = useRef<number | undefined>(undefined);
   const pollingInProgressRef = useRef(false);
+  // Bumped on every connect and disconnect. pollOnce() captures it and refuses to
+  // write shared state if it has moved, so a poll still on the wire when the user
+  // disconnects cannot land in the next session's state.
+  const pollGenerationRef = useRef(0);
+  // The poll currently in flight, so handleDisconnect can await it and make the
+  // ordering deterministic rather than merely harmless.
+  const pollInFlightRef = useRef<Promise<void> | null>(null);
   const lastSentAoRawRef = useRef<number[] | null>(null);
   const outputHoldingFailureTimestampsRef = useRef<number[]>([]);
   const inputReadFailureTimestampsRef = useRef<number[]>([]);
@@ -566,7 +575,8 @@ function App() {
   // True while the save-file picker is open. On Android the picker is a system
   // activity that backgrounds (and can freeze) the page for as long as it is
   // shown, which would blow the deadline of any Modbus transfer started
-  // meanwhile. Polling keeps its schedule but skips issuing requests.
+  // meanwhile. Polling keeps its schedule but skips issuing requests — but only
+  // while the page is actually hidden; see runPollingLoop.
   const filePickerOpenRef = useRef(false);
   const acquiringRef = useRef(false);
   const aiCalibrationRef = useRef<AiCalibration[]>(aiCalibration);
@@ -654,16 +664,20 @@ function App() {
     }
   };
 
-  const setStatus = useCallback((_msg: string) => {
-    // Status display removed from header
+  // Progress/announcement channel. This was a no-op ("Status display removed
+  // from header") while remaining the only user-facing message path in the app,
+  // so every connect failure, TSV write error and calibration parse error went
+  // nowhere. Failures now go through reportError() instead — see AppStatusBar.
+  const setStatus = useCallback((msg: string) => {
+    postStatus('info', msg, 'app');
   }, []);
 
   useEffect(() => {
     dataStorage.init().catch((err) => {
       console.error('Failed to initialize IndexedDB:', err);
-      setStatus('IndexedDB initialization failed');
+      reportError('storage', err, 'IndexedDB initialization failed');
     });
-  }, [setStatus]);
+  }, []);
 
   // Offer back any run whose picked file never closed cleanly. Blocking
   // window.confirm() rather than in-app UI: this has to be settled before the
@@ -1446,10 +1460,10 @@ function App() {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
         // Card values are published at CHANNEL_CARD_MIN_INTERVAL_MS at most, and
-        // only when the poll interval is shorter than that — i.e. at the 20 and
+        // only when the poll interval is shorter than that — i.e. at the 25 and
         // 50 ms settings. There one render per sample is not affordable: every
         // publish re-renders 40 channel cards between two Modbus transfers, and
-        // nobody can read a number changing 20 times a second anyway.
+        // nobody can read a number changing 40 times a second anyway.
         const cardsDue =
           pollIntervalRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
           timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;
@@ -1503,9 +1517,9 @@ function App() {
       }
     } catch (err) {
       console.error('[App] save update failed', err);
-      setStatus(`TSV write error: ${(err as Error).message}`);
+      reportError('save', err, 'TSV write error');
     }
-  }, [setStatus]);
+  }, []);
 
   /** One AO block write and its single retry. Both read the newest values. */
   const writeAoBlockOnce = useCallback(async () => {
@@ -1589,6 +1603,18 @@ function App() {
   const pollOnce = useCallback(async () => {
     if (!clientRef.current) return;
     const client = clientRef.current;
+    // Which connection this poll belongs to. It captures `client` above, so it
+    // survives clientRef.current being nulled — and stopPolling() only clears
+    // the timer, it never awaits a poll already on the wire. Without this fence,
+    // a poll in flight when the user hits Disconnect lands during
+    // handleDisconnect's awaits and writes into state that has just been reset:
+    // it overwrote aiRawSourceRef (so the channel cards showed a reading after
+    // disconnecting), re-armed batchUpdateTimer that stopPolling had just
+    // cleared, pushed a point into the cleared dataBufferRef and IndexedDB (so
+    // the charts drew a one-point trace instead of "No data"), and repopulated
+    // inputReadFailureTimestampsRef so the *next* connection started out already
+    // holding failure timestamps.
+    const generation = pollGenerationRef.current;
     let firstError: Error | null = null;
     const pruneAndCountAI = () =>
       pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
@@ -1649,6 +1675,15 @@ function App() {
           );
         }
       }
+    }
+
+    // Everything above only read; everything below mutates shared state. If the
+    // connection this poll belonged to is gone, stop here — the failure
+    // timestamps pushed on the read paths above are pruned by window anyway, and
+    // handleDisconnect clears them after awaiting the in-flight poll.
+    if (generation !== pollGenerationRef.current) {
+      console.info('[App] discarding poll result from a previous connection', { generation });
+      return;
     }
 
     if (aiSourceValues) {
@@ -1730,13 +1765,18 @@ function App() {
     // the write retry limiter was tripped when it arrived.
     void doAoWriteAsync();
 
-    setStatus(firstError ? firstError.message : 'Polling');
+    // Reported as a transition, not per poll. This runs 10-40 times a second,
+    // so posting unconditionally would re-render the status bar at the polling
+    // rate on the thread that must not miss a Modbus deadline. reportError
+    // collapses repeats of an identical message, and clearStatusSource only
+    // emits when there was something to clear.
+    if (firstError) reportError('link', firstError);
+    else clearStatusSource('link');
   }, [
     enqueueDisplayUpdate,
     enqueueSaveUpdate,
     pruneFailuresInWindow,
     waitMs,
-    setStatus,
     doAoWriteAsync,
     scriptRunner.aiRawShareRef,
     scriptRunner.aiPhysicalShareRef,
@@ -1752,10 +1792,26 @@ function App() {
       idealScheduleRef.current = loopStart;
     }
     try {
-      // Skip the request while the save-file picker holds the foreground; the
-      // schedule below still advances, so polling resumes on its own tick.
-      if (!filePickerOpenRef.current) {
-        await pollOnce();
+      // Skip the request only when the picker has actually backgrounded the
+      // page. This used to skip for as long as the picker was open at all,
+      // which cost the user every sample taken while they were finding a folder
+      // — on desktop that is a minute-long hole in the middle of a run, with
+      // nothing on screen saying why, because the picker there is an OS dialog
+      // that leaves the page running and visible.
+      //
+      // `document.hidden` is exactly the discriminator: a desktop file dialog
+      // does not change the tab's visibility, while Android's picker is a
+      // separate activity that does. And where the page really is frozen the
+      // skip was never doing the work anyway — a frozen page issues no polls
+      // because no timer fires.
+      if (!(filePickerOpenRef.current && document.hidden)) {
+        const inFlight = pollOnce();
+        pollInFlightRef.current = inFlight;
+        try {
+          await inFlight;
+        } finally {
+          if (pollInFlightRef.current === inFlight) pollInFlightRef.current = null;
+        }
       }
     } finally {
       pollingInProgressRef.current = false;
@@ -1881,6 +1937,9 @@ function App() {
       modbusPrecision,
       connected,
     });
+    // Fence off anything still owed to a previous session, so a straggler cannot
+    // write into the connection being set up here.
+    pollGenerationRef.current += 1;
     let pendingClient: WebSerialModbusClient | null = null;
     try {
       if (clientRef.current) {
@@ -1949,6 +2008,9 @@ function App() {
       setConnected(true);
       acquiringRef.current = true;
       setAcquiring(true);
+      // Drop the previous session's link errors: they describe a connection
+      // that no longer exists.
+      clearStatusSource('link');
       // Always names the mode, including when it was chosen by the probe: an
       // Auto that got it wrong has to be visible somewhere the user looks.
       setStatus(
@@ -1973,10 +2035,13 @@ function App() {
       setAcquiring(false);
 
       if (err instanceof DOMException && err.name === 'NotFoundError') {
+        // The user closed the port picker. Not a failure.
         setStatus('Device selection cancelled');
         return;
       }
-      setStatus((err as Error).message);
+      // The worst of the swallowed errors: a wrong baud rate or slave ID left
+      // the button reading "Connect" with nothing said anywhere.
+      reportError('link', err, 'Connect failed');
     } finally {
       connectInProgressRef.current = false;
     }
@@ -1989,7 +2054,21 @@ function App() {
     scriptRunner.stopScriptRunner('Stopped');
     acquiringRef.current = false;
     setAcquiring(false);
+    // Retire this connection's polls before anything is reset. stopPolling()
+    // cancels the timer but cannot recall a request already on the wire; from
+    // here on that poll's result is discarded rather than written.
+    pollGenerationRef.current += 1;
     stopPolling();
+    // Then wait for it, so the cleanup below runs after it has finished rather
+    // than merely being immune to it.
+    const inFlightPoll = pollInFlightRef.current;
+    if (inFlightPoll) {
+      try {
+        await inFlightPoll;
+      } catch (err) {
+        console.warn('In-flight poll failed during disconnect:', err);
+      }
+    }
     clearBackgroundTimer(flushTimerRef.current);
     flushTimerRef.current = undefined;
     const writerToClose = tsvWriterRef.current;
@@ -2207,7 +2286,11 @@ function App() {
       const data = JSON.parse(text) as Record<string, unknown>;
 
       if (data.type !== 'Calibration') {
-        setStatus('Invalid calibration file format: missing "type": "Calibration" field');
+        postStatus(
+          'error',
+          'Invalid calibration file format: missing "type": "Calibration" field',
+          'calibration',
+        );
         return;
       }
 
@@ -2232,8 +2315,9 @@ function App() {
       setAiCalibration(loadedCalibration);
       setAiChannels((prev) => applyCalibrationToChannels(prev, loadedCalibration));
       setStatus('Calibration loaded successfully');
+      clearStatusSource('calibration');
     } catch (err) {
-      setStatus((err as Error).message);
+      reportError('calibration', err, 'Failed to load calibration file');
     }
   };
 
@@ -2259,11 +2343,11 @@ function App() {
           // error" would have the user stop a healthy run to investigate.
           if (severity === 'warning') {
             console.warn('TSV worker warning:', message);
-            setStatus(message);
+            postStatus('info', message, 'save');
             return;
           }
           console.error('TSV worker error:', message);
-          setStatus(`TSV write error: ${message}`);
+          postStatus('error', `TSV write error: ${message}`, 'save');
         },
         () => {
           filePickerOpenRef.current = false;
@@ -2314,6 +2398,7 @@ function App() {
         lastSaveCountPublishRef.current = 0;
         setSavePointCount(0);
         setStatus('Saving data to file');
+        clearStatusSource('save');
       } catch (setupErr) {
         // Post-creation setup failed (e.g. IndexedDB clear): close the writer
         // so the worker and its open file are never orphaned.
@@ -2322,9 +2407,10 @@ function App() {
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
+        // The user cancelled the file picker. Not a failure.
         return;
       }
-      setStatus((err as Error).message);
+      reportError('save', err, 'Failed to start saving');
     } finally {
       // Belt and braces: onPickerSettled already cleared this, but never leave
       // polling suspended if createTsvWriter threw before reaching the picker.
@@ -2536,10 +2622,10 @@ function App() {
                   {/* The file the picker creates stays 0 bytes until the writer
                       closes it: a FileSystemWritableFileStream buffers into a
                       swap file and only swings it onto the target on close().
-                      Nothing warns about that anywhere else — setStatus() is a
-                      no-op and the header has no room for a permanent notice —
-                      so it is said here, on the two buttons that bracket the
-                      run. No portal/tooltip library: the sticky header (z-10,
+                      Nothing warns about that anywhere else — AppStatusBar
+                      reports failures, not standing properties of the format,
+                      and the header has no room for a permanent notice — so it
+                      is said here, on the two buttons that bracket the run. No portal/tooltip library: the sticky header (z-10,
                       positioned) is the nearest stacking context and clips
                       nothing, so a plain absolute box paints over the page.
                       Keep the last sentence as-is even once a crash-recovery
@@ -2945,6 +3031,11 @@ function App() {
           lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
         />
       )}
+
+      {/* Last, so it stacks above the PyScript bar. Unlike that one it is
+          rendered on a viewer too: a viewer can still lose its feed, and
+          nothing else on that window would say so. */}
+      <AppStatusBar />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
@@ -49,6 +50,32 @@ export function ModbusConfigPanel({
   resolvedPrecisionLabel,
   connected,
 }: ModbusConfigPanelProps) {
+  // Slave ID is edited as free text and only committed on blur/Enter.
+  // Validating per keystroke and returning without a setState left the
+  // controlled input snapping back to the old value, which made the field
+  // uneditable: backspace from "1" did nothing (the empty string failed the
+  // digits test), and any value reached through an out-of-range prefix — 250 on
+  // the way to typing something else — could not be passed through.
+  const [slaveIdDraft, setSlaveIdDraft] = useState(String(slaveId));
+
+  // Follow the committed value when it changes from outside (a fresh mount with
+  // a persisted setting, or a reset elsewhere) without fighting the user's
+  // in-progress typing.
+  useEffect(() => {
+    setSlaveIdDraft(String(slaveId));
+  }, [slaveId]);
+
+  const commitSlaveId = () => {
+    const parsed = parseInt(slaveIdDraft.trim(), 10);
+    if (!Number.isFinite(parsed)) {
+      setSlaveIdDraft(String(slaveId));
+      return;
+    }
+    const clamped = Math.min(247, Math.max(1, parsed));
+    setSlaveIdDraft(String(clamped));
+    if (clamped !== slaveId) onSlaveIdChange(clamped);
+  };
+
   // "Connection Config", not "Modbus Config": the panel also covers the serial
   // link and the polling rate, and the transport may be WebSerial or WebUSB.
   return (
@@ -71,13 +98,11 @@ export function ModbusConfigPanel({
           <label className="block text-xs text-slate-600 dark:text-slate-400">Slave ID</label>
           <input
             type="number"
-            value={slaveId}
-            onChange={(e) => {
-              const rawValue = e.target.value.trim();
-              if (!/^\d+$/.test(rawValue)) return;
-              const next = parseInt(rawValue, 10);
-              if (next < 1 || next > 247) return;
-              onSlaveIdChange(next);
+            value={slaveIdDraft}
+            onChange={(e) => setSlaveIdDraft(e.target.value)}
+            onBlur={commitSlaveId}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitSlaveId();
             }}
             className="w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             min={1}

@@ -17,7 +17,7 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // Raised 1024 → 2048 in v3.1, funded by disabling the scattergl hover pick-index
 // (`hoverinfo: 'skip'`, see ChartPanel.tsx): that index is rebuilt per update and
 // its cost scales with this constant, so removing it buys headroom at the same
-// ~5 fps redraw rate. Deliberately conservative — the headroom has not been
+// redraw rate (2 fps — see CHART_REDRAW_INTERVAL_MS). Deliberately conservative — the headroom has not been
 // measured on-device yet (docs/chart-library-comparison.md §11-1), so this is a
 // doubling rather than the 8192 the hardware may well allow.
 export const CHART_MAX_POINTS = 2048;
@@ -142,6 +142,13 @@ export const TSV_FLUSH_INTERVAL_MS = 60_000;
 // periodic main-thread hitch at high sampling rates (e.g. 50/100 Hz). The
 // interval remains the low-sampling-rate durability fallback.
 export const TSV_FLUSH_MAX_ROWS = 500;
+// Hard ceiling on rows held in the writer's buffer. Rows are only dropped from
+// the buffer once their write has actually resolved, so a stream that keeps
+// rejecting would otherwise grow it without limit until the worker died — taking
+// the whole run's unwritten tail with it. At the cap the oldest rows are dropped
+// and reported as data loss, which is the honest outcome: something is gone, and
+// the user is told which end of the file it was.
+export const TSV_MAX_BUFFERED_ROWS = 20_000;
 // Cadence of the OPFS crash-recovery mirror, which the writer worker drives on
 // its own timer rather than piggy-backing on the picked file's flush.
 //

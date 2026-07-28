@@ -15,11 +15,9 @@
 | Android Chrome | **89+** | 同上 |
 
 > ただし File System Access API は Chrome / Edge **86+**、Wake Lock API は **84+** が必要です。これらはいずれもずっと以前のリリースなので、現在インストールされている版を使っていれば問題になりません。古い環境を除き最新版の使用を推奨します。
-> SharedArrayBuffer（PyScriptRunner 用）は COOP/COEP ヘッダーでクロスオリジン分離された環境でのみ利用できます。本アプリの配信サーバーはこれを付与済みです。
+> SharedArrayBuffer（PyScriptRunner 用）は COOP/COEP ヘッダーでクロスオリジン分離された環境でのみ利用できます。デスクトップ版のサーバーはこれを直接付与します。Web 版（GitHub Pages）はレスポンスヘッダーを設定できないため Service Worker が付与しており、**初回訪問で SW がインストールされ制御を開始したあと**にクロスオリジン分離が有効になります（PyScriptRunner が最初だけ使えない場合はリロードしてください）。
 
 ---
-
-## 主な機能
 
 ## 主な機能
 
@@ -33,9 +31,10 @@
 | **リアルタイムチャート** | Plotly.js による4画面表示。X/Y 軸を Time / Raw / Physical / Parameter（16ch）から選択。非保存時は直近 768 点（≒77秒）のプレビュー、保存中は保存開始〜現在の全区間を 2048 点へ間引いて表示。描画バックエンド（GPU/CPU）バッジ表示 |
 | **データ保存** | File System Access API による TSV ストリーミング保存（Web Worker 書込み）。書き込み周期は Save Rate に従います。IndexedDB でセッション中データを FIFO 管理 |
 | **クラッシュ復旧** | 保存中の全行を OPFS へ同期ミラーします（ピッカーで選んだファイルは Stop Save まで 0 バイトのため）。異常終了後の初回起動で復旧を提示し、`<元の名前>_recovered.tsv` としてダウンロードします。提示を Cancel すると復旧コピーは削除されます |
-| **PyScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。`set_ao()` / `set_param()` / Tare を制御、`set_notify()` で通知 |
+| **PyScriptRunner** | Pyodide（Web Worker + SharedArrayBuffer）で Python 実行。読み取りは `get_ai_raw()` / `get_ai_phy()` / `get_ao()` / `get_param()`、書き込みは `set_ao()` / `set_param()` / `set_ai_tare()`、`set_notify()` で通知（全 API 一覧はパネル内にも表示） |
 | **バックグラウンド耐性** | ポーリング・チャート反映・TSV フラッシュのタイマーを専用 Worker で駆動。ウィンドウを最小化してもブラウザのタイマー抑制（1Hz→1分に1回）で計測が止まりません。デスクトップ版はブラウザ起動フラグでも抑制を無効化 |
-| **通知** | PyScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ） |
+| **エラー表示** | 接続失敗・通信エラー・TSV 書込み失敗などを画面下端のステータスバーに表示します。同じ内容は回数にまとめられ、復旧すると自動で消えます。`+N` から履歴（Status Log）を開けます |
+| **通知** | PyScriptRunner の開始・停止・完了・エラーと `set_notify(msg)` を OS 通知で表示（Application Info でオン/オフ）。アプリのエラーも同じ経路で通知します |
 | **UI 拡大率** | 画面全体を 50〜200%（11 段）で拡大・縮小し、その端末に記憶します（Menu ヘッダーの `[-] [100%] [+]`。ダーク/ライト切替も同じ場所）。ブラウザのズームが使えない・保持されない環境（Android のインストール済み PWA など）向け |
 | **MCP サーバー** | デスクトップ版限定。生成 AI クライアントから計測値の読み取り・AO 制御・Python 投入が可能（書込みは既定オフ） |
 | **リモート監視** | デスクトップ版限定。他 PC やスマホのブラウザから、チャートとチャネル値を**閲覧のみ**できます（LAN 直接 / インターネット経由・QR 表示・既定オフ） |
