@@ -146,7 +146,7 @@ export function AppInfoPanel({
               <span>
                 <span className="font-semibold">Desktop notifications</span>
                 <span className="block text-xs text-slate-500 dark:text-slate-400">
-                  PyScript Runner events and <span className="font-mono">set_notify()</span> messages.
+                  Script Runner events and <span className="font-mono">SetNotify()</span> messages.
                 </span>
               </span>
               <input

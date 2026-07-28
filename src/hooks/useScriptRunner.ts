@@ -3,13 +3,14 @@ import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
 import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
 import { notify, NOTIFY_TAG } from '../utils/notifications';
+import {
+  DEFAULT_SCRIPT_LANGUAGE,
+  SCRIPT_LANGUAGES,
+  isScriptLanguageId,
+  type ScriptLanguageId,
+} from '../utils/scriptLanguages';
 
-const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
-const SCRIPT_RUNNER_BACKUP_KEY = 'scriptRunnerCodeBackup';
-
-// Who started the current (or most recent) run. The MCP bridge overwrites the
-// editor contents when it runs a script, so the UI needs to say so.
-export type ScriptSource = 'user' | 'mcp';
+const SCRIPT_LANGUAGE_STORAGE_KEY = 'scriptRunnerLanguage';
 
 // How many log lines are kept. A `while True:` loop that prints every iteration
 // would grow without bound otherwise; the log is a tail, not a transcript.
@@ -25,15 +26,13 @@ export type ScriptLogEntry = {
 export type ScriptOutcome = 'idle' | 'running' | 'completed' | 'stopped' | 'error';
 
 /**
- * Result of the current (or most recent) run. This exists mainly for the MCP
- * bridge: run_script hands the script to a worker and returns immediately, so
- * without a record of how the run ended, a failing script looked exactly like a
- * successful one to the caller. `runId` lets a caller tell its own run from a
- * later one started by someone else.
+ * Result of the current (or most recent) run. The runner hands the script to a
+ * worker and returns immediately, so without a record of how the run ended a
+ * failing script would look exactly like a successful one. `runId` lets a
+ * consumer tell one run from the next.
  */
 export type ScriptRunInfo = {
   runId: number;
-  source: ScriptSource;
   outcome: ScriptOutcome;
   startedAt: number | null;
   endedAt: number | null;
@@ -45,7 +44,6 @@ export type ScriptRunInfo = {
 
 const IDLE_RUN: ScriptRunInfo = {
   runId: 0,
-  source: 'user',
   outcome: 'idle',
   startedAt: null,
   endedAt: null,
@@ -58,15 +56,15 @@ export function useScriptRunner(
   onAiCalibTare: (ch: number) => void,
 ) {
   const scriptRunnerSupported = typeof SharedArrayBuffer !== 'undefined' && window.crossOriginIsolated;
-  const [scriptCode, setScriptCode] = useState(() => {
-    const stored = readJsonStorage<string>(SCRIPT_RUNNER_STORAGE_KEY);
-    return stored ?? getDefaultScript();
+  const [scriptLanguage, setScriptLanguageState] = useState<ScriptLanguageId>(() => {
+    const stored = readJsonStorage<string>(SCRIPT_LANGUAGE_STORAGE_KEY);
+    return isScriptLanguageId(stored) ? stored : DEFAULT_SCRIPT_LANGUAGE;
   });
+  // Each language keeps its own editor contents under its own key. Switching
+  // languages to look at an example must not destroy the script someone has
+  // been writing in the other one.
+  const [scriptCode, setScriptCode] = useState(() => loadCode(scriptLanguage));
   const [scriptRunning, setScriptRunning] = useState(false);
-  const [scriptSource, setScriptSource] = useState<ScriptSource>('user');
-  const [hasScriptBackup, setHasScriptBackup] = useState(
-    () => readJsonStorage<string>(SCRIPT_RUNNER_BACKUP_KEY) !== null,
-  );
   const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
     scriptRunnerSupported
       ? 'Idle'
@@ -75,13 +73,18 @@ export function useScriptRunner(
   const [scriptLog, setScriptLog] = useState<ScriptLogEntry[]>([]);
   const [scriptRun, setScriptRun] = useState<ScriptRunInfo>(IDLE_RUN);
   const scriptExecutingRef = useRef(false);
-  // Mirrored in refs because the MCP bridge reads them from a WebSocket handler,
-  // outside React's render cycle, and must never see a stale render's copy.
+  // Mirrored in refs because worker message handlers run outside React's render
+  // cycle and must never observe a stale render's copy.
   const scriptLogRef = useRef<ScriptLogEntry[]>([]);
   const scriptRunRef = useRef<ScriptRunInfo>(IDLE_RUN);
   const runIdRef = useRef(0);
-  const runWaitersRef = useRef<{ resolve: (info: ScriptRunInfo) => void; timer: number }[]>([]);
-  const pyWorkerRef = useRef<Worker | null>(null);
+  // One worker per language, kept alive once created. Pyodide costs seconds to
+  // boot; terminating it because someone glanced at the BASIC example would
+  // make switching back feel broken. The BASIC and Lua workers are cheap enough
+  // that the same policy costs nothing.
+  const workersRef = useRef(new Map<ScriptLanguageId, Worker>());
+  /** Which language's worker is executing, so Stop reaches the right one. */
+  const runningLanguageRef = useRef<ScriptLanguageId | null>(null);
   const interruptBufferRef = useRef<Uint8Array | null>(null);
   const aiRawShareRef = useRef<Float32Array | null>(null);
   const aiPhysicalShareRef = useRef<Float32Array | null>(null);
@@ -89,6 +92,8 @@ export function useScriptRunner(
   const paramShareRef = useRef<Float32Array | null>(null);
   const scriptCodeRef = useRef(scriptCode);
   scriptCodeRef.current = scriptCode;
+  const scriptLanguageRef = useRef(scriptLanguage);
+  scriptLanguageRef.current = scriptLanguage;
 
   const appendLog = useCallback((stream: ScriptLogEntry['stream'], text: string) => {
     const trimmed = text.replace(/\s+$/, '');
@@ -104,9 +109,7 @@ export function useScriptRunner(
     setScriptLog([]);
   }, []);
 
-  // A run ends exactly once. Every waiter (an MCP run_script asked to wait for
-  // the outcome) is released here, so a script that crashes one millisecond in
-  // reports the crash instead of timing out.
+  // A run ends exactly once.
   const settleRun = useCallback(
     (outcome: Exclude<ScriptOutcome, 'idle' | 'running'>, error: string | null = null, traceback: string | null = null) => {
       const info: ScriptRunInfo = {
@@ -118,21 +121,14 @@ export function useScriptRunner(
       };
       scriptRunRef.current = info;
       setScriptRun(info);
-      const waiters = runWaitersRef.current;
-      runWaitersRef.current = [];
-      for (const waiter of waiters) {
-        clearBackgroundTimer(waiter.timer);
-        waiter.resolve(info);
-      }
     },
     [],
   );
 
-  const beginRun = useCallback((source: ScriptSource): ScriptRunInfo => {
+  const beginRun = useCallback((): ScriptRunInfo => {
     runIdRef.current += 1;
     const info: ScriptRunInfo = {
       runId: runIdRef.current,
-      source,
       outcome: 'running',
       startedAt: Date.now(),
       endedAt: null,
@@ -144,34 +140,10 @@ export function useScriptRunner(
     return info;
   }, []);
 
-  /**
-   * Resolve when the current run finishes, or after `timeoutMs` with the run
-   * still marked 'running' (a control loop is supposed to keep going — that is
-   * an answer, not a failure).
-   *
-   * Background timer: the caller is the MCP bridge, i.e. an agent driving this
-   * window from outside it, and the window it is driving is very often
-   * minimised. A throttled timeout would turn `run_script(wait_ms=5000)` into a
-   * one-minute stall with nothing to indicate why.
-   */
-  const waitForScriptRun = useCallback((timeoutMs: number): Promise<ScriptRunInfo> => {
-    if (scriptRunRef.current.outcome !== 'running') return Promise.resolve(scriptRunRef.current);
-    return new Promise<ScriptRunInfo>((resolve) => {
-      const entry = {
-        resolve,
-        timer: setBackgroundTimeout(() => {
-          runWaitersRef.current = runWaitersRef.current.filter((w) => w !== entry);
-          resolve(scriptRunRef.current);
-        }, timeoutMs),
-      };
-      runWaitersRef.current.push(entry);
-    });
-  }, []);
-
   // Allocate the shared buffers up front, independently of the Pyodide worker.
   //
   // These are not only the worker's data channel: the polling loop publishes AI
-  // values into them every cycle and the MCP bridge (desktop launcher) reads and
+  // values into them every cycle, and the worker reads and
   // writes the very same memory. Allocating them lazily with the worker would
   // mean AI/AO/Parameter values are invisible to anything but ScriptRunner until
   // a script is run once. Allocation is a few hundred bytes and the worker (the
@@ -200,11 +172,12 @@ export function useScriptRunner(
     ensureShares();
   }, [ensureShares]);
 
-  const ensureWorkerReady = useCallback((): Worker => {
-    if (pyWorkerRef.current) return pyWorkerRef.current;
+  const ensureWorkerReady = useCallback((language: ScriptLanguageId): Worker => {
+    const existing = workersRef.current.get(language);
+    if (existing) return existing;
     if (!ensureShares()) {
       throw new Error(
-        'PyScriptRunner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
+        'Script Runner requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
       );
     }
 
@@ -214,7 +187,16 @@ export function useScriptRunner(
     const paramSab = paramShareRef.current!.buffer as SharedArrayBuffer;
     const intSab = interruptBufferRef.current!.buffer as SharedArrayBuffer;
 
-    const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
+    // Static `new URL(...)` literals: this is how the bundler finds a worker
+    // entry point and emits it, so the path cannot come from the table in
+    // scriptLanguages.ts.
+    const worker =
+      language === 'basic'
+        ? new Worker(new URL('../basicWorker.ts', import.meta.url), { type: 'module' })
+        : language === 'lua'
+          ? new Worker(new URL('../luaWorker.ts', import.meta.url), { type: 'module' })
+          : new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
+    const runnerName = SCRIPT_LANGUAGES[language].label;
     worker.onmessage = (event: MessageEvent) => {
       const message = event.data as
         | { type: 'set_ao'; ch: number; data: number }
@@ -237,38 +219,42 @@ export function useScriptRunner(
         // set_notify(msg). Logged first: the log is the record, the toast is
         // only the interruption, and the user may have turned it off.
         appendLog('system', `notify: ${message.message}`);
-        notify('PyScriptRunner', message.message, { tag: NOTIFY_TAG.scriptMessage });
+        notify(`${runnerName} Runner`, message.message, { tag: NOTIFY_TAG.scriptMessage });
       } else if (message.type === 'done') {
         scriptExecutingRef.current = false;
+        runningLanguageRef.current = null;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Completed');
         appendLog('system', message.message ?? 'Completed');
-        notify('PyScriptRunner', 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
+        notify(`${runnerName} Runner`, 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('completed');
       } else if (message.type === 'interrupted') {
         scriptExecutingRef.current = false;
+        runningLanguageRef.current = null;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Stopped');
         appendLog('system', message.message ?? 'Stopped');
-        notify('PyScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
+        notify(`${runnerName} Runner`, 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('stopped');
       } else if (message.type === 'error') {
         scriptExecutingRef.current = false;
+        runningLanguageRef.current = null;
         setScriptRunning(false);
         setScriptRunnerStatus(`Error: ${message.message}`);
         appendLog('stderr', message.traceback ?? message.message);
         // Sticky: a run that died is the one event worth leaving on screen
         // until someone actually looks at it.
-        notify('PyScriptRunner error', message.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
+        notify(`${runnerName} Runner error`, message.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
         settleRun('error', message.message, message.traceback ?? null);
       }
     };
     worker.onerror = (event) => {
       scriptExecutingRef.current = false;
+      runningLanguageRef.current = null;
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${event.message}`);
       appendLog('stderr', event.message);
-      notify('PyScriptRunner error', event.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
+      notify(`${runnerName} Runner error`, event.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', event.message);
     };
 
@@ -281,17 +267,23 @@ export function useScriptRunner(
       intSab,
     });
 
-    pyWorkerRef.current = worker;
+    workersRef.current.set(language, worker);
     return worker;
-  }, [scriptRunnerSupported, setAo, onAiCalibTare, appendLog, settleRun]);
+  }, [ensureShares, setAo, onAiCalibTare, appendLog, settleRun]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
     if (interruptBufferRef.current) {
       interruptBufferRef.current[0] = 2;
-      pyWorkerRef.current?.postMessage({ type: 'interrupt' });
+      // Only the worker that is actually executing. Every runtime reads the
+      // shared byte directly, but the message is what covers the case where the
+      // runtime has not started yet (Pyodide still booting), and sending it to
+      // an idle worker would arm a Stop for that worker's next run.
+      const language = runningLanguageRef.current;
+      if (language) workersRef.current.get(language)?.postMessage({ type: 'interrupt' });
     }
     const wasRunning = scriptExecutingRef.current;
     scriptExecutingRef.current = false;
+    runningLanguageRef.current = null;
     setScriptRunning(false);
     setScriptRunnerStatus(nextStatus);
     if (wasRunning) {
@@ -300,39 +292,38 @@ export function useScriptRunner(
       // moment later; both carry the same tag, so the second replaces the first
       // rather than stacking. Notifying here too is what covers the case where
       // no answer comes back at all (Pyodide was still booting).
-      notify('PyScriptRunner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
+      notify('Script Runner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
       settleRun('stopped');
     }
   }, [appendLog, settleRun]);
 
   // `codeOverride` exists because a caller that has just set new code cannot
-  // rely on the `scriptCode` state having been applied yet (see runScriptFromMcp).
-  const startScriptRunner = useCallback((source: ScriptSource, codeOverride?: string): ScriptRunInfo => {
+  // rely on the `scriptCode` state having been applied yet.
+  const startScriptRunner = useCallback((codeOverride?: string): ScriptRunInfo => {
     if (scriptExecutingRef.current) return scriptRunRef.current;
     // Each run starts from a clean log: mixing the output of two runs is how a
     // caller ends up reading a stale error as if it were its own.
     clearScriptLog();
-    const info = beginRun(source);
+    const info = beginRun();
+    const language = scriptLanguageRef.current;
     try {
-      const worker = ensureWorkerReady();
+      const worker = ensureWorkerReady(language);
       if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;
       scriptExecutingRef.current = true;
+      runningLanguageRef.current = language;
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
       worker.postMessage({ type: 'run', code: codeOverride ?? scriptCodeRef.current });
-      notify(
-        'PyScriptRunner',
-        source === 'mcp' ? 'Script started from MCP.' : 'Script started.',
-        { tag: NOTIFY_TAG.scriptRun },
-      );
+      notify(`${SCRIPT_LANGUAGES[language].label} Runner`, 'Script started.', { tag: NOTIFY_TAG.scriptRun });
       return info;
     } catch (err) {
       const text = (err as Error).message;
       scriptExecutingRef.current = false;
+      runningLanguageRef.current = null;
       setScriptRunning(false);
       setScriptRunnerStatus(`Error: ${text}`);
       appendLog('stderr', text);
-      notify('PyScriptRunner error', text, { tag: NOTIFY_TAG.scriptRun, sticky: true });
+      notify('Script Runner error', text, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', text);
       return scriptRunRef.current;
     }
@@ -343,68 +334,57 @@ export function useScriptRunner(
       stopScriptRunner('Stopped');
       return;
     }
-    setScriptSource('user');
-    startScriptRunner('user');
+    startScriptRunner();
   }, [scriptRunning, startScriptRunner, stopScriptRunner]);
 
-  // Run code submitted over the MCP bridge. The editor is a single shared
-  // buffer, so the user's code is saved to a backup slot first and can be
-  // restored from the ScriptRunner panel.
-  const runScriptFromMcp = useCallback((code: string): ScriptRunInfo => {
-    if (scriptExecutingRef.current) {
-      throw new Error('A script is already running. Call stop_script first.');
-    }
-    writeJsonStorage(SCRIPT_RUNNER_BACKUP_KEY, scriptCodeRef.current);
-    setHasScriptBackup(true);
-    scriptCodeRef.current = code;
-    setScriptCode(code);
-    setScriptSource('mcp');
-    return startScriptRunner('mcp', code);
-  }, [startScriptRunner]);
-
-  const restoreScriptBackup = useCallback(() => {
-    const backup = readJsonStorage<string>(SCRIPT_RUNNER_BACKUP_KEY);
-    if (backup === null) return;
-    scriptCodeRef.current = backup;
-    setScriptCode(backup);
-  }, []);
-
   const clearScriptCode = useCallback(() => {
-    setScriptCode(getDefaultScript());
+    setScriptCode(SCRIPT_LANGUAGES[scriptLanguageRef.current].defaultScript);
+  }, []);
+
+  /**
+   * Switch language, saving the outgoing editor contents and loading the
+   * incoming ones.
+   *
+   * Refused mid-run: the running worker belongs to the old language, and
+   * swapping the editor and the Run button out from under it would leave Stop
+   * pointing at a script the user can no longer see.
+   */
+  const setScriptLanguage = useCallback((next: ScriptLanguageId) => {
+    const current = scriptLanguageRef.current;
+    if (next === current || scriptExecutingRef.current) return;
+    writeJsonStorage(SCRIPT_LANGUAGES[current].storageKey, scriptCodeRef.current);
+    scriptLanguageRef.current = next;
+    setScriptLanguageState(next);
+    setScriptCode(loadCode(next));
+    writeJsonStorage(SCRIPT_LANGUAGE_STORAGE_KEY, next);
   }, []);
 
   useEffect(() => {
-    writeJsonStorage(SCRIPT_RUNNER_STORAGE_KEY, scriptCode);
-  }, [scriptCode]);
+    writeJsonStorage(SCRIPT_LANGUAGES[scriptLanguage].storageKey, scriptCode);
+  }, [scriptCode, scriptLanguage]);
 
   useEffect(() => {
+    const workers = workersRef.current;
     return () => {
-      if (pyWorkerRef.current) {
-        pyWorkerRef.current.terminate();
-        pyWorkerRef.current = null;
-      }
+      for (const worker of workers.values()) worker.terminate();
+      workers.clear();
     };
   }, []);
 
   return {
     scriptRunnerSupported,
+    scriptLanguage,
+    setScriptLanguage,
     scriptCode,
     setScriptCode,
     scriptRunning,
-    scriptSource,
     scriptRunnerStatus,
     scriptLog,
-    scriptLogRef,
     clearScriptLog,
     scriptRun,
-    scriptRunRef,
-    waitForScriptRun,
     toggleScriptRunner,
     stopScriptRunner,
     clearScriptCode,
-    runScriptFromMcp,
-    restoreScriptBackup,
-    hasScriptBackup,
     aiRawShareRef,
     aiPhysicalShareRef,
     aoShareRef,
@@ -412,22 +392,8 @@ export function useScriptRunner(
   };
 }
 
-// The two rules a script cannot be written correctly without, and nothing else.
-// The call list used to be repeated here as five more comment lines, which is
-// the same text the panel's API Reference already holds — an editor that opens
-// mostly full of documentation buries the example it is there to show.
-function getDefaultScript(): string {
-  return `# Wait ONLY with \`await asyncio.sleep(s)\`
-#   NEVER time.sleep() - it freezes the browser.
-# Loop with a plain while/for. Press Stop to halt at any time.
-
-import asyncio
-import math
-
-t = 0.0
-while True:
-    # example: slow sine wave on Parameter ch0
-    set_param(0, math.sin(t))
-    t += 0.1
-    await asyncio.sleep(1)`;
+/** Stored contents for `language`, or its example script on first use. */
+function loadCode(language: ScriptLanguageId): string {
+  const stored = readJsonStorage<string>(SCRIPT_LANGUAGES[language].storageKey);
+  return stored ?? SCRIPT_LANGUAGES[language].defaultScript;
 }

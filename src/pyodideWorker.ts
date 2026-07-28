@@ -66,6 +66,8 @@ let aiPhysicalShare: Float32Array | null = null;
 let aoShare: Float32Array | null = null;
 let paramShare: Float32Array | null = null;
 let interruptBuffer: Uint8Array | null = null;
+/** Set when a run starts, so Elapsed() measures the script and not the worker. */
+let runStartedAt = Date.now();
 
 const postWorkerMessage = (message: Record<string, unknown>) => {
   self.postMessage(message);
@@ -78,9 +80,9 @@ const readAiValue = (buffer: Float32Array | null, ch: number): number => {
 };
 
 // Everything Python prints is forwarded to the main thread instead of the
-// worker console: the ScriptRunner panel shows it, and — the reason this exists
-// — an MCP client has no console to look at, so print() and tracebacks would
-// otherwise be invisible to whoever submitted the script.
+// worker console, where the PyScriptRunner panel's Output pane shows it. A
+// worker's console output is not visible in the page's devtools by default, so
+// without this a print() or a traceback would go nowhere the user can see.
 const postOutput = (stream: 'stdout' | 'stderr', text: string) => {
   if (text === '') return;
   postWorkerMessage({ type: 'output', stream, text });
@@ -141,34 +143,53 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   pyodide.setStderr({ batched: (text) => postOutput('stderr', text) });
 
   pyodide.runPython(RUNNER_SETUP);
-  pyodide.globals.set('get_ai_raw', (ch: number) => readAiValue(aiRawShare, Number(ch)));
-  pyodide.globals.set('get_ai_phy', (ch: number) => readAiValue(aiPhysicalShare, Number(ch)));
+
+  // PascalCase, not Python's usual snake_case.
+  //
+  // Deliberate: the same names work in all three languages. BASIC's lookup
+  // ignores case and underscores, so it accepts this spelling natively, and
+  // matching it in Python and Lua means a script can be translated between the
+  // three without relearning the API — which is the whole point of offering
+  // three. The cost is that these eight names do not look like PEP 8; they are
+  // instrument calls rather than Python library calls, and reading the same in
+  // every language is worth more here than matching one language's convention.
+  const api = pyodide;
+  const registerApi = (name: string, fn: unknown): void => {
+    api.globals.set(name, fn);
+  };
+
+  registerApi('GetAiRaw', (ch: number) => readAiValue(aiRawShare, Number(ch)));
+  registerApi('GetAiPhy', (ch: number) => readAiValue(aiPhysicalShare, Number(ch)));
   // AO reads come from a share the main thread mirrors on every AO change, in
-  // volts — the same unit set_ao() takes. set_ao() is asynchronous (it posts to
-  // the main thread), so a get_ao() immediately after a set_ao() still observes
+  // volts — the same unit SetAo() takes. SetAo() is asynchronous (it posts to
+  // the main thread), so a GetAo() immediately after a SetAo() still observes
   // the previous value until the main thread has applied and mirrored it.
-  pyodide.globals.set('get_ao', (ch: number) => readAiValue(aoShare, Number(ch)));
-  pyodide.globals.set('set_ao', (ch: number, data: number) => {
+  registerApi('GetAo', (ch: number) => readAiValue(aoShare, Number(ch)));
+  registerApi('SetAo', (ch: number, data: number) => {
     postWorkerMessage({ type: 'set_ao', ch: Number(ch), data: Number(data) });
   });
   // Tare AI channel `ch`: the main thread adjusts offset c so the current
   // physical reading becomes 0 (a and b unchanged). Applied asynchronously,
-  // like set_ao — get_ai_phy() reflects it once the main thread has updated
+  // like SetAo — GetAiPhy() reflects it once the main thread has updated
   // the calibration and the next poll refreshes the share.
-  pyodide.globals.set('set_ai_tare', (ch: number) => {
+  registerApi('SetAiTare', (ch: number) => {
     postWorkerMessage({ type: 'set_ai_tare', ch: Number(ch) });
   });
   // Raise an OS notification from the script. The main thread decides whether
   // anything is actually shown (the user's toggle and the browser permission
   // both have to allow it — see utils/notifications.ts); the message is written
   // to the ScriptRunner log either way, so a script never loses what it said.
-  pyodide.globals.set('set_notify', (message: unknown) => {
+  registerApi('SetNotify', (message: unknown) => {
     postWorkerMessage({ type: 'notify', message: String(message) });
   });
-  pyodide.globals.set('get_param', (ch: number) => readAiValue(paramShare, Number(ch)));
-  pyodide.globals.set('set_param', (ch: number, data: number) => {
+  registerApi('GetParam', (ch: number) => readAiValue(paramShare, Number(ch)));
+  registerApi('SetParam', (ch: number, data: number) => {
     writeParamValue(paramShare, Number(ch), Number(data));
   });
+  // Matches BASIC's Elapsed. Monotonic seconds since this worker started, so it
+  // has no midnight discontinuity — the one a multi-day consolidation stage
+  // would otherwise walk straight into.
+  registerApi('Elapsed', () => (Date.now() - runStartedAt) / 1000);
 
   // Armed last, deliberately. A Stop issued while Pyodide was still loading
   // leaves the interrupt buffer holding 2, and Pyodide checks that buffer inside
@@ -256,6 +277,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
       }
 
       running = true;
+      runStartedAt = Date.now();
       postWorkerMessage({ type: 'status', message: 'Running' });
       pyodide.globals.set('__user_code__', message.code);
       await pyodide.runPythonAsync('await _runner_run(__user_code__)');
@@ -276,8 +298,8 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
         postWorkerMessage({ type: 'done', message: 'Completed' });
       } else {
         // `message` is the one-line summary the status bar shows; `traceback`
-        // is the full Python traceback, kept in the run log so the user (or an
-        // MCP client) can see which line failed.
+        // is the full Python traceback, kept in the run log so the user can see
+        // which line failed.
         postWorkerMessage({
           type: 'error',
           message: summarizeError(text),

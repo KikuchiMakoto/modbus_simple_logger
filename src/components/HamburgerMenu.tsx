@@ -8,8 +8,6 @@ type HamburgerMenuProps = {
   onSelectItem: (item: string) => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
-  /** MCP is a desktop-launcher feature; the entry is hidden in the web build. */
-  showMcp?: boolean;
   /** Remote monitoring is likewise launcher-only. */
   showRemoteViewer?: boolean;
 };
@@ -29,8 +27,7 @@ const MENU_ITEMS = [
   // range, and a lightning bolt read as "power" next to Connection Config.
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
-  { key: 'scriptRunner', label: 'PyScript Runner', icon: '🐍', wip: false },
-  { key: 'mcp', label: 'MCP Server', icon: '🤖', wip: false },
+  { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
@@ -42,11 +39,9 @@ export function HamburgerMenu({
   onSelectItem,
   isDarkMode,
   onToggleTheme,
-  showMcp = false,
   showRemoteViewer = false,
 }: HamburgerMenuProps) {
   const items = MENU_ITEMS.filter((item) => {
-    if (item.key === 'mcp') return showMcp;
     if (item.key === 'remoteViewer') return showRemoteViewer;
     return true;
   });

@@ -1,4 +1,4 @@
-import type { ScriptLogEntry, ScriptOutcome, ScriptSource } from '../hooks/useScriptRunner';
+import type { ScriptLogEntry, ScriptOutcome } from '../hooks/useScriptRunner';
 
 const OUTCOME_BADGE: Record<ScriptOutcome, { label: string; dot: string }> = {
   idle: { label: 'Idle', dot: 'bg-slate-400' },
@@ -17,15 +17,18 @@ const STREAM_COLOR: Record<ScriptLogEntry['stream'], string> = {
 export function ScriptStatusBar({
   running,
   outcome,
-  source,
   status,
   lastLogLine,
+  languageLabel,
+  runtimeBadge,
 }: {
   running: boolean;
   outcome: ScriptOutcome;
-  source: ScriptSource;
   status: string;
   lastLogLine: ScriptLogEntry | null;
+  /** Which language the runner is set to — the bar used to be Python-only. */
+  languageLabel: string;
+  runtimeBadge: string;
 }) {
   const badge = running ? OUTCOME_BADGE.running : OUTCOME_BADGE[outcome];
   const line = lastLogLine ?? null;
@@ -43,17 +46,12 @@ export function ScriptStatusBar({
         <div className="flex shrink-0 items-center gap-2">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${badge.dot}`} />
           <span className="font-semibold text-slate-800 dark:text-slate-100">
-            PyScript
+            {languageLabel}
           </span>
           <span className="rounded bg-slate-200 px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-            Pyodide {import.meta.env.VITE_PYODIDE_VERSION ?? ''}
+            {runtimeBadge}
           </span>
           <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
-          {source === 'mcp' && (
-            <span className="rounded bg-slate-200 px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-              MCP
-            </span>
-          )}
         </div>
         <div className={`ml-3 min-w-0 flex-1 truncate font-mono ${lineColor}`}>
           {line ? (

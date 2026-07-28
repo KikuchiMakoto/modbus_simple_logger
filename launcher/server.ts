@@ -8,7 +8,6 @@
 // They differ only in the runtime marker stamped into index.html and in which
 // WebSocket endpoints they expose, so the static handling below is shared.
 import { ASSETS, BASE_PATH } from './embedded.generated';
-import { bridge, BRIDGE_PATH_SUFFIX } from './bridge';
 import { HOST_FEED_PATH_SUFFIX } from './viewerHub';
 import { hostFeed } from './hostFeed';
 
@@ -48,9 +47,6 @@ const baseHeaders = (type: string): Record<string, string> => ({
 });
 
 export const INDEX = `${BASE_PATH}index.html`;
-// WebSocket endpoint the page uses to serve MCP tool calls. Same origin as the
-// app itself, so no cross-origin or COEP considerations apply.
-export const BRIDGE_PATH = `${BASE_PATH}${BRIDGE_PATH_SUFFIX}`;
 // WebSocket endpoint the host page pushes remote-monitoring frames up. Only
 // exposed on the loopback app server: it is the *source* of the viewer feed and
 // carries the control frames that switch remote monitoring on and off, so it
@@ -159,8 +155,9 @@ export const serveStatic = (assets: Assets, path: string, req: Request, runtime:
   return notFound();
 };
 
-/** What a `__feed` socket is carrying, so the two upgrade paths stay apart. */
-type SocketRole = { role: 'bridge' } | { role: 'feed' };
+/** Role of an upgraded socket. Only one kind remains, but the tag is kept so
+ * adding a second endpoint does not mean reshaping the handlers again. */
+type SocketRole = { role: 'feed' };
 
 export const createServer = async (assets: Assets) => {
   return Bun.serve<SocketRole, {}>({
@@ -168,22 +165,16 @@ export const createServer = async (assets: Assets) => {
     // served by a separate server (viewerServer.ts) that exposes strictly less.
     hostname: '127.0.0.1',
     port: 0,
-    // The bridge socket is idle whenever no MCP client is asking for anything,
-    // which is most of the time; without this Bun would close it after 120s.
+    // The monitoring uplink is idle whenever nothing is being plotted; without
+    // this Bun would close it after 120s.
     idleTimeout: 0,
     fetch(req, srv) {
       const path = decodeURIComponent(new URL(req.url).pathname);
 
-      // MCP bridge upgrade. First page wins: a second window (or a stray tab on
-      // the same origin) is refused rather than displacing the live connection.
-      if (path === BRIDGE_PATH) {
-        if (bridge.connected) return new Response('Bridge already connected', { status: 409 });
-        if (srv.upgrade(req, { data: { role: 'bridge' } })) return undefined;
-        return new Response('Expected a WebSocket upgrade', { status: 426 });
-      }
-
-      // Remote-monitoring uplink from the host page. Same first-wins rule, and
-      // for the same reason: exactly one page owns the hardware.
+      // Remote-monitoring uplink from the host page. First page wins: a second
+      // window (or a stray tab on the same origin) is refused rather than
+      // displacing the live connection, because exactly one page owns the
+      // hardware.
       if (path === HOST_FEED_PATH) {
         if (hostFeed.connected) return new Response('Feed already connected', { status: 409 });
         if (srv.upgrade(req, { data: { role: 'feed' } })) return undefined;
@@ -194,20 +185,14 @@ export const createServer = async (assets: Assets) => {
     },
     websocket: {
       open(ws) {
-        if (ws.data.role === 'feed') {
-          hostFeed.attach(ws);
-          return;
-        }
-        if (!bridge.attach(ws)) ws.close(1013, 'Bridge already connected');
+        hostFeed.attach(ws);
       },
-      message(ws, message) {
+      message(_ws, message) {
         if (typeof message !== 'string') return;
-        if (ws.data.role === 'feed') hostFeed.handleMessage(message);
-        else bridge.handleMessage(message);
+        hostFeed.handleMessage(message);
       },
       close(ws) {
-        if (ws.data.role === 'feed') hostFeed.detach(ws);
-        else bridge.detach(ws);
+        hostFeed.detach(ws);
       },
     },
   });

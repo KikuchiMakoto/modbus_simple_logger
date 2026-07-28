@@ -1,7 +1,7 @@
 // Single-instance lock for the desktop exe.
 //
 // Two copies of the launcher are never useful and are actively harmful: only
-// one of them can own the MCP port (mcp.ts already picks a winner), only one can
+// one of them can own the viewer port (viewerServer.ts picks a winner), only one can
 // own the browser profile directory's main process, and — the reason this
 // matters most — each one opens its own app window while exactly one serial
 // port exists. Double-clicking the exe again while it is running is an
