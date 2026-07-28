@@ -2368,7 +2368,7 @@ function App() {
         <div className="px-2 py-1">
           <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0">
-              <h1 className="text-lg font-bold leading-tight">
+              <h1 className="hidden text-lg font-bold leading-tight md:block">
                 <a
                   href="https://github.com/KikuchiMakoto/modbus_simple_logger"
                   target="_blank"
