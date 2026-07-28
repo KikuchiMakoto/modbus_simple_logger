@@ -1,4 +1,4 @@
-// App-wide status and error surface.
+// App-wide error surface. Failures only — see AppStatusLevel.
 //
 // Until this existed, `App.tsx`'s `setStatus()` was a no-op ("Status display
 // removed from header") while remaining the only user-facing error channel in
@@ -21,9 +21,15 @@
 // console and (for script-sourced events) the ScriptRunner log.
 import { notify } from './notifications';
 
+/**
+ * Only failures. There was an 'info' level for transient progress
+ * announcements ("Disconnected", "Saving data to file"); it was removed
+ * because every one of those messages restated something the UI already showed
+ * — the button captions, the charts, the save indicator — so the bar spent
+ * most of its time saying nothing new, and a strip that is usually noise is a
+ * strip nobody reads when it finally matters.
+ */
 export type AppStatusLevel =
-  /** Transient progress/announcement. Self-clears. */
-  | 'info'
   /** Something failed. Sticky until the user or the subsystem clears it. */
   | 'error'
   /**
@@ -53,7 +59,6 @@ export type AppStatusEntry = {
 // A logger runs for hours; the list has to be a bounded ring or a flapping
 // link would grow it without limit.
 const MAX_ENTRIES = 50;
-const INFO_TTL_MS = 4000;
 
 /** Collapses with the 'msl-script-*' tags in notifications.ts's NOTIFY_TAG family. */
 const NOTIFY_TAG_APP_ERROR = 'msl-app-error';
@@ -76,16 +81,8 @@ const emit = () => {
   for (const listener of listeners) listener(entries);
 };
 
-const expireInfo = (now: number): boolean => {
-  const before = entries.length;
-  entries = entries.filter(
-    (entry) => entry.level !== 'info' || now - entry.lastAt < INFO_TTL_MS,
-  );
-  return entries.length !== before;
-};
-
 /**
- * Post a status line.
+ * Post a failure.
  *
  * Identical consecutive messages from the same source collapse into one row
  * with a repeat count. This is load-bearing, not cosmetic: `pollOnce` reports
@@ -102,8 +99,6 @@ export const postStatus = (
   if (!trimmed) return;
 
   const now = Date.now();
-  let changed = expireInfo(now);
-
   const head = entries[0];
   if (head && head.level === level && head.source === source && head.message === trimmed) {
     // Mutating in place would let a memoised consumer miss the update; the
@@ -113,29 +108,20 @@ export const postStatus = (
     return;
   }
 
-  if (level === 'info') {
-    // An info supersedes the previous info from the same source: progress
-    // messages describe a single evolving thing, not a list.
-    entries = entries.filter((entry) => !(entry.level === 'info' && entry.source === source));
-  }
-
   entries = [
     { id: nextId++, level, message: trimmed, source, firstAt: now, lastAt: now, repeats: 1 },
     ...entries,
   ].slice(0, MAX_ENTRIES);
-  changed = true;
 
-  if (level !== 'info') {
-    // The only channel that reaches a user who walked away from a run that is
-    // now failing. notifications.ts's own docstring already declares this use
-    // case; sticky so it survives until they come back.
-    notify(level === 'dataLoss' ? 'Data loss' : 'Logger error', trimmed, {
-      tag: NOTIFY_TAG_APP_ERROR,
-      sticky: true,
-    });
-  }
+  // The only channel that reaches a user who walked away from a run that is
+  // now failing. notifications.ts's own docstring already declares this use
+  // case; sticky so it survives until they come back.
+  notify(level === 'dataLoss' ? 'Data loss' : 'Logger error', trimmed, {
+    tag: NOTIFY_TAG_APP_ERROR,
+    sticky: true,
+  });
 
-  if (changed) emit();
+  emit();
 };
 
 /**
@@ -176,13 +162,4 @@ export const dismissAllStatus = (): void => {
   if (entries.length === 0) return;
   entries = [];
   emit();
-};
-
-/**
- * Drop expired info entries and report whether anything changed. The bar calls
- * this on a timer: info entries have a TTL, and nothing else would notice it
- * elapsing.
- */
-export const sweepAppStatus = (): void => {
-  if (expireInfo(Date.now())) emit();
 };

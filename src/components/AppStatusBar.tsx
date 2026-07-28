@@ -1,6 +1,9 @@
 // The app's error surface: a fixed strip along the bottom, above the PyScript
 // bar. See utils/appStatus.ts for why this exists at all.
 //
+// Failures only. It is silent — absent, not empty — during a healthy run, which
+// is what keeps it worth looking at when it does appear.
+//
 // Sibling of ScriptStatusBar, with three deliberate differences:
 //
 //  - No `md:` gate. ScriptStatusBar hides itself below `md`; an error surface
@@ -18,7 +21,6 @@ import {
   dismissAllStatus,
   dismissStatus,
   onAppStatusChange,
-  sweepAppStatus,
   type AppStatusEntry,
   type AppStatusLevel,
 } from '../utils/appStatus';
@@ -30,11 +32,6 @@ import { FloatingWindow } from './FloatingWindow';
 // semantic colour within one pattern rather than introducing a new one. Amber
 // for dataLoss falls under the rule's existing "unrecoverable data" carve-out.
 const LEVEL_STYLE: Record<AppStatusLevel, { dot: string; text: string; label: string }> = {
-  info: {
-    dot: 'bg-emerald-500',
-    text: 'text-emerald-600 dark:text-emerald-400',
-    label: 'Info',
-  },
   error: {
     dot: 'bg-red-500',
     text: 'text-red-600 dark:text-red-400',
@@ -54,9 +51,6 @@ const SOURCE_LABEL: Record<AppStatusEntry['source'], string> = {
   storage: 'Storage',
   app: 'App',
 };
-
-// Info entries expire on a TTL, and nothing else would notice it elapsing.
-const SWEEP_INTERVAL_MS = 1000;
 
 const formatTime = (ms: number): string => new Date(ms).toLocaleTimeString();
 
@@ -86,11 +80,6 @@ export function AppStatusBar() {
   const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => onAppStatusChange(setEntries), []);
-
-  useEffect(() => {
-    const id = window.setInterval(sweepAppStatus, SWEEP_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, []);
 
   // Nothing to say: render nothing at all, and close a history window that has
   // gone empty underneath the user.

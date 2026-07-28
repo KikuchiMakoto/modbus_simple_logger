@@ -659,12 +659,15 @@ function App() {
     }
   };
 
-  // Progress/announcement channel. This was a no-op ("Status display removed
-  // from header") while remaining the only user-facing message path in the app,
-  // so every connect failure, TSV write error and calibration parse error went
-  // nowhere. Failures now go through reportError() instead — see AppStatusBar.
+  // Progress/announcement channel, and console-only on purpose.
+  //
+  // It briefly posted to the status bar, which put a strip along the bottom of
+  // the screen saying "Disconnected" or "Saving data to file" — each one
+  // restating something the UI had already changed to show, so the bar was
+  // almost always occupied by something nobody needed to read. Failures are the
+  // only thing worth interrupting for, and they go through reportError().
   const setStatus = useCallback((msg: string) => {
-    postStatus('info', msg, 'app');
+    console.info('[App]', msg);
   }, []);
 
   useEffect(() => {
@@ -2263,8 +2266,11 @@ function App() {
           // the crash-recovery mirror is missing. Prefixing it with "TSV write
           // error" would have the user stop a healthy run to investigate.
           if (severity === 'warning') {
+            // Console only. The single case that reaches here is "crash
+            // recovery unavailable", and raising a bar for it would put a
+            // permanent-looking notice on screen about a run that is being
+            // written to the user's file exactly as asked.
             console.warn('TSV worker warning:', message);
-            postStatus('info', message, 'save');
             return;
           }
           console.error('TSV worker error:', message);
