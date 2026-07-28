@@ -151,7 +151,7 @@ export function useScriptRunner(
    *
    * Background timer: the caller is the MCP bridge, i.e. an agent driving this
    * window from outside it, and the window it is driving is very often
-   * minimised. A throttled timeout would turn `wait_for_script(5s)` into a
+   * minimised. A throttled timeout would turn `run_script(wait_ms=5000)` into a
    * one-minute stall with nothing to indicate why.
    */
   const waitForScriptRun = useCallback((timeoutMs: number): Promise<ScriptRunInfo> => {

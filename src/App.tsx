@@ -1459,10 +1459,10 @@ function App() {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
         // Card values are published at CHANNEL_CARD_MIN_INTERVAL_MS at most, and
-        // only when the poll interval is shorter than that — i.e. at the 20 and
+        // only when the poll interval is shorter than that — i.e. at the 25 and
         // 50 ms settings. There one render per sample is not affordable: every
         // publish re-renders 40 channel cards between two Modbus transfers, and
-        // nobody can read a number changing 20 times a second anyway.
+        // nobody can read a number changing 40 times a second anyway.
         const cardsDue =
           pollIntervalRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
           timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;

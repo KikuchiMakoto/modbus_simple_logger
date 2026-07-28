@@ -17,7 +17,7 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // Raised 1024 → 2048 in v3.1, funded by disabling the scattergl hover pick-index
 // (`hoverinfo: 'skip'`, see ChartPanel.tsx): that index is rebuilt per update and
 // its cost scales with this constant, so removing it buys headroom at the same
-// ~5 fps redraw rate. Deliberately conservative — the headroom has not been
+// redraw rate (2 fps — see CHART_REDRAW_INTERVAL_MS). Deliberately conservative — the headroom has not been
 // measured on-device yet (docs/chart-library-comparison.md §11-1), so this is a
 // doubling rather than the 8192 the hardware may well allow.
 export const CHART_MAX_POINTS = 2048;
