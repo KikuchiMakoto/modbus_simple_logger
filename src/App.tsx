@@ -1070,8 +1070,8 @@ function App() {
   // raise one without a component in the way.
   const notifications = useNotifications();
 
-  // Mirror AO values into the PyScriptRunner share so get_ao() can read them, in
-  // volts to match the unit set_ao() takes (AO state is held in millivolts).
+  // Mirror AO values into the ScriptRunner share so GetAo() can read them, in
+  // volts to match the unit SetAo() takes (AO state is held in millivolts).
   // The share is created lazily with the worker, so this also keys on
   // scriptRunning to seed it on the first run.
   useEffect(() => {
@@ -2142,7 +2142,7 @@ function App() {
   const getAiRawValue = useCallback((ch: number) => aiRawSourceRef.current[ch] ?? 0, []);
 
   // AO state is held in millivolts; the Output Tester speaks volts, like the AO
-  // cards and set_ao(). Derived from state rather than the ref so the panel's
+  // cards and SetAo(). Derived from state rather than the ref so the panel's
   // readout follows a value written from anywhere — a script or itself.
   const aoVoltages = useMemo(
     () => aoChannels.map((ch) => ch.physical / 1000),

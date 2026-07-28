@@ -39,10 +39,11 @@ async function makeEngine(): Promise<{
     buffer += String(text);
   });
   engine.global.set('__msl_should_stop', () => stopFlag);
-  engine.global.set('get_ai_phy', (ch: number) => Number(ch) * 1.5);
-  engine.global.set('set_param', (ch: number, v: number) => calls.push(`set_param ${ch} ${v}`));
-  engine.global.set('set_ao', (ch: number, v: number) => calls.push(`set_ao ${ch} ${v}`));
-  engine.global.set('elapsed', () => 0);
+  // PascalCase, matching luaWorker's real registration.
+  engine.global.set('GetAiPhy', (ch: number) => Number(ch) * 1.5);
+  engine.global.set('SetParam', (ch: number, v: number) => calls.push(`SetParam ${ch} ${v}`));
+  engine.global.set('SetAo', (ch: number, v: number) => calls.push(`SetAo ${ch} ${v}`));
+  engine.global.set('Elapsed', () => 0);
   engine.doStringSync(RUNNER_SETUP);
 
   return { engine, output: () => buffer, stop: (v: boolean) => { stopFlag = v; }, calls };
@@ -105,14 +106,14 @@ async function run(
   check('numbers stringify without .0', r.output === '2\n', JSON.stringify(r.output));
 }
 {
-  const r = await run('print(get_ai_phy(2))');
+  const r = await run('print(GetAiPhy(2))');
   check('injected JS function is callable from Lua', r.output === '3.0\n' || r.output === '3\n',
     JSON.stringify(r.output));
 }
 {
-  const r = await run('set_param(0, 1.25) set_ao(1, 5)');
+  const r = await run('SetParam(0, 1.25) SetAo(1, 5)');
   check('side-effect calls arrive with both arguments',
-    r.calls.join('|') === 'set_param 0 1.25|set_ao 1 5', r.calls.join('|'));
+    r.calls.join('|') === 'SetParam 0 1.25|SetAo 1 5', r.calls.join('|'));
 }
 {
   const r = await run('local t = math.sin(0) print(t)');

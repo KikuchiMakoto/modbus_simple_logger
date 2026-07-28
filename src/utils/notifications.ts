@@ -4,7 +4,7 @@
 // A logger runs for hours and nobody watches it for hours. The events worth
 // interrupting for are the ones that end or endanger a run — a ScriptRunner
 // error, a script starting or stopping — plus whatever the script itself
-// declares important via set_notify(msg).
+// declares important via SetNotify(msg).
 //
 // Two gates, both of which must be open before anything is shown:
 //   - the user's own toggle (persisted, ON unless it has been switched off);
@@ -64,7 +64,7 @@ export const requestNotificationPermission = async (): Promise<NotificationPermi
 export type NotifyOptions = {
   /**
    * Replacement key. Two notifications sharing a tag collapse into one, which
-   * is what keeps a `while True:` loop calling set_notify() from burying the
+   * is what keeps a `while True:` loop calling SetNotify() from burying the
    * desktop under a hundred toasts.
    */
   tag?: string;
@@ -114,6 +114,6 @@ export const notify = (title: string, body: string, options: NotifyOptions = {})
 export const NOTIFY_TAG = {
   /** Run lifecycle: start / completed / stopped / error all replace each other. */
   scriptRun: 'msl-script-run',
-  /** set_notify() from a script: a burst collapses into the newest message. */
+  /** SetNotify() from a script: a burst collapses into the newest message. */
   scriptMessage: 'msl-script-message',
 } as const;

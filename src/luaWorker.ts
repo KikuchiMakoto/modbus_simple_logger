@@ -99,28 +99,35 @@ async function initialize(args: Extract<ScriptWorkerRequest, { type: 'init' }>):
   });
   engine.global.set('__msl_should_stop', () => stopRequested());
 
-  engine.global.set('get_ai_raw', (ch: number) => readShare(aiRawShare, ch));
-  engine.global.set('get_ai_phy', (ch: number) => readShare(aiPhysicalShare, ch));
-  engine.global.set('get_ao', (ch: number) => readShare(aoShare, ch));
-  engine.global.set('get_param', (ch: number) => readShare(paramShare, ch));
+  // PascalCase, matching pyodideWorker and BASIC — see the note there. The
+  // same eight names work in all three languages.
+  const api = engine;
+  const registerApi = (name: string, fn: unknown): void => {
+    api.global.set(name, fn);
+  };
+
+  registerApi('GetAiRaw', (ch: number) => readShare(aiRawShare, ch));
+  registerApi('GetAiPhy', (ch: number) => readShare(aiPhysicalShare, ch));
+  registerApi('GetAo', (ch: number) => readShare(aoShare, ch));
+  registerApi('GetParam', (ch: number) => readShare(paramShare, ch));
   // Writes go through the main thread: the Modbus transfer mutex and the
   // minimum inter-frame interval live there and must not be bypassed.
-  engine.global.set('set_ao', (ch: number, data: number) => {
+  registerApi('SetAo', (ch: number, data: number) => {
     post({ type: 'set_ao', ch: Number(ch), data: Number(data) });
   });
-  engine.global.set('set_ai_tare', (ch: number) => {
+  registerApi('SetAiTare', (ch: number) => {
     post({ type: 'set_ai_tare', ch: Number(ch) });
   });
-  engine.global.set('set_notify', (message: unknown) => {
+  registerApi('SetNotify', (message: unknown) => {
     post({ type: 'notify', message: String(message) });
   });
-  engine.global.set('set_param', (ch: number, data: number) => {
+  registerApi('SetParam', (ch: number, data: number) => {
     if (!paramShare) return;
     const index = Number(ch);
     if (!Number.isInteger(index) || index < 0 || index >= paramShare.length) return;
     paramShare[index] = Number(data);
   });
-  engine.global.set('elapsed', () => (Date.now() - startedAt) / 1000);
+  registerApi('Elapsed', () => (Date.now() - startedAt) / 1000);
 
   engine.doStringSync(RUNNER_SETUP);
   post({ type: 'status', message: 'Ready' });

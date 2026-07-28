@@ -6,11 +6,12 @@
 // VB6 way of doing it is a formula the user would otherwise have to remember and
 // retype in every script, and getting it subtly wrong is silent.
 //
-// Names are matched with underscores removed, so `GET_AI_PHY`, `GetAiPhy` and
-// `getaiphy` are one function. That is not sloppiness: the Python API in
-// pyodideWorker.ts spells these `get_ai_phy` and BASIC convention spells them
-// `GetAiPhy`, and a user moving a script between the two languages should not
-// have to care which is which.
+// Names are matched with underscores removed and case folded, so `GET_AI_PHY`,
+// `GetAiPhy` and `getaiphy` are one function. This tolerance is why PascalCase
+// could be chosen as the shared spelling for all three languages (see
+// AGENTS.md): BASIC accepts it natively, so Python and Lua were the ones that
+// moved. It also means a user who types the Python habit `get_ai_phy` here
+// still gets the right function rather than a syntax error.
 import {
   BasicRuntimeError,
   bankersRound,

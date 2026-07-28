@@ -165,7 +165,7 @@ expectThrows('sqr negative', 'Print Sqr(-1)', 'Sqr of a negative');
 expectThrows('arity', 'Print Sqr(1, 2)', 'Wrong number of arguments');
 
 // --- instrument API ---------------------------------------------------------
-expect('get_ai_phy underscore', 'Print get_ai_phy(2)', ' 3 \n');
+expect('python habit still resolves', 'Print get_ai_phy(2)', ' 3 \n');
 expect('GetAiPhy camel', 'Print GetAiPhy(2)', ' 3 \n');
 expect('GetAiRaw', 'Print GetAiRaw(3)', ' 300 \n');
 expect('GetAo GetParam', 'Print GetAo(4); GetParam(1)', ' 1  1.5 \n');

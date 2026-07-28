@@ -36,31 +36,34 @@ export type ScriptLanguage = {
   promptRules: string[];
 };
 
-// The instrument API is the same set of operations everywhere; only the
-// spelling changes. Written out per language rather than generated, because the
-// wait call and the argument units genuinely differ and a generated table would
-// have to special-case exactly the lines that matter most.
-const SNAKE_CASE_API: ScriptApiDoc[] = [
-  { name: 'get_ai_raw(ch)', desc: 'Raw AI value. ch: 0-15.' },
-  { name: 'get_ai_phy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
+// The instrument API is spelled the SAME in all three languages, so this table
+// is shared. Only the wait call differs, and that one is written out per
+// language because both its name and its units are genuinely different.
+//
+// BASIC calls the procedures without parentheses (`SetAo 0, 1.5`), which is what
+// its own entries below show; the operations and the names are identical.
+const INSTRUMENT_API: ScriptApiDoc[] = [
+  { name: 'GetAiRaw(ch)', desc: 'Raw AI value. ch: 0-15.' },
+  { name: 'GetAiPhy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
   {
-    name: 'set_ai_tare(ch)',
+    name: 'SetAiTare(ch)',
     desc: 'Tare AI ch: set offset c so the current phy reads 0 (a, b kept). Applied async.',
   },
-  { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
+  { name: 'GetAo(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
   {
-    name: 'set_ao(ch, vlt)',
-    desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.',
+    name: 'SetAo(ch, vlt)',
+    desc: 'Set AO voltage [V], clamped to 0-10. Applied async; GetAo() updates slightly later.',
   },
-  { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
+  { name: 'GetParam(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
   {
-    name: 'set_param(ch, val)',
+    name: 'SetParam(ch, val)',
     desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.',
   },
   {
-    name: 'set_notify(msg)',
+    name: 'SetNotify(msg)',
     desc: 'Raise an OS notification (needs Notifications on in the menu). Always written to Output.',
   },
+  { name: 'Elapsed()', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
 ];
 
 const PYTHON: ScriptLanguage = {
@@ -72,7 +75,7 @@ const PYTHON: ScriptLanguage = {
   badge: `Pyodide ${import.meta.env.VITE_PYODIDE_VERSION ?? ''}`.trim(),
   storageKey: 'scriptRunnerCode',
   apiDocs: [
-    ...SNAKE_CASE_API,
+    ...INSTRUMENT_API,
     { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait, in SECONDS. NEVER time.sleep().' },
   ],
   promptIntro:
@@ -80,6 +83,7 @@ const PYTHON: ScriptLanguage = {
   promptRules: [
     'Wait only with `await asyncio.sleep(s)`. NEVER time.sleep().',
     'Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
+    'The instrument API is PascalCase (GetAiPhy, SetAo), NOT snake_case. The same names work in all three languages this app runs.',
   ],
   // The two rules a script cannot be written correctly without, and nothing
   // else. The call list used to be repeated here as five more comment lines,
@@ -96,7 +100,7 @@ import math
 t = 0.0
 while True:
     # example: slow sine wave on Parameter ch0
-    set_param(0, math.sin(t))
+    SetParam(0, math.sin(t))
     t += 0.1
     await asyncio.sleep(1)`,
 };
@@ -128,8 +132,9 @@ const BASIC: ScriptLanguage = {
       name: 'SetNotify msg',
       desc: 'Raise an OS notification (needs Notifications on in the menu). Always written to Output.',
     },
+    { name: 'Elapsed', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
     { name: 'Sleep ms', desc: 'Wait, in MILLISECONDS. Sleep 1000 is one second.' },
-    { name: 'Timer / Elapsed', desc: 'Timer: seconds since midnight (rolls over). Elapsed: seconds since the script started.' },
+    { name: 'Timer', desc: 'Seconds since midnight, as in VB6 - rolls over at 00:00. Use Elapsed for durations.' },
     { name: 'Print x; y', desc: 'Write to Output. `;` keeps the line open, `,` moves to the next 14-column zone.' },
     { name: 'Round / Log10 / Asin / Deg', desc: 'Round is banker’s (VB6 and JIS Z 8401 rule A). Log10, Asin/Acos and Deg/Rad are additions.' },
   ],
@@ -141,6 +146,7 @@ const BASIC: ScriptLanguage = {
     'True is -1 and And/Or/Not are BITWISE, as in VB6. Use AndAlso/OrElse when you need short-circuit evaluation.',
     'Mod and \\ are integer operators: 7.5 Mod 2 is 1, not 1.5.',
     'There is no Sub or Function; use GoSub/Return.',
+    'Procedures are called without parentheses (`SetAo 0, 1.5`); functions with them (`GetAiPhy(0)`).',
   ],
   defaultScript: `' Sleep is in MILLISECONDS: Sleep 1000 waits one second.
 ' Loop with For/Next, While/Wend or Do/Loop.
@@ -164,12 +170,11 @@ const LUA: ScriptLanguage = {
   badge: 'wasmoon',
   storageKey: 'scriptRunnerCodeLua',
   apiDocs: [
-    ...SNAKE_CASE_API,
+    ...INSTRUMENT_API,
     {
       name: 'sleep(s)',
       desc: 'Wait, in SECONDS (fractions OK), as in LuaSocket. sleep(0.5) is 500 ms.',
     },
-    { name: 'elapsed()', desc: 'Seconds since the script started.' },
     { name: 'print(...)', desc: 'Write to the Output pane.' },
   ],
   promptIntro:
@@ -178,6 +183,7 @@ const LUA: ScriptLanguage = {
     'Wait with `sleep(s)` — SECONDS, so `sleep(0.5)` is 500 ms.',
     'Loop with while/for. Stop works at any point, including inside a loop with no sleep.',
     'print() goes to the Output pane.',
+    'The instrument API is PascalCase (GetAiPhy, SetAo), NOT snake_case. The same names work in all three languages this app runs.',
   ],
   defaultScript: `-- sleep() is in SECONDS: sleep(1) waits one second.
 -- Loop with while/for. Press Stop to halt at any time.
@@ -186,7 +192,7 @@ local t = 0.0
 
 while true do
   -- example: slow sine wave on Parameter ch0
-  set_param(0, math.sin(t))
+  SetParam(0, math.sin(t))
   t = t + 0.1
   sleep(1)
 end`,

@@ -87,7 +87,7 @@ const host: BasicHost = {
   // Writes are messages: the Modbus transfer mutex and the minimum inter-frame
   // interval live on the main thread and must not be bypassed. Asynchronous, so
   // a GetAo() straight after a SetAo still reads the previous value until the
-  // main thread has applied and mirrored it — the same as Python's set_ao.
+  // main thread has applied and mirrored it — the same as Python's SetAo.
   setAo: (ch, data) => post({ type: 'set_ao', ch, data }),
   setAiTare: (ch) => post({ type: 'set_ai_tare', ch }),
   notify: (message) => post({ type: 'notify', message }),
