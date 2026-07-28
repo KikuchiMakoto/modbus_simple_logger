@@ -180,7 +180,7 @@ export function AppInfoPanel({
                     scope="row"
                     className="py-1 pr-2 text-left font-medium text-slate-600 dark:text-slate-300"
                   >
-                    Browser
+                    Desktop
                   </th>
                   <td className="py-1 text-slate-600 dark:text-slate-300">Chrome / Edge <span className="font-mono">89+</span></td>
                 </tr>
