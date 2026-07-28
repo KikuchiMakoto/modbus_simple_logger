@@ -144,7 +144,7 @@ export function FloatingWindow({
             height: ref.offsetHeight,
           });
         }}
-        className="pointer-events-auto overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_4px_10px_2px_rgba(0,0,0,0.45)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_0_12px_1px_rgba(255,255,255,0.18)]"
+        className="pointer-events-auto overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_4px_10px_2px_rgba(0,0,0,0.45)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_0_12px_1px_rgba(255,255,255,0.35)]"
         style={{ display: 'flex', flexDirection: 'column' }}
         onMouseDown={bringToFront}
         onTouchStart={bringToFront}
