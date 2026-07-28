@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
-import { probeRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
 import type { NotificationsState } from '../hooks/useNotifications';
 
@@ -50,7 +49,6 @@ export function AppInfoPanel({
   // the PyScriptRunner API list, next to the calls that raise them).
   notifications: NotificationsState;
 }) {
-  const backend = useRenderBackend();
   const [checking, setChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
@@ -65,12 +63,6 @@ export function AppInfoPanel({
       setChecking(false);
     }
   };
-
-  // Charts publish the backend once they render, but with no data yet there is
-  // no chart to ask — probe the browser directly so the panel is never blank.
-  useEffect(() => {
-    if (open && !backend) reportRenderBackend(probeRenderBackend());
-  }, [open, backend]);
 
   // Drop the last check's result on connect: it would otherwise reappear as
   // stale text once the device is disconnected again.
@@ -154,8 +146,7 @@ export function AppInfoPanel({
               <span>
                 <span className="font-semibold">Desktop notifications</span>
                 <span className="block text-xs text-slate-500 dark:text-slate-400">
-                  PyScriptRunner start / stop / completion and errors, plus set_notify() messages
-                  from a running script.
+                  PyScript Runner events and <span className="font-mono">set_notify()</span> messages.
                 </span>
               </span>
               <input
@@ -168,45 +159,93 @@ export function AppInfoPanel({
             </label>
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
               {!notifications.supported
-                ? 'This page has no access to the Notification API (remote monitoring pages served over plain http do not).'
+                ? 'Not available on this page.'
                 : notifications.permission === 'denied'
-                  ? 'Notifications are blocked for this site in the browser settings. Allow them there, then reload.'
+                  ? 'Blocked in browser settings. Allow them there, then reload.'
                   : notifications.enabled
-                    ? 'On. Repeated alerts replace each other instead of stacking, and everything notified is also written to the PyScriptRunner Output log.'
-                    : 'Off. Events are still written to the PyScriptRunner Output log.'}
+                    ? 'On. The output log keeps a copy of every event.'
+                    : 'Off. The output log keeps a copy of every event.'}
             </p>
           </div>
         </div>
 
         <div>
-          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Chart Rendering</h4>
-          <dl className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-slate-500 dark:text-slate-400">Backend</dt>
-              <dd className="flex items-center gap-2">
-                <span className="font-mono">{backend ? backend.api : 'detecting…'}</span>
-                {backend?.accel && (
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[0.6rem] font-semibold leading-none ${
-                      backend.accel === 'GPU'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                    }`}
+          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Browser Requirements</h4>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-800">
+            <p className="mb-2">
+              Chromium engine only. Safari and Firefox cannot use the serial
+              port. Mobile relies on the WebUSB fallback when Web Serial is
+              unavailable.
+            </p>
+            <table className="w-full border-collapse">
+              <tbody>
+                <tr className="border-t border-slate-200 dark:border-slate-700">
+                  <th
+                    scope="row"
+                    className="py-1 pr-2 text-left font-medium text-slate-600 dark:text-slate-300"
                   >
-                    {backend.accel}
-                  </span>
-                )}
-              </dd>
-            </div>
-            {backend && (
-              <div className="flex justify-between gap-3">
-                <dt className="shrink-0 text-slate-500 dark:text-slate-400">Renderer</dt>
-                <dd className="break-all text-right text-xs text-slate-600 dark:text-slate-300">
-                  {backend.detail}
-                </dd>
-              </div>
-            )}
-          </dl>
+                    Desktop
+                  </th>
+                  <td className="py-1 text-slate-600 dark:text-slate-300">Chrome / Edge <span className="font-mono">89+</span></td>
+                </tr>
+                <tr className="border-t border-slate-200 dark:border-slate-700">
+                  <th
+                    scope="row"
+                    className="py-1 pr-2 text-left font-medium text-slate-600 dark:text-slate-300"
+                  >
+                    Mobile
+                  </th>
+                  <td className="py-1 text-slate-600 dark:text-slate-300">Android Chrome <span className="font-mono">89+</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="mt-2 leading-relaxed">
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/Web_Serial_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                Web Serial
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/USB"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}WebUSB
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/File_System_Access_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}File System Access
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}Screen Wake Lock
+              </a>{' '}
+              /
+              <a
+                href="https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                {' '}SharedArrayBuffer
+              </a>
+            </p>
+          </div>
         </div>
 
         <div>

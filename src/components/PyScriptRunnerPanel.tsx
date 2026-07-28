@@ -32,7 +32,7 @@ const API_DOCS = [
 
 const buildAiPrompt = (channelLabels: ChannelLabels): string =>
   [
-    'Write a Python script for ModbusSimpleLogger PyScriptRunner (Pyodide; async context, top-level await OK).',
+    'Write a Python script for ModbusSimpleLogger PyScript Runner (Pyodide; async context, top-level await OK).',
     '',
     'API:',
     ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
@@ -83,7 +83,7 @@ export function PyScriptRunnerPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="PyScriptRunner"
+      title="PyScript Runner"
       subtitle="Python (Pyodide)"
       defaultWidth={640}
       defaultHeight={620}
@@ -91,7 +91,11 @@ export function PyScriptRunnerPanel({
         <>
           <button
             type="button"
-            className="button-primary py-1 text-sm"
+            className={
+              scriptRunner.scriptRunning
+                ? 'button-stop-save-pulse py-1 text-sm'
+                : 'button-primary py-1 text-sm'
+            }
             onClick={scriptRunner.toggleScriptRunner}
             disabled={!scriptRunner.scriptRunnerSupported}
           >
@@ -173,7 +177,7 @@ export function PyScriptRunnerPanel({
               Clear
             </button>
           </summary>
-          <div className="max-h-40 min-h-[3rem] overflow-auto px-3 pb-2 font-mono text-xs">
+          <div className="max-h-16 min-h-[2rem] overflow-auto px-3 pb-2 font-mono text-xs">
             {scriptLog.length === 0 ? (
               <p className="py-1 text-slate-400 dark:text-slate-500">
                 No output. print() goes here, along with errors and tracebacks.

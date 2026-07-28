@@ -98,6 +98,7 @@ import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
+import { ScriptStatusBar } from './components/ScriptStatusBar';
 import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
@@ -509,6 +510,24 @@ function App() {
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
   const [paramFreeLabels, setParamFreeLabels] = useState<string[]>(() => loadParamFreeLabels());
+
+  // Free-text labels keyed by chart axis key, so ChartPanel can show the user's
+  // label as the axis title instead of the raw "raw_00" / "phy_03" key. The
+  // index is zero-padded to two digits, exactly as axisOptions builds its keys
+  // — unpadded, the map would miss every channel below 10.
+  const chartAxisLabels = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (let i = 0; i < AI_CHANNELS; i++) {
+      const lbl = aiFreeLabels[i] ?? '';
+      const n = i.toString().padStart(2, '0');
+      if (lbl) { m[`raw_${n}`] = lbl; m[`phy_${n}`] = lbl; }
+    }
+    for (let i = 0; i < PARAM_CHANNELS; i++) {
+      const lbl = paramFreeLabels[i] ?? '';
+      if (lbl) m[`par_${i.toString().padStart(2, '0')}`] = lbl;
+    }
+    return m;
+  }, [aiFreeLabels, paramFreeLabels]);
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
   // AO and Parameter start collapsed: AI is what a session is normally watching,
@@ -2358,7 +2377,7 @@ function App() {
   // quarter too tall at 125%, for a scrollbar on an otherwise empty page.
   return (
     <div>
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/50 backdrop-blur dark:border-slate-800 dark:bg-slate-950/50">
         {/* The header is sticky, so every pixel it takes is a pixel the channel
             grid never gets back. Title, serial settings and the save status sit
             on ONE row (wrapping only when the window is too narrow for it)
@@ -2368,7 +2387,7 @@ function App() {
         <div className="px-2 py-1">
           <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0">
-              <h1 className="text-lg font-bold leading-tight">
+              <h1 className="hidden text-lg font-bold leading-tight lg:block">
                 <a
                   href="https://github.com/KikuchiMakoto/modbus_simple_logger"
                   target="_blank"
@@ -2756,6 +2775,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart1X}
           yAxis={chart1Y}
           isDarkMode={isDarkMode}
@@ -2768,6 +2788,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart2X}
           yAxis={chart2Y}
           isDarkMode={isDarkMode}
@@ -2780,6 +2801,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart3X}
           yAxis={chart3Y}
           isDarkMode={isDarkMode}
@@ -2792,6 +2814,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
           xAxis={chart4X}
           yAxis={chart4Y}
           isDarkMode={isDarkMode}
@@ -2909,6 +2932,19 @@ function App() {
         status={viewerHost.status}
         onEnabledChange={viewerHost.setEnabled}
       />
+
+      {/* Not on a viewer: it has no menu, so PyScript Runner is unreachable
+          there and a bar reporting its state would describe a feature the
+          window does not offer. */}
+      {!isViewerMode && (
+        <ScriptStatusBar
+          running={scriptRunner.scriptRunning}
+          outcome={scriptRunner.scriptRun.outcome}
+          source={scriptRunner.scriptSource}
+          status={scriptRunner.scriptRunnerStatus}
+          lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
+        />
+      )}
     </div>
   );
 }

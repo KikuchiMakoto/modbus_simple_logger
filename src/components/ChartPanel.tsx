@@ -27,6 +27,10 @@ interface ChartPanelProps {
    * one, bounding GPU-side accumulation over long sessions. */
   purgeEpoch: number;
   axisOptions: AxisOption[];
+  /** Free-text labels keyed by axis key (e.g. "raw_0", "par_3"). When present
+   * and non-empty, the axis title shows the label instead of the raw key.
+   * The "time" axis never has a label. */
+  axisLabels: Record<string, string>;
   xAxis: string;
   yAxis: string;
   isDarkMode: boolean;
@@ -114,6 +118,7 @@ function ChartPanelComponent({
   displayRevision,
   purgeEpoch,
   axisOptions,
+  axisLabels,
   xAxis,
   yAxis,
   isDarkMode,
@@ -237,6 +242,13 @@ function ChartPanelComponent({
     };
   }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty]);
 
+  // Time axis has no label; every other axis shows the free-text label when
+  // the user has entered one, and nothing when it is blank — the dropdown
+  // already identifies the channel, so a redundant "raw_0" on the axis is
+  // noise.
+  const axisTitle = (key: string): string =>
+    key === 'time' ? '' : (axisLabels[key] ?? '');
+
   const plotLayout = useMemo(
     () => ({
       autosize: true,
@@ -244,7 +256,7 @@ function ChartPanelComponent({
       plot_bgcolor: palette.plot,
       font: { color: palette.text },
       xaxis: {
-        title: { text: xAxis },
+        title: { text: axisTitle(xAxis) },
         gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
         // Explicit padded range (matplotlib-style 10% X margin). Falls back to
@@ -255,7 +267,7 @@ function ChartPanelComponent({
           : { autorange: true as const }),
       },
       yaxis: {
-        title: { text: yAxis },
+        title: { text: axisTitle(yAxis) },
         gridcolor: palette.grid,
         ...(plot.yRange
           ? { range: plot.yRange, autorange: false as const }
@@ -270,7 +282,7 @@ function ChartPanelComponent({
       uirevision: `${xAxis}-${yAxis}`,
       datarevision: displayRevision,
     }),
-    [xAxis, yAxis, palette, displayRevision, plot],
+    [xAxis, yAxis, palette, displayRevision, plot, axisLabels],
   );
 
   const plotConfig = useMemo(
@@ -343,8 +355,11 @@ function ChartPanelComponent({
                     : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
               }`}
             >
-              {backend.api}
-              {backend.accel ? ` · ${backend.accel}` : ''}
+              {/* GPU / CPU is the only part worth a badge; the API name is in
+                  the hover note below. `||` not `??`: accel is '' (not null)
+                  on the SVG/Canvas2D path, where the API name is all there
+                  is to show. */}
+              {backend.accel || backend.api}
             </span>
             <div
               id={backendNoteId}

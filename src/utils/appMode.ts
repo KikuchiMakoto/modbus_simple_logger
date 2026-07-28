@@ -63,3 +63,29 @@ export const viewerToken = (): string | null => {
   if (!isViewerMode || typeof window === 'undefined') return null;
   return new URLSearchParams(window.location.search).get('k');
 };
+
+/**
+ * Whether this browser can run the app at all. Two transports are accepted,
+ * matching what the app actually drives:
+ *
+ * - Desktop: Web Serial (`navigator.serial`) *and* the File System Access
+ *   picker (`showSaveFilePicker`). Both are required together. Firefox 151+
+ *   gained Web Serial but not the picker, so its users could connect and then
+ *   not save — the app refuses to render rather than offer that half-working
+ *   surface.
+ * - Mobile: WebUSB (`navigator.usb`), which is what `web-serial-polyfill`
+ *   drives on Android Chrome. That platform has neither Web Serial nor the
+ *   picker, so the desktop test above rejects it; it is a supported target
+ *   (see the polyfill wiring in App.tsx and webserialClient.ts) and gets its
+ *   own branch. WebUSB is also absent from Firefox and Safari, so accepting
+ *   it does not reopen the door to them.
+ *
+ * Viewer pages are exempt: they only consume a push-only WebSocket feed and
+ * never touch any of these APIs.
+ */
+export const isSupportedBrowser = (): boolean => {
+  if (isViewerMode) return true;
+  if (typeof window === 'undefined') return true; // SSR guard, never happens here
+  if ('serial' in navigator && typeof window.showSaveFilePicker === 'function') return true;
+  return 'usb' in navigator;
+};

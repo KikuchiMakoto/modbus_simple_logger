@@ -61,6 +61,16 @@ body {
   zoom: var(--ui-scale, 1);
 }
 
+/* Desktop launcher (exe) only: keep the body at a readable width when the
+   `--app` window is dragged small. The launcher stamps `class="msl-launcher"`
+   onto <html> at serve time (launcher/server.ts), so this never applies to
+   the web build or PWA — mobile and tiny browser windows must keep wrapping.
+   480px is the sm breakpoint: below it the window contents scroll sideways
+   instead of the layout collapsing to a single stacked column. */
+html.msl-launcher body {
+  min-width: 480px;
+}
+
 .card {
   @apply rounded-md bg-white shadow-lg border border-slate-200 p-2 dark:bg-slate-900 dark:border-slate-800;
 }
