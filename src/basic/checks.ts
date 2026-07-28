@@ -196,15 +196,33 @@ expect('replace', 'Print Replace("a-b-c", "-", "+")', 'a+b+c\n');
 expect('strreverse', 'Print StrReverse("abc")', 'cba\n');
 expect('isnumeric', 'Print IsNumeric("12.5"); IsNumeric("x")', '-1  0 \n');
 
-// --- Sleep units notice (VBA users type milliseconds) ----------------------
-expect('sleep units notice once', 'Sleep 1000\nSleep 1000\nPrint "x"',
-  '<warn Sleep 1000 waits 16.7 minutes: Sleep takes seconds, not milliseconds (line 1).>x\n');
-expect('short sleep is quiet', 'Sleep 1\nPrint "x"', 'x\n');
+// --- VB.NET spellings, accepted alongside VB6's ----------------------------
+expect('end while', 'I = 0\nWhile I < 2\nI = I + 1\nEnd While\nPrint I', ' 2 \n');
+expect('wend still works', 'I = 0\nWhile I < 2\nI = I + 1\nWend\nPrint I', ' 2 \n');
+expect('exit while', 'I = 0\nWhile 1\nI = I + 1\nIf I = 3 Then Exit While\nEnd While\nPrint I', ' 3 \n');
+expect('end alone inside while', 'While 1\nEnd\nEnd While\nPrint "no"', '');
+expect('compound add', 'A = 1\nA += 2\nPrint A', ' 3 \n');
+expect('compound all', 'A = 10\nA -= 2\nA *= 3\nA /= 4\nA ^= 2\nPrint A', ' 36 \n');
+expect('compound concat', 'S = "a"\nS &= "b"\nPrint S', 'ab\n');
+expect('compound on array', 'Dim A(2)\nA(1) = 5\nA(1) += 3\nPrint A(1)', ' 8 \n');
+expect('andalso is boolean', 'Print 5 AndAlso 3', '-1 \n');
+expect('and stays bitwise', 'Print 5 And 3', ' 1 \n');
+// Short-circuit: the right side must not run, so the guard actually guards.
+expect('andalso short circuits', 'N = 0\nIf (N <> 0) AndAlso (10 / N > 1) Then Print "a"\nPrint "ok"', 'ok\n');
+expect('orelse short circuits', 'N = 0\nIf (N = 0) OrElse (10 / N > 1) Then Print "ok"', 'ok\n');
+
+// --- DoEvents: accepted, and unnecessary -----------------------------------
+expect('doevents accepted', 'For I = 1 To 2\nDoEvents\nNext\nPrint "ok"', 'ok\n');
+
+// --- Sleep is milliseconds -------------------------------------------------
+expect('sleep units notice once', 'Sleep 1\nSleep 1\nPrint "x"',
+  '<warn Sleep 1 waits 1 ms: Sleep takes milliseconds, not seconds. Use Sleep 1000 for 1 second(s) (line 1).>x\n');
+expect('normal sleep is quiet', 'Sleep 1000\nPrint "x"', 'x\n');
 
 // --- sleep ------------------------------------------------------------------
 {
   checks += 1;
-  const { text, sleeps } = run('Print "a"\nSleep 0.25\nPrint "b"');
+  const { text, sleeps } = run('Print "a"\nSleep 250\nPrint "b"');
   if (text !== 'a\nb\n' || sleeps.length !== 1 || sleeps[0] !== 250) {
     failures += 1;
     console.log(`FAIL sleep: text=${JSON.stringify(text)} sleeps=${JSON.stringify(sleeps)}`);

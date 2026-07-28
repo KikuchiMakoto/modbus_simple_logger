@@ -46,9 +46,9 @@ Else
 End If
 
 For i = 開始 To 終了 [Step 増分]     ... Next [i]
-While 条件 ... Wend
+While 条件 ... Wend            ' End While も可（VB.NET 綴り）
 Do [While 条件 | Until 条件] ... Loop [While 条件 | Until 条件]   ' 4 形すべて
-Exit For / Exit Do
+Exit For / Exit Do / Exit While
 
 Select Case 式
   Case 値[, 値...]
@@ -57,7 +57,8 @@ End Select
 
 GoTo ラベル                    GoSub ラベル ... Return
 Print [式][; | ,] ...
-Sleep 秒                       ' 小数可。Sleep 0.1 は 100 ms
+Sleep ミリ秒                   ' 小数可。Sleep 1000 で 1 秒
+DoEvents                       ' 受理するが何もしない（不要）
 End / Stop
 ```
 
@@ -81,8 +82,8 @@ End / Stop
 ### 演算子（結合の緩い順）
 
 ```
-Or  Xor
-And
+Or  Xor  OrElse
+And  AndAlso
 Not
 =  <>  <  >  <=  >=
 &                       ' 文字列連結
@@ -92,10 +93,15 @@ Not
 - +                     ' 単項
 ```
 
+複合代入 `+= -= *= /= \= ^= &=` も受理する（VB.NET 綴り）。`A += 1` は `A = A + 1` に展開されるため、
+**添字付きの左辺では添字が 2 回評価される** — `A(GetAiPhy(0)) += 1` は計器を 2 回読む。
+
 VB6 の意味論をそのまま持っている。ここは「簡略化した BASIC」との差が出るところ:
 
 - **真は `-1`、偽は `0`。** `And` `Or` `Xor` `Not` は**ビット演算**。
   `Not -1` が `0` になるので論理演算としても正しく働き、`5 And 3` は `1`。
+  `AndAlso` `OrElse` は VB.NET と同じく**短絡評価**で、結果は `-1` / `0`
+  （`5 AndAlso 3` は `-1`、`5 And 3` は `1`）。右辺を評価させたくない番兵に使う。
 - `+` は**両辺とも文字列のときだけ**連結。曖昧さのない綴りは `&`。
 - `\`（整数除算）と `Mod` は**整数演算**。`7.5 Mod 2` は `1`（`1.5` ではない）。
 - `/` の 0 除算は実行時エラー。
@@ -176,11 +182,24 @@ Python 側（`get_ai_phy` など）と同じ機能を同じ名前で持つ。**�
 `Stop` はいつでも効く。インタプリタがフラットな命令配列上のプログラムカウンタなので、
 **出口のない `Do ... Loop` でも数 ms ごとに制御が戻る**。スクリプト側の配慮は要らない。
 
-`Sleep` の単位は**秒**（QBasic 準拠）。`Sleep 0.1` が 100 ms。
+`Sleep` の単位は**ミリ秒**。`Sleep 1000` で 1 秒、`Sleep 100` で 100 ms。小数も可。
 
-> VBA の `Sleep` は Win32 API でミリ秒を取るため、`Sleep 1000` と書くと
-> **16.7 分**待つことになる。100 秒以上の `Sleep` には 1 回だけ注意書きを出すが、
-> エラーにはしない（試験によっては 1 時間待つのが正しいため）。
+VB6 自体に `Sleep` 文は無く、VB6/VBA で実際に待つ 2 つの方法 — `Declare Sub Sleep Lib "kernel32"` と
+VB.NET の `Thread.Sleep` — がどちらもミリ秒なので、それに合わせている。
+
+> QBasic / N88 の `SLEEP` は**秒**なので、その流儀で `Sleep 1` と書くと 1 ミリ秒になる。
+> 20 ms 未満の `Sleep` には 1 回だけ注意書きを出す（エラーにはしない）。
+
+VB6 の古典的な待ち方 — `Timer` を使ったビジーループ — も**そのまま動く**:
+
+```basic
+t0 = Timer
+Do While Timer < t0 + 1     ' 1 秒待つ
+Loop
+```
+
+`DoEvents` は要らない（停止も UI も構造的に保証されている）。ただしこのループは CPU を
+回し続けるので、待つだけなら `Sleep 1000` を使うこと。
 
 ---
 

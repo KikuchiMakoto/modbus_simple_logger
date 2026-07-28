@@ -35,8 +35,10 @@ export class BasicSyntaxError extends Error {
   }
 }
 
-// Longest first: `<=` must win over `<`, `<>` over `<`.
+// Longest first: `<=` must win over `<`, `<>` over `<`, and every compound
+// assignment over the bare operator it is built from.
 const OPERATORS = [
+  '+=', '-=', '*=', '/=', '\\=', '^=', '&=',
   '<=', '>=', '<>', '=', '<', '>',
   '+', '-', '*', '/', '\\', '^', '&',
   '(', ')', ',', ';',

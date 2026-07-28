@@ -55,8 +55,12 @@ const MAX_GOSUB_DEPTH = 1000;
  * enough that a tight numeric loop still yields on time. */
 const DEADLINE_CHECK_INTERVAL = 256;
 
-/** Above this, a Sleep argument is likely to be VBA milliseconds. See 'sleep'. */
-const SLEEP_UNITS_NOTICE_SECONDS = 100;
+/**
+ * Below this, a Sleep argument was probably meant as QBasic seconds. See
+ * 'sleep'. Set under the polling interval's own floor, so no wait anybody
+ * writes on purpose falls beneath it.
+ */
+const SLEEP_UNITS_NOTICE_MS = 20;
 
 export class BasicInterpreter {
   private readonly instrs: Instr[];
@@ -236,26 +240,26 @@ export class BasicInterpreter {
       }
 
       case 'sleep': {
-        const seconds = toNum(this.evaluate(instr.seconds), instr.line);
-        if (Number.isNaN(seconds)) throw new BasicRuntimeError('Sleep needs a number of seconds', instr.line);
+        const ms = toNum(this.evaluate(instr.milliseconds), instr.line);
+        if (Number.isNaN(ms)) throw new BasicRuntimeError('Sleep needs a number of milliseconds', instr.line);
         this.pc += 1;
-        // Sleep is in SECONDS with a fractional part, as in QBasic — `Sleep 0.1`
-        // is 100 ms. Milliseconds would make the innocuous-looking `Sleep 1` a
-        // 1 ms busy loop hammering the Modbus link.
+        // Sleep is in MILLISECONDS: VB6 has no Sleep statement of its own, and
+        // both ways a VB6/VBA user actually waits — the kernel32 Declare and
+        // VB.NET's Thread.Sleep — take milliseconds.
         //
-        // But VBA's Sleep is the Win32 one, which takes MILLISECONDS, and this
-        // dialect's audience includes people who learned it there. `Sleep 1000`
-        // meaning 16.7 minutes looks exactly like a hung script, so say so once
-        // — a notice rather than an error, because waiting an hour between
-        // readings is perfectly legitimate in a consolidation test.
-        if (seconds >= SLEEP_UNITS_NOTICE_SECONDS && !this.warnedAboutSleepUnits) {
+        // The cost is that QBasic and N88 spell the same wait in seconds, so
+        // `Sleep 1` from that direction means one second and gets one
+        // millisecond: a loop that hammers the Modbus link rather than an
+        // obvious hang. Hence the notice, once per run, below the point where
+        // any deliberate wait would land.
+        if (ms > 0 && ms < SLEEP_UNITS_NOTICE_MS && !this.warnedAboutSleepUnits) {
           this.warnedAboutSleepUnits = true;
           this.host.warn(
-            `Sleep ${cstr(seconds)} waits ${cstr(bankersRound(seconds / 60, 1))} minutes: ` +
-              'Sleep takes seconds, not milliseconds (line ' + instr.line + ').',
+            `Sleep ${cstr(ms)} waits ${cstr(ms)} ms: Sleep takes milliseconds, not seconds. ` +
+              `Use Sleep ${cstr(bankersRound(ms * 1000))} for ${cstr(ms)} second(s) (line ${instr.line}).`,
           );
         }
-        return Math.max(0, seconds * 1000);
+        return Math.max(0, ms);
       }
 
       case 'call': {
@@ -438,6 +442,20 @@ export class BasicInterpreter {
 
   private evaluateBinary(expr: Extract<Expr, { kind: 'binary' }>): BasicValue {
     const line = this.instrs[Math.min(this.pc, this.instrs.length - 1)]?.line ?? 0;
+
+    // VB.NET's short-circuit pair, handled before the right side is touched —
+    // which is the entire difference between them and And/Or. They also return
+    // a Boolean rather than a bitwise result, so `x AndAlso y` is -1 or 0 where
+    // `x And y` would be the bits the two have in common.
+    if (expr.op === 'ANDALSO') {
+      if (toNum(this.evaluate(expr.left), line) === 0) return bool(false);
+      return bool(toNum(this.evaluate(expr.right), line) !== 0);
+    }
+    if (expr.op === 'ORELSE') {
+      if (toNum(this.evaluate(expr.left), line) !== 0) return bool(true);
+      return bool(toNum(this.evaluate(expr.right), line) !== 0);
+    }
+
     const left = this.evaluate(expr.left);
     const right = this.evaluate(expr.right);
 

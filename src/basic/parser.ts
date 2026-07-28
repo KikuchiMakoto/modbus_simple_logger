@@ -38,7 +38,7 @@ export type Instr =
   | { op: 'forNext'; name: string; top: number; line: number }
   | { op: 'gosub'; target: number; line: number }
   | { op: 'return'; line: number }
-  | { op: 'sleep'; seconds: Expr; line: number }
+  | { op: 'sleep'; milliseconds: Expr; line: number }
   | { op: 'call'; name: string; spelling: string; args: Expr[]; line: number }
   | { op: 'end'; line: number };
 
@@ -55,7 +55,25 @@ const RESERVED = new Set([
   'IF', 'THEN', 'ELSE', 'ELSEIF', 'END', 'FOR', 'TO', 'STEP', 'NEXT', 'WHILE', 'WEND',
   'DO', 'LOOP', 'UNTIL', 'SELECT', 'CASE', 'GOTO', 'GOSUB', 'RETURN', 'DIM', 'AS', 'CONST',
   'PRINT', 'SLEEP', 'STOP', 'EXIT', 'LET', 'CALL', 'REM', 'AND', 'OR', 'NOT', 'XOR', 'MOD',
+  'ANDALSO', 'ORELSE',
 ]);
+
+/**
+ * VB.NET's compound assignments, mapped to the operator they expand to.
+ *
+ * Not VB6 syntax, but adding them conflicts with nothing: VB6 has no other
+ * meaning for `+=`, so accepting it costs a user nothing and saves the one who
+ * learned it in VB.NET from a syntax error on a line that reads correctly.
+ */
+const COMPOUND_ASSIGN: Record<string, string> = {
+  '+=': '+',
+  '-=': '-',
+  '*=': '*',
+  '/=': '/',
+  '\\=': '\\',
+  '^=': '^',
+  '&=': '&',
+};
 
 type LoopFrame = {
   kind: 'for' | 'do' | 'while';
@@ -160,7 +178,9 @@ class Parser {
     let left = this.parseAnd();
     for (;;) {
       const t = this.peek();
-      if (t.kind === 'ident' && (t.upper === 'OR' || t.upper === 'XOR')) {
+      // OrElse sits at Or's precedence, as in VB.NET. It differs only in that
+      // it short-circuits and yields a Boolean rather than a bitwise result.
+      if (t.kind === 'ident' && (t.upper === 'OR' || t.upper === 'XOR' || t.upper === 'ORELSE')) {
         this.pos += 1;
         left = { kind: 'binary', op: t.upper, left, right: this.parseAnd() };
       } else return left;
@@ -169,11 +189,12 @@ class Parser {
 
   private parseAnd(): Expr {
     let left = this.parseNot();
-    while (this.atKeyword('AND')) {
+    for (;;) {
+      const t = this.peek();
+      if (t.kind !== 'ident' || (t.upper !== 'AND' && t.upper !== 'ANDALSO')) return left;
       this.pos += 1;
-      left = { kind: 'binary', op: 'AND', left, right: this.parseNot() };
+      left = { kind: 'binary', op: t.upper, left, right: this.parseNot() };
     }
-    return left;
   }
 
   private parseNot(): Expr {
@@ -298,7 +319,8 @@ class Parser {
     if (!this.atKeyword(...stops)) return false;
     if (this.peek().upper !== 'END') return true;
     const after = this.peek(1);
-    return after.kind === 'ident' && (after.upper === 'IF' || after.upper === 'SELECT');
+    return after.kind === 'ident'
+      && (after.upper === 'IF' || after.upper === 'SELECT' || after.upper === 'WHILE');
   }
 
   /** Parse statements until one of `stops` is the next keyword. */
@@ -356,6 +378,7 @@ class Parser {
         case 'GOSUB': return this.parseGoto(line, 'gosub');
         case 'RETURN': this.pos += 1; this.emit({ op: 'return', line }); return;
         case 'SLEEP': return this.parseSleep(line);
+        case 'DOEVENTS': return this.parseDoEvents(line);
         case 'EXIT': return this.parseExit(line);
         case 'STOP': this.pos += 1; this.emit({ op: 'end', line }); return;
         case 'END': this.pos += 1; this.emit({ op: 'end', line }); return;
@@ -396,7 +419,10 @@ class Parser {
       if (tok.kind === 'op') {
         if (tok.text === '(') depth += 1;
         else if (tok.text === ')') depth -= 1;
-        else if (tok.text === '=' && depth === 0) { isAssignment = true; break; }
+        else if (depth === 0 && (tok.text === '=' || tok.text in COMPOUND_ASSIGN)) {
+          isAssignment = true;
+          break;
+        }
       }
     }
     this.pos = start;
@@ -449,8 +475,22 @@ class Parser {
       if (!this.atOp(')')) { do { indices.push(this.parseExpr()); } while (this.takeOp(',')); }
       this.expectOp(')');
     }
-    this.expectOp('=');
-    const value = this.parseExpr();
+    const compoundOp = Object.keys(COMPOUND_ASSIGN).find((op) => this.atOp(op));
+    if (compoundOp) this.pos += 1;
+    else this.expectOp('=');
+
+    let value = this.parseExpr();
+    if (compoundOp) {
+      // `A += 1` expands to `A = A + 1`. For a subscripted target the index
+      // expression therefore appears twice and is evaluated twice, so
+      // `A(GetAiPhy(0)) += 1` reads the instrument two times. Noted in
+      // README-dialect.md; making it a single evaluation would need a
+      // temporary, which the flat instruction set has no slot for.
+      const current: Expr = indices.length === 0
+        ? { kind: 'var', name: name.upper }
+        : { kind: 'index', name: name.upper, spelling: name.text, args: indices };
+      value = { kind: 'binary', op: COMPOUND_ASSIGN[compoundOp], left: current, right: value };
+    }
     this.emit({ op: 'assign', target: { name: name.upper, indices }, value, line });
   }
 
@@ -491,7 +531,21 @@ class Parser {
 
   private parseSleep(line: number): void {
     this.expectKeyword('SLEEP');
-    this.emit({ op: 'sleep', seconds: this.parseExpr(), line });
+    this.emit({ op: 'sleep', milliseconds: this.parseExpr(), line });
+  }
+
+  /**
+   * `DoEvents` — accepted and does nothing.
+   *
+   * In VB6 it is what keeps the UI alive during a busy-wait, and users of that
+   * idiom type it reflexively. Here it is unnecessary: the interpreter hands
+   * control back every few milliseconds on its own, so Stop and the UI work
+   * whether or not it is written. Rejecting it would fail scripts that are
+   * correct VB6 for a line that is merely redundant.
+   */
+  private parseDoEvents(line: number): void {
+    this.pos += 1;
+    this.emit({ op: 'sleep', milliseconds: { kind: 'num', value: 0 }, line });
   }
 
   private parseGoto(line: number, op: 'jump' | 'gosub'): void {
@@ -509,8 +563,13 @@ class Parser {
   private parseExit(line: number): void {
     this.expectKeyword('EXIT');
     const what = this.next();
-    const kind = what.upper === 'FOR' ? 'for' : what.upper === 'DO' ? 'do' : null;
-    if (!kind) throw new BasicSyntaxError("Expected 'For' or 'Do' after Exit", line);
+    // `Exit While` is VB.NET's; VB6 has no way out of a While at all, so this
+    // adds a capability rather than a spelling.
+    const kind = what.upper === 'FOR' ? 'for'
+      : what.upper === 'DO' ? 'do'
+      : what.upper === 'WHILE' ? 'while'
+      : null;
+    if (!kind) throw new BasicSyntaxError("Expected 'For', 'Do' or 'While' after Exit", line);
     // Innermost matching loop. A `Exit For` inside a Do inside a For should
     // leave the For, so search outwards rather than taking the top of stack.
     for (let i = this.loops.length - 1; i >= 0; i -= 1) {
@@ -644,9 +703,14 @@ class Parser {
     const exit = this.emit({ op: 'jumpIfFalse', cond, target: -1, line });
     const frame: LoopFrame = { kind: 'while', exits: [] };
     this.loops.push(frame);
-    this.parseBlock(['WEND']);
+    this.parseBlock(['WEND', 'END']);
     this.loops.pop();
-    this.expectKeyword('WEND');
+    // `Wend` is VB6's spelling and `End While` is VB.NET's. Both are accepted;
+    // they mean the same thing and nothing else can follow a While block.
+    if (!this.takeKeyword('WEND')) {
+      this.expectKeyword('END');
+      this.expectKeyword('WHILE');
+    }
     this.emit({ op: 'jump', target: top, line });
     (this.instrs[exit] as { target: number }).target = this.instrs.length;
     this.closeLoop(frame);
