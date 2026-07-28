@@ -53,7 +53,7 @@ export type Program = {
 // becoming a variable.
 const RESERVED = new Set([
   'IF', 'THEN', 'ELSE', 'ELSEIF', 'END', 'FOR', 'TO', 'STEP', 'NEXT', 'WHILE', 'WEND',
-  'DO', 'LOOP', 'UNTIL', 'SELECT', 'CASE', 'GOTO', 'GOSUB', 'RETURN', 'DIM', 'AS',
+  'DO', 'LOOP', 'UNTIL', 'SELECT', 'CASE', 'GOTO', 'GOSUB', 'RETURN', 'DIM', 'AS', 'CONST',
   'PRINT', 'SLEEP', 'STOP', 'EXIT', 'LET', 'CALL', 'REM', 'AND', 'OR', 'NOT', 'XOR', 'MOD',
 ]);
 
@@ -69,6 +69,8 @@ class Parser {
   private readonly labels = new Map<string, number>();
   private readonly gotoFixups: { index: number; label: string; line: number }[] = [];
   private readonly loops: LoopFrame[] = [];
+  /** Names introduced by `Const`. Assigning to one is a compile-time error. */
+  private readonly constants = new Set<string>();
 
   constructor(private readonly tokens: Token[]) {}
 
@@ -342,6 +344,7 @@ class Parser {
     if (t.kind === 'ident') {
       switch (t.upper) {
         case 'LET': this.pos += 1; return this.parseAssignment(line);
+        case 'CONST': return this.parseConst(line);
         case 'DIM': return this.parseDim(line);
         case 'PRINT': return this.parsePrint(line);
         case 'IF': return this.parseIf(line);
@@ -407,11 +410,40 @@ class Parser {
     this.emit({ op: 'call', name: name.upper, spelling: name.text, args, line });
   }
 
+  /**
+   * `Const G = 9.81`, possibly several separated by commas.
+   *
+   * Compiles to a plain assignment; the constness is enforced here at parse
+   * time, which costs nothing at run time and reports the mistake with the line
+   * that made it rather than the line that used it.
+   */
+  private parseConst(line: number): void {
+    this.expectKeyword('CONST');
+    do {
+      const name = this.peek();
+      if (name.kind !== 'ident' || RESERVED.has(name.upper)) {
+        throw new BasicSyntaxError(`'${name.text}' cannot be a constant name`, line);
+      }
+      this.parseAssignment(line);
+      this.constants.add(name.upper);
+    } while (this.takeOp(','));
+  }
+
+  /** Reject a write to a `Const`. Used by assignment and by `For`. */
+  private assertAssignable(name: string, spelling: string, line: number): void {
+    if (this.constants.has(name)) {
+      throw new BasicSyntaxError(`'${spelling}' is a constant and cannot be assigned`, line);
+    }
+  }
+
   private parseAssignment(line: number): void {
     const name = this.next();
     if (name.kind !== 'ident' || RESERVED.has(name.upper)) {
       throw new BasicSyntaxError(`Cannot assign to '${name.text}'`, line);
     }
+    // Skipped for the defining `Const X = 1` itself, which registers the name
+    // only after this returns.
+    this.assertAssignable(name.upper, name.text, line);
     const indices: Expr[] = [];
     if (this.takeOp('(')) {
       if (!this.atOp(')')) { do { indices.push(this.parseExpr()); } while (this.takeOp(',')); }
@@ -579,6 +611,7 @@ class Parser {
     this.expectKeyword('FOR');
     const name = this.next();
     if (name.kind !== 'ident') throw new BasicSyntaxError('Expected a loop variable after For', line);
+    this.assertAssignable(name.upper, name.text, line);
     this.expectOp('=');
     const from = this.parseExpr();
     this.expectKeyword('TO');

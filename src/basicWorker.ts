@@ -73,6 +73,13 @@ const host: BasicHost = {
   write: (text) => {
     outputBuffer += text;
   },
+  // Sent on stderr and out of band of the buffered Print stream, so a notice
+  // about a script that is about to sit still for 20 minutes is not itself
+  // stuck behind the next flush.
+  warn: (text) => {
+    flushOutput();
+    post({ type: 'output', stream: 'stderr', text: `${text}\n` });
+  },
   getAiRaw: (ch) => readShare(aiRawShare, ch),
   getAiPhy: (ch) => readShare(aiPhysicalShare, ch),
   getAo: (ch) => readShare(aoShare, ch),

@@ -34,6 +34,8 @@ import {
 export type BasicHost = {
   /** Raw text, no newline appended — Print decides its own line breaks. */
   write(text: string): void;
+  /** A non-fatal notice: the run continues, but something looks wrong. */
+  warn(text: string): void;
   getAiRaw(ch: number): number;
   getAiPhy(ch: number): number;
   getAo(ch: number): number;
@@ -257,6 +259,26 @@ export const BUILTINS: Record<string, Builtin> = {
       const source = str(a, 0);
       if (source === '') throw new BasicRuntimeError('Asc of an empty string', c.line);
       return source.charCodeAt(0);
+    },
+  },
+  REPLACE: {
+    min: 3,
+    max: 3,
+    fn: (a) => str(a, 0).split(str(a, 1)).join(str(a, 2)),
+  },
+  STRREVERSE: { min: 1, max: 1, fn: (a) => [...str(a, 0)].reverse().join('') },
+  /**
+   * True when Val() would find a complete number. The guard to write before
+   * trusting text that came from outside the script.
+   */
+  ISNUMERIC: {
+    min: 1,
+    max: 1,
+    fn: (a) => {
+      const value = a[0];
+      if (typeof value === 'number') return bool(true);
+      const text = toStr(value).trim();
+      return bool(text !== '' && !Number.isNaN(Number(text)));
     },
   },
   HEX: { min: 1, max: 1, fn: (a, c) => (int(a, 0, c) >>> 0).toString(16).toUpperCase() },

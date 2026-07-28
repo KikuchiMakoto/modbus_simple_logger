@@ -17,7 +17,9 @@ import { parse, type Expr, type Instr, type Program } from './parser';
 import {
   BasicRuntimeError,
   EMPTY,
+  bankersRound,
   bool,
+  cstr,
   printNumber,
   toNum,
   toStr,
@@ -53,6 +55,9 @@ const MAX_GOSUB_DEPTH = 1000;
  * enough that a tight numeric loop still yields on time. */
 const DEADLINE_CHECK_INTERVAL = 256;
 
+/** Above this, a Sleep argument is likely to be VBA milliseconds. See 'sleep'. */
+const SLEEP_UNITS_NOTICE_SECONDS = 100;
+
 export class BasicInterpreter {
   private readonly instrs: Instr[];
   private pc = 0;
@@ -67,6 +72,7 @@ export class BasicInterpreter {
   private readonly startedAt: number;
   private seed: number;
   private previousRandom = 0;
+  private warnedAboutSleepUnits = false;
 
   constructor(
     program: Program,
@@ -236,6 +242,19 @@ export class BasicInterpreter {
         // Sleep is in SECONDS with a fractional part, as in QBasic — `Sleep 0.1`
         // is 100 ms. Milliseconds would make the innocuous-looking `Sleep 1` a
         // 1 ms busy loop hammering the Modbus link.
+        //
+        // But VBA's Sleep is the Win32 one, which takes MILLISECONDS, and this
+        // dialect's audience includes people who learned it there. `Sleep 1000`
+        // meaning 16.7 minutes looks exactly like a hung script, so say so once
+        // — a notice rather than an error, because waiting an hour between
+        // readings is perfectly legitimate in a consolidation test.
+        if (seconds >= SLEEP_UNITS_NOTICE_SECONDS && !this.warnedAboutSleepUnits) {
+          this.warnedAboutSleepUnits = true;
+          this.host.warn(
+            `Sleep ${cstr(seconds)} waits ${cstr(bankersRound(seconds / 60, 1))} minutes: ` +
+              'Sleep takes seconds, not milliseconds (line ' + instr.line + ').',
+          );
+        }
         return Math.max(0, seconds * 1000);
       }
 
