@@ -11,6 +11,7 @@ import App from './App';
 import './index.css';
 import { setupServiceWorker } from './utils/swUpdate';
 import { initUiScale } from './utils/uiScale';
+import { isSupportedBrowser } from './utils/appMode';
 
 // Before the first render, not from inside a component: restoring the stored UI
 // scale after mount would paint one frame at 100% and reflow the entire page.
@@ -60,12 +61,51 @@ class ErrorBoundary extends React.Component<
   }
 }
 
+class UnsupportedBrowserBanner extends React.Component {
+  render() {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        <h1 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+          Unsupported browser
+        </h1>
+        <p className="max-w-md text-center text-sm text-slate-600 dark:text-slate-400">
+          ModbusSimpleLogger needs the Web Serial and File System Access APIs,
+          which only the Chromium engine ships. Please open this page in the
+          latest Google Chrome or Microsoft Edge (desktop, or Android Chrome
+          for mobile).
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <a
+            href="https://www.google.com/chrome/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-emerald-950 shadow hover:bg-emerald-400"
+          >
+            Download Google Chrome
+          </a>
+          <a
+            href="https://www.microsoft.com/edge"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border border-slate-300 px-4 py-2 font-semibold text-slate-800 hover:border-emerald-400 dark:border-slate-700 dark:text-slate-50"
+          >
+            Download Microsoft Edge
+          </a>
+        </div>
+        <p className="max-w-md text-center text-xs text-slate-500 dark:text-slate-400">
+          Safari and Firefox are not supported.
+        </p>
+      </div>
+    );
+  }
+}
+
 const rootElement = document.getElementById('root');
 if (rootElement) {
   ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
       <ErrorBoundary>
-        <App />
+        {isSupportedBrowser() ? <App /> : <UnsupportedBrowserBanner />}
       </ErrorBoundary>
     </React.StrictMode>,
   );

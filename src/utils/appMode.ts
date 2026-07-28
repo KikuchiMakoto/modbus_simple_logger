@@ -63,3 +63,18 @@ export const viewerToken = (): string | null => {
   if (!isViewerMode || typeof window === 'undefined') return null;
   return new URLSearchParams(window.location.search).get('k');
 };
+
+/**
+ * Whether this browser can run the app at all. Two non-polyfillable APIs are
+ * required: Web Serial (`navigator.serial`, with the WebUSB fallback also
+ * gated on Chromium) and the File System Access picker (`showSaveFilePicker`,
+ * still Chromium-only). Firefox 151+ gained Web Serial on desktop but not the
+ * picker, so its users can connect but cannot save — the app refuses to
+ * render rather than offer a half-working surface. Viewer pages are exempt:
+ * they only consume a push-only WebSocket feed and never touch either API.
+ */
+export const isSupportedBrowser = (): boolean => {
+  if (isViewerMode) return true;
+  if (typeof window === 'undefined') return true; // SSR guard, never happens here
+  return 'serial' in navigator && typeof window.showSaveFilePicker === 'function';
+};
