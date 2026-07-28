@@ -71,6 +71,13 @@ export type ServedRuntime = 'launcher' | 'viewer';
 // and cannot be changed by editing the URL.
 const runtimeMarker = (runtime: ServedRuntime) => `<meta name="msl-runtime" content="${runtime}">`;
 
+// A class stamped onto <html> in addition to the meta. The meta is read by
+// JS (utils/appMode.ts); the class is read by CSS, which cannot select on a
+// meta tag's content. index.css targets this to apply desktop-only rules —
+// currently the body min-width that keeps the exe window's content from
+// collapsing past a readable threshold when the user drags it narrow.
+const runtimeHtmlClass = (runtime: ServedRuntime) => ` class="msl-${runtime}"`;
+
 // Stamp the marker into the <head> of a served index.html. dist/ on disk stays
 // untouched: only the in-memory copies carry it, so `bun run build` output is
 // still byte-for-byte what GitHub Pages gets.
@@ -78,8 +85,17 @@ const stampRuntimeMarker = (html: Uint8Array, runtime: ServedRuntime): Uint8Arra
   const text = new TextDecoder().decode(html);
   const head = text.indexOf('<head>');
   if (head < 0) throw new Error('Launcher build is incomplete: index.html has no <head>.');
-  const at = head + '<head>'.length;
-  return new TextEncoder().encode(`${text.slice(0, at)}${runtimeMarker(runtime)}${text.slice(at)}`);
+  // Also stamp a class onto <html>. The static index.html ships <html lang="en">
+  // with no class attribute, so we splice it into the opening tag. Done before
+  // locating <head> because the splice shifts every later index.
+  let stamped = text;
+  const htmlOpen = stamped.match(/<html\b[^>]*>/);
+  if (htmlOpen && !/class=/.test(htmlOpen[0])) {
+    const idx = htmlOpen.index! + htmlOpen[0].length - 1; // position of the closing '>'
+    stamped = `${stamped.slice(0, idx)}${runtimeHtmlClass(runtime)}${stamped.slice(idx)}`;
+  }
+  const at = stamped.indexOf('<head>') + '<head>'.length;
+  return new TextEncoder().encode(`${stamped.slice(0, at)}${runtimeMarker(runtime)}${stamped.slice(at)}`);
 };
 
 export type Assets = {
