@@ -91,6 +91,27 @@ function settleWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
   });
 }
 
+/**
+ * Check the byte-count field of an FC3/FC4 response against what we asked for.
+ *
+ * Trust the request, not the reply. The decode loops used to run to
+ * `byteCount / 2`, so a device answering a 16-register read with a 37-byte,
+ * CRC-valid frame that nevertheless reported byteCount 34 yielded 17 values —
+ * which made assertLength('AI raw', 17, 16) in tsvWriterWorker.ts throw on
+ * *every* row, so saving silently stopped producing rows while the run still
+ * looked healthy. In the float32 path an over-reported count instead read past
+ * the DataView and surfaced as an unrecognisable RangeError.
+ *
+ * Throwing rather than clamping is deliberate: it turns a silent wrong-length
+ * decode into one visible error per poll, which the status bar now shows.
+ */
+function assertRegisterByteCount(byteCount: number, registerCount: number): void {
+  const expected = registerCount * 2;
+  if (byteCount !== expected) {
+    throw new Error(`Register byte count mismatch: expected ${expected}, got ${byteCount}`);
+  }
+}
+
 export class WebSerialModbusClient {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -583,11 +604,27 @@ export class WebSerialModbusClient {
       await writer.write(frame);
       console.debug(`${this.debugPrefix} transfer() write complete`);
 
+      // The read deadline starts here, not at mutex acquisition.
+      //
+      // `startTime` above is taken before ensureReadyOrRecover(), before the
+      // Modbus silent-interval wait and before the request goes out, so using it
+      // made `timeout` a whole-transaction budget while it was documented and
+      // sized as a response deadline. At 4800 baud a 16-register read is ~93 ms
+      // on the wire and the budget is 100 ms (see the comment on readTimeoutMs
+      // in App.tsx) — subtract up to 10 ms of inter-frame wait and the time to
+      // shift the request out, and a healthy device timed out on every poll.
+      // Worse, when ensureReadyOrRecover() had just reopened the port (close +
+      // open, easily over 100 ms) the budget was already spent, so the frame was
+      // written and the timeout thrown without a single read attempt — leaving a
+      // full untouched response in the buffer for the next request to mistake
+      // for its own.
+      const readStart = Date.now();
+
       // Read response with timeout
       const buffer: number[] = [];
 
       while (buffer.length < expectedLength) {
-        const remainingMs = timeout - (Date.now() - startTime);
+        const remainingMs = timeout - (Date.now() - readStart);
         if (remainingMs <= 0) {
           throw new Error('Timeout waiting for response');
         }
@@ -707,7 +744,8 @@ export class WebSerialModbusClient {
     const view = await this.transfer(frame, expected);
     const values: number[] = [];
     const byteCount = view.getUint8(2);
-    for (let i = 0; i < byteCount / 2; i += 1) {
+    assertRegisterByteCount(byteCount, count);
+    for (let i = 0; i < count; i += 1) {
       values.push(view.getInt16(3 + i * 2, false));
     }
     console.debug(`${this.debugPrefix} readHoldingRegisters() done`, {
@@ -732,7 +770,8 @@ export class WebSerialModbusClient {
     const view = await this.transfer(frame, expected, timeoutMs);
     const values: number[] = [];
     const byteCount = view.getUint8(2);
-    for (let i = 0; i < byteCount / 2; i += 1) {
+    assertRegisterByteCount(byteCount, count);
+    for (let i = 0; i < count; i += 1) {
       values.push(view.getInt16(3 + i * 2, false));
     }
     console.debug(`${this.debugPrefix} readInputRegisters() done`, {
@@ -762,10 +801,11 @@ export class WebSerialModbusClient {
 
     const values: number[] = [];
     const byteCount = view.getUint8(2);
+    assertRegisterByteCount(byteCount, registerCount);
 
     // Process pairs of registers as float32 (ABCD byte order = big-endian)
-    for (let i = 0; i < byteCount; i += 4) {
-      const float32Value = view.getFloat32(3 + i, false); // false = big-endian (ABCD)
+    for (let i = 0; i < count; i += 1) {
+      const float32Value = view.getFloat32(3 + i * 4, false); // false = big-endian (ABCD)
       values.push(float32Value);
     }
 
