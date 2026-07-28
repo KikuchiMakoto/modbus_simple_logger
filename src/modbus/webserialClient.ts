@@ -3,6 +3,7 @@
  * Designed for CDC-ACM USB-Serial converters that work with OS drivers.
  */
 import { crc16 } from '../utils/crc16';
+import { ModbusExceptionError, scanModbusFrame } from './frameScan';
 import { SerialSettings } from '../types';
 // Both timers below sit inside a transfer, holding the mutex: a throttled
 // window timer would stretch a 10 ms inter-frame gap or a 1 s read deadline to
@@ -68,6 +69,13 @@ const REOPEN_THROTTLE_MS = 2000;
  */
 const TEARDOWN_STEP_TIMEOUT_MS = 1500;
 
+// Drain windows for the pre-write stale-RX fence. Much shorter than the
+// post-failure flush (30/80 ms): this one runs on the critical path of a poll,
+// and it only has to sweep up bytes that are already sitting there — the
+// polyfill gets more because its reads resolve in coarser batches.
+const STALE_PREWRITE_FLUSH_MS_NATIVE = 5;
+const STALE_PREWRITE_FLUSH_MS_POLYFILL = 15;
+
 /**
  * Wait for `promise` to settle, or give up after `ms`.
  *
@@ -124,6 +132,12 @@ export class WebSerialModbusClient {
   private pendingRead: Promise<ReadOutcome> | null = null;
   /** True once a read reported `done` or threw: the stream can never recover. */
   private streamDead = false;
+  /**
+   * True when the last transfer ended without consuming a whole frame, so the
+   * device may still owe a response. Armed in transfer()'s catch and spent by
+   * the stale-RX flush before the next write.
+   */
+  private rxSuspect = false;
   private lastReopenAttemptAt = 0;
   private slaveId: number;
   private serialSettings: SerialSettings;
@@ -276,6 +290,7 @@ export class WebSerialModbusClient {
     this.writer = this.port.writable.getWriter();
     this.pendingRead = null;
     this.streamDead = false;
+    this.rxSuspect = false;
     this.lastReopenAttemptAt = 0;
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
 
@@ -312,6 +327,7 @@ export class WebSerialModbusClient {
 
     this.pendingRead = null;
     this.streamDead = false;
+    this.rxSuspect = false;
     this.disconnecting = false;
     console.info(`${this.debugPrefix} disconnect() complete`);
   }
@@ -532,6 +548,9 @@ export class WebSerialModbusClient {
     this.reader = port.readable.getReader();
     this.writer = port.writable.getWriter();
     this.streamDead = false;
+    // A reopened port has fresh streams: whatever the device owed the previous
+    // ones is unreachable now, so there is nothing to fence against.
+    this.rxSuspect = false;
     this.lastTransferTime = 0;
   }
 
@@ -587,6 +606,31 @@ export class WebSerialModbusClient {
       await this.ensureReadyOrRecover();
       const writer = this.writer!;
 
+      // Stale-RX fence, deliberately placed before the write rather than after
+      // the failure it reacts to.
+      //
+      // Validating the slave ID, function code and CRC (below) still cannot tell
+      // a late answer to the *previous, identical* request from a legitimate one:
+      // same address, same function code, same length, valid CRC. And
+      // recoverAfterTransferError()'s flush cannot catch it either — that window
+      // closes 30-80 ms after the failure, while the response may arrive any time
+      // before the next poll.
+      //
+      // Draining here closes it structurally rather than heuristically: at this
+      // instant no request is outstanding, so anything readable is stale by
+      // construction. Costs nothing on a healthy link (rxSuspect is false) and at
+      // most a few ms once after a failure.
+      if (this.rxSuspect) {
+        this.rxSuspect = false;
+        try {
+          await this.flushReceiveBuffer(
+            this.isUsingPolyfill ? STALE_PREWRITE_FLUSH_MS_POLYFILL : STALE_PREWRITE_FLUSH_MS_NATIVE,
+          );
+        } catch (flushErr) {
+          console.warn(`${this.debugPrefix} pre-write stale flush failed`, flushErr);
+        }
+      }
+
       // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)
       const now = Date.now();
       const timeSinceLastTransfer = now - this.lastTransferTime;
@@ -620,17 +664,46 @@ export class WebSerialModbusClient {
       // for its own.
       const readStart = Date.now();
 
-      // Read response with timeout
+      // Read and frame the response. The expected header comes from the request
+      // itself — buildFrame() puts the slave ID at [0] and the function code at
+      // [1] — which is why validating them costs no change to any caller.
+      const expectedSlaveId = frame[0];
+      const expectedFunctionCode = frame[1];
       const buffer: number[] = [];
+      let responseArray: Uint8Array | null = null;
+      let isException = false;
 
-      while (buffer.length < expectedLength) {
+      while (responseArray === null) {
+        const scan = scanModbusFrame(buffer, expectedSlaveId, expectedFunctionCode, expectedLength);
+
+        if (scan.kind === 'drop') {
+          // One byte at a time: the byte being dropped may itself be the start
+          // of the real frame.
+          const dropped = buffer.splice(0, scan.count);
+          console.warn(`${this.debugPrefix} transfer() resync`, {
+            droppedHex: this.toHexString(new Uint8Array(dropped)),
+            remaining: buffer.length,
+          });
+          continue;
+        }
+
+        if (scan.kind === 'frame') {
+          responseArray = new Uint8Array(buffer.splice(0, scan.length));
+          isException = scan.isException;
+          break;
+        }
+
         const remainingMs = timeout - (Date.now() - readStart);
         if (remainingMs <= 0) {
-          throw new Error('Timeout waiting for response');
+          throw new Error(
+            `Timeout waiting for response (${buffer.length}/${scan.atLeast} bytes)`,
+          );
         }
         const chunk = await this.readChunk(remainingMs);
         if (chunk === null) {
-          throw new Error('Timeout waiting for response');
+          throw new Error(
+            `Timeout waiting for response (${buffer.length}/${scan.atLeast} bytes)`,
+          );
         }
 
         for (let i = 0; i < chunk.length; i++) buffer.push(chunk[i]);
@@ -643,46 +716,48 @@ export class WebSerialModbusClient {
         }
       }
 
-      // Convert to DataView
-      const responseArray = new Uint8Array(buffer.slice(0, expectedLength));
-      if (buffer.length > expectedLength) {
-        console.warn(`${this.debugPrefix} transfer() excess bytes discarded`, {
-          expected: expectedLength,
-          received: buffer.length,
-          excess: buffer.length - expectedLength,
+      // Anything past a complete frame is not ours — a duplicate answer, or the
+      // tail of one we already gave up on. Dropped here rather than left for the
+      // next transfer to trip over.
+      if (buffer.length > 0) {
+        console.warn(`${this.debugPrefix} transfer() trailing bytes discarded`, {
+          count: buffer.length,
+          hex: this.toHexString(new Uint8Array(buffer)),
         });
+        buffer.length = 0;
       }
+
       console.debug(`${this.debugPrefix} transfer() response assembled`, {
         responseLength: responseArray.length,
+        isException,
         ...(this.verboseFrameLogging ? { rxHex: this.toHexString(responseArray) } : {}),
       });
 
-      // Validate CRC16 of received data
-      if (responseArray.length < 3) {
-        throw new Error('Response too short for CRC validation');
-      }
-
-      const dataWithoutCrc = responseArray.slice(0, -2);
-      const receivedCrc = responseArray[responseArray.length - 2] | (responseArray[responseArray.length - 1] << 8);
-      const calculatedCrc = crc16(dataWithoutCrc);
-
-      if (receivedCrc !== calculatedCrc) {
-        console.error(`${this.debugPrefix} transfer() CRC mismatch`, {
-          expected: `0x${calculatedCrc.toString(16)}`,
-          received: `0x${receivedCrc.toString(16)}`,
-          rxHex: this.toHexString(responseArray),
-        });
-        throw new Error(`CRC mismatch: expected 0x${calculatedCrc.toString(16)}, got 0x${receivedCrc.toString(16)}`);
-      }
-
-      // Update last transfer time
+      // An exception is a real frame on the wire, so it owes the next request the
+      // same silent interval a success does. Set before the throw below.
       this.lastTransferTime = Date.now();
+
+      if (isException) {
+        throw new ModbusExceptionError(expectedFunctionCode, responseArray[2]);
+      }
+
       console.debug(`${this.debugPrefix} transfer() success`, {
         elapsedMs: this.lastTransferTime - startTime,
+        readElapsedMs: this.lastTransferTime - readStart,
       });
 
       return new DataView(responseArray.buffer);
     } catch (err) {
+      if (err instanceof ModbusExceptionError) {
+        // The device answered; it just refused the request. There are no stale
+        // bytes to drain, the stream is fine, and running the recovery flush
+        // would cost 30-80 ms on every poll for nothing.
+        console.warn(`${this.debugPrefix} transfer() exception response`, {
+          functionCode: err.functionCode,
+          exceptionCode: err.exceptionCode,
+        });
+        throw err;
+      }
       console.error(`${this.debugPrefix} transfer() failed`, {
         expectedLength,
         timeout,
@@ -690,6 +765,10 @@ export class WebSerialModbusClient {
         elapsedMs: Date.now() - startTime,
         error: err,
       });
+      // No whole frame was consumed, so the device may still owe a response that
+      // would otherwise be handed to the next request. Spent before the next
+      // write — see the stale-RX fence above.
+      this.rxSuspect = true;
       await this.recoverAfterTransferError();
       throw err;
     } finally {
