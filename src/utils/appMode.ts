@@ -34,7 +34,7 @@ export const APP_RUNTIME: AppRuntime = readRuntime();
 /**
  * True when the desktop launcher is serving this page and the hardware is
  * attached to it — i.e. the host window, not a remote viewer. Everything that
- * talks to the launcher as a peer (the MCP bridge, the monitoring uplink) keys
+ * talks to the launcher as a peer (the monitoring uplink) keys
  * on this.
  */
 export const isLauncherMode = APP_RUNTIME === 'launcher';

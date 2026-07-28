@@ -2,7 +2,7 @@
 //
 // The launcher owns no measurement state — the serial port, the calibration and
 // the chart buffer all live in the host page (see bridge.ts for the same
-// reasoning on the MCP side). So the host page pushes what it has just plotted
+// reasoning as elsewhere). So the host page pushes what it has just plotted
 // up its `__feed` socket, and this hub relays it to every attached viewer.
 //
 // The relay is strictly one-way: nothing a viewer sends is ever read (see the

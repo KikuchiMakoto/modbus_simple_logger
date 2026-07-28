@@ -78,9 +78,9 @@ const readAiValue = (buffer: Float32Array | null, ch: number): number => {
 };
 
 // Everything Python prints is forwarded to the main thread instead of the
-// worker console: the ScriptRunner panel shows it, and — the reason this exists
-// — an MCP client has no console to look at, so print() and tracebacks would
-// otherwise be invisible to whoever submitted the script.
+// worker console, where the PyScriptRunner panel's Output pane shows it. A
+// worker's console output is not visible in the page's devtools by default, so
+// without this a print() or a traceback would go nowhere the user can see.
 const postOutput = (stream: 'stdout' | 'stderr', text: string) => {
   if (text === '') return;
   postWorkerMessage({ type: 'output', stream, text });
@@ -276,8 +276,8 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
         postWorkerMessage({ type: 'done', message: 'Completed' });
       } else {
         // `message` is the one-line summary the status bar shows; `traceback`
-        // is the full Python traceback, kept in the run log so the user (or an
-        // MCP client) can see which line failed.
+        // is the full Python traceback, kept in the run log so the user can see
+        // which line failed.
         postWorkerMessage({
           type: 'error',
           message: summarizeError(text),

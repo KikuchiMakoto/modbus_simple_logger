@@ -5,11 +5,6 @@ import { readJsonStorage, writeJsonStorage } from '../utils/cookies';
 import { notify, NOTIFY_TAG } from '../utils/notifications';
 
 const SCRIPT_RUNNER_STORAGE_KEY = 'scriptRunnerCode';
-const SCRIPT_RUNNER_BACKUP_KEY = 'scriptRunnerCodeBackup';
-
-// Who started the current (or most recent) run. The MCP bridge overwrites the
-// editor contents when it runs a script, so the UI needs to say so.
-export type ScriptSource = 'user' | 'mcp';
 
 // How many log lines are kept. A `while True:` loop that prints every iteration
 // would grow without bound otherwise; the log is a tail, not a transcript.
@@ -25,15 +20,13 @@ export type ScriptLogEntry = {
 export type ScriptOutcome = 'idle' | 'running' | 'completed' | 'stopped' | 'error';
 
 /**
- * Result of the current (or most recent) run. This exists mainly for the MCP
- * bridge: run_script hands the script to a worker and returns immediately, so
- * without a record of how the run ended, a failing script looked exactly like a
- * successful one to the caller. `runId` lets a caller tell its own run from a
- * later one started by someone else.
+ * Result of the current (or most recent) run. The runner hands the script to a
+ * worker and returns immediately, so without a record of how the run ended a
+ * failing script would look exactly like a successful one. `runId` lets a
+ * consumer tell one run from the next.
  */
 export type ScriptRunInfo = {
   runId: number;
-  source: ScriptSource;
   outcome: ScriptOutcome;
   startedAt: number | null;
   endedAt: number | null;
@@ -45,7 +38,6 @@ export type ScriptRunInfo = {
 
 const IDLE_RUN: ScriptRunInfo = {
   runId: 0,
-  source: 'user',
   outcome: 'idle',
   startedAt: null,
   endedAt: null,
@@ -63,10 +55,6 @@ export function useScriptRunner(
     return stored ?? getDefaultScript();
   });
   const [scriptRunning, setScriptRunning] = useState(false);
-  const [scriptSource, setScriptSource] = useState<ScriptSource>('user');
-  const [hasScriptBackup, setHasScriptBackup] = useState(
-    () => readJsonStorage<string>(SCRIPT_RUNNER_BACKUP_KEY) !== null,
-  );
   const [scriptRunnerStatus, setScriptRunnerStatus] = useState(
     scriptRunnerSupported
       ? 'Idle'
@@ -75,12 +63,11 @@ export function useScriptRunner(
   const [scriptLog, setScriptLog] = useState<ScriptLogEntry[]>([]);
   const [scriptRun, setScriptRun] = useState<ScriptRunInfo>(IDLE_RUN);
   const scriptExecutingRef = useRef(false);
-  // Mirrored in refs because the MCP bridge reads them from a WebSocket handler,
-  // outside React's render cycle, and must never see a stale render's copy.
+  // Mirrored in refs because worker message handlers run outside React's render
+  // cycle and must never observe a stale render's copy.
   const scriptLogRef = useRef<ScriptLogEntry[]>([]);
   const scriptRunRef = useRef<ScriptRunInfo>(IDLE_RUN);
   const runIdRef = useRef(0);
-  const runWaitersRef = useRef<{ resolve: (info: ScriptRunInfo) => void; timer: number }[]>([]);
   const pyWorkerRef = useRef<Worker | null>(null);
   const interruptBufferRef = useRef<Uint8Array | null>(null);
   const aiRawShareRef = useRef<Float32Array | null>(null);
@@ -104,9 +91,7 @@ export function useScriptRunner(
     setScriptLog([]);
   }, []);
 
-  // A run ends exactly once. Every waiter (an MCP run_script asked to wait for
-  // the outcome) is released here, so a script that crashes one millisecond in
-  // reports the crash instead of timing out.
+  // A run ends exactly once.
   const settleRun = useCallback(
     (outcome: Exclude<ScriptOutcome, 'idle' | 'running'>, error: string | null = null, traceback: string | null = null) => {
       const info: ScriptRunInfo = {
@@ -118,21 +103,14 @@ export function useScriptRunner(
       };
       scriptRunRef.current = info;
       setScriptRun(info);
-      const waiters = runWaitersRef.current;
-      runWaitersRef.current = [];
-      for (const waiter of waiters) {
-        clearBackgroundTimer(waiter.timer);
-        waiter.resolve(info);
-      }
     },
     [],
   );
 
-  const beginRun = useCallback((source: ScriptSource): ScriptRunInfo => {
+  const beginRun = useCallback((): ScriptRunInfo => {
     runIdRef.current += 1;
     const info: ScriptRunInfo = {
       runId: runIdRef.current,
-      source,
       outcome: 'running',
       startedAt: Date.now(),
       endedAt: null,
@@ -144,34 +122,10 @@ export function useScriptRunner(
     return info;
   }, []);
 
-  /**
-   * Resolve when the current run finishes, or after `timeoutMs` with the run
-   * still marked 'running' (a control loop is supposed to keep going — that is
-   * an answer, not a failure).
-   *
-   * Background timer: the caller is the MCP bridge, i.e. an agent driving this
-   * window from outside it, and the window it is driving is very often
-   * minimised. A throttled timeout would turn `run_script(wait_ms=5000)` into a
-   * one-minute stall with nothing to indicate why.
-   */
-  const waitForScriptRun = useCallback((timeoutMs: number): Promise<ScriptRunInfo> => {
-    if (scriptRunRef.current.outcome !== 'running') return Promise.resolve(scriptRunRef.current);
-    return new Promise<ScriptRunInfo>((resolve) => {
-      const entry = {
-        resolve,
-        timer: setBackgroundTimeout(() => {
-          runWaitersRef.current = runWaitersRef.current.filter((w) => w !== entry);
-          resolve(scriptRunRef.current);
-        }, timeoutMs),
-      };
-      runWaitersRef.current.push(entry);
-    });
-  }, []);
-
   // Allocate the shared buffers up front, independently of the Pyodide worker.
   //
   // These are not only the worker's data channel: the polling loop publishes AI
-  // values into them every cycle and the MCP bridge (desktop launcher) reads and
+  // values into them every cycle, and the worker reads and
   // writes the very same memory. Allocating them lazily with the worker would
   // mean AI/AO/Parameter values are invisible to anything but ScriptRunner until
   // a script is run once. Allocation is a few hundred bytes and the worker (the
@@ -306,13 +260,13 @@ export function useScriptRunner(
   }, [appendLog, settleRun]);
 
   // `codeOverride` exists because a caller that has just set new code cannot
-  // rely on the `scriptCode` state having been applied yet (see runScriptFromMcp).
-  const startScriptRunner = useCallback((source: ScriptSource, codeOverride?: string): ScriptRunInfo => {
+  // rely on the `scriptCode` state having been applied yet.
+  const startScriptRunner = useCallback((codeOverride?: string): ScriptRunInfo => {
     if (scriptExecutingRef.current) return scriptRunRef.current;
     // Each run starts from a clean log: mixing the output of two runs is how a
     // caller ends up reading a stale error as if it were its own.
     clearScriptLog();
-    const info = beginRun(source);
+    const info = beginRun();
     try {
       const worker = ensureWorkerReady();
       if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;
@@ -320,11 +274,7 @@ export function useScriptRunner(
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
       worker.postMessage({ type: 'run', code: codeOverride ?? scriptCodeRef.current });
-      notify(
-        'PyScriptRunner',
-        source === 'mcp' ? 'Script started from MCP.' : 'Script started.',
-        { tag: NOTIFY_TAG.scriptRun },
-      );
+      notify('PyScriptRunner', 'Script started.', { tag: NOTIFY_TAG.scriptRun });
       return info;
     } catch (err) {
       const text = (err as Error).message;
@@ -343,31 +293,8 @@ export function useScriptRunner(
       stopScriptRunner('Stopped');
       return;
     }
-    setScriptSource('user');
-    startScriptRunner('user');
+    startScriptRunner();
   }, [scriptRunning, startScriptRunner, stopScriptRunner]);
-
-  // Run code submitted over the MCP bridge. The editor is a single shared
-  // buffer, so the user's code is saved to a backup slot first and can be
-  // restored from the ScriptRunner panel.
-  const runScriptFromMcp = useCallback((code: string): ScriptRunInfo => {
-    if (scriptExecutingRef.current) {
-      throw new Error('A script is already running. Call stop_script first.');
-    }
-    writeJsonStorage(SCRIPT_RUNNER_BACKUP_KEY, scriptCodeRef.current);
-    setHasScriptBackup(true);
-    scriptCodeRef.current = code;
-    setScriptCode(code);
-    setScriptSource('mcp');
-    return startScriptRunner('mcp', code);
-  }, [startScriptRunner]);
-
-  const restoreScriptBackup = useCallback(() => {
-    const backup = readJsonStorage<string>(SCRIPT_RUNNER_BACKUP_KEY);
-    if (backup === null) return;
-    scriptCodeRef.current = backup;
-    setScriptCode(backup);
-  }, []);
 
   const clearScriptCode = useCallback(() => {
     setScriptCode(getDefaultScript());
@@ -391,20 +318,13 @@ export function useScriptRunner(
     scriptCode,
     setScriptCode,
     scriptRunning,
-    scriptSource,
     scriptRunnerStatus,
     scriptLog,
-    scriptLogRef,
     clearScriptLog,
     scriptRun,
-    scriptRunRef,
-    waitForScriptRun,
     toggleScriptRunner,
     stopScriptRunner,
     clearScriptCode,
-    runScriptFromMcp,
-    restoreScriptBackup,
-    hasScriptBackup,
     aiRawShareRef,
     aiPhysicalShareRef,
     aoShareRef,

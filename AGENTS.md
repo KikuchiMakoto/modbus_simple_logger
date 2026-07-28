@@ -10,7 +10,6 @@
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
 - Pyodide（Web Worker + SharedArrayBuffer）による PyScriptRunner 機能
-- デスクトップ版（`launcher/` の Bun 単一バイナリ）限定で MCP サーバーを内蔵
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
 - Wake Lock API による計測中の画面スリープ抑止
 
@@ -44,7 +43,6 @@ src/
 │   ├── useTheme.ts                  # テーマ管理（localStorage 永続化）
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
 │   ├── useScriptRunner.ts           # Pyodide Worker 管理 + SAB 先行確保
-│   ├── useMcpBridge.ts              # MCP ブリッジのページ側（exe 限定・WS ディスパッチ）
 │   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
@@ -61,8 +59,7 @@ src/
 │   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
 │   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
 │   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
-│   ├── HamburgerMenu.tsx            # スライドインメニュー（MCP・Remote Monitoring 項目は exe 限定で表示）
-│   ├── McpPanel.tsx                 # MCP 状態表示＋書込み許可トグル（exe 限定）
+│   ├── HamburgerMenu.tsx            # スライドインメニュー（Remote Monitoring 項目は exe 限定で表示）
 │   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
 │   ├── QrCode.tsx                   # QR をインライン SVG で描画（qrcode-generator・1 path に集約）
 │   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Tester の全ch 0V / PyScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
@@ -115,7 +112,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **「出力直後の InputRegisters 読みを少し遅らせる」も `transfer()` が既に担保している**。参照実装（`DigitShowModbusDoc.cpp`）の `sleep_time_after_cmd_ms`（非 usb_cdc_direct で 10ms / direct で 0）に対応するのが `minMessageIntervalMs`（Normal 10ms / Extended = 5文字時間 ≒ 1.3ms@38400)。**アプリ側に「書込み後ウェイト」を足さないこと** — 二重待機になるだけで、片方だけ直すと必ず食い違う
 
 ### AO 出力（`App.tsx` の `doAoWriteAsync`）
-- **AO の変更は即時送信**。`applyAoRawValues`（`set_ao` / MCP の唯一の着地点）が `requestAoWriteRef.current()` で書込みを起こす。ポーリング周期末尾まで待たせていた頃は、制御ループが1コマンドあたり最大1周期（既定 200ms、遅いサンプリングでは数分）の死に時間を払っていた — 実際の転送は数 ms なのに
+- **AO の変更は即時送信**。`applyAoRawValues`（`set_ao` の唯一の着地点）が `requestAoWriteRef.current()` で書込みを起こす。ポーリング周期末尾まで待たせていた頃は、制御ループが1コマンドあたり最大1周期（既定 200ms、遅いサンプリングでは数分）の死に時間を払っていた — 実際の転送は数 ms なのに
 - **待たない・間隔を計らない**。フレーム間隔も AI 読取りとの排他も `transfer()` の責任（`AsyncMutex` + `minMessageIntervalMs`）。ここで待つと二重待機になる
 - **再入は落とさず畳む**。書込み中に来た変更は `aoWriteRequestedRef` を立て、転送完了後にもう1周だけ回す（参照実装の `evt_cmd_send` と同じレベルトリガ）。**`return` で捨ててはならない** — 捨てられるのは定義上いちばん新しい値であり、制御ループが自分の周期で出力を動かすと黙って取りこぼす
 - ループを回す条件は「**直前の転送中に**新しい変更が来たこと」だけにすること。失敗した書込みは値が「変更済み」のまま残るため、これを条件にすると死んだデバイスへ延々と再送する
@@ -148,7 +145,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 保存周期がポーリング周期の整数倍でない組み合わせでは、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**。なお**現行の選択肢では起こらない** — ポーリングは 25/50/100ms、保存は下限 200ms でどれも全ポーリング周期の整数倍になっている。どちらかのリストに整数倍でない値を足すときに効いてくる話として残してある
   - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。25/50/100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
   - ヘッダー表示は `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗は同じ行の点数カウンタが示す
-  - MCP `get_status` は `pollingIntervalMs` と `saveIntervalMs` の両方を返す。ViewerStatePayload も同様（ビューアは両方を自分の選択肢へ引き当てる）
+  - ViewerStatePayload は `pollingIntervalMs` と `saveIntervalMs` の両方を返す（ビューアは両方を自分の選択肢へ引き当てる）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ）
   - **AI 側の上限はポーリング回数に比例させる**（`INPUT_READ_MAX_FAILURE_RATIO` = 10%、下限 `INPUT_READ_MAX_FAILURES_PER_WINDOW` = 10回）。固定10回はポーリング周期が保存周期に縛られていた時代の設計で、遅い設定なら10回貯まるのに数分かかった。10〜40Hz 固定になった今では**完全に死んだデバイスで1秒**で発火し、以後ウィンドウから失敗が抜けるまで全読取りをスキップする＝最大1分の空白、200ms 保存なら300行の欠落。**「応答しない」は回数ではなく割合**である。10% / 100ms なら 60回 ＝ 完全断で6秒後にバックオフ、数%のフレーム落ちでは発火しない（v4.1 で顕在化し修正）
@@ -174,8 +171,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 逆に**画面表示だけのタイマーは `window.setTimeout` のままにする**（保存経過時間、コピー完了表示、チャート再描画デバウンス、パネルの開閉アニメ）。見ていない画面の時計が止まっても誰も困らず、Worker 往復を足す意味がない
 - **判定基準は「見ていない間に走りうるか」であって「計測ループの一部か」ではない**（v4.1 の棚卸しで2件漏れが見つかった）:
   - `webserialClient.ts` の `settleWithin()`（切断手順の各ステップ 1.5s ガード）。切断はユーザーがボタンを押すものだけではない — **ケーブルを抜けば `disconnect` イベントで走り**、それは最小化中にも起きる。`window` タイマーのままだと 1.5s が抑制後の1分に化ける
-  - `useScriptRunner.ts` の `waitForScriptRun()`（MCP では `run_script` の `wait_ms` 引数から使う。`wait_for_script` という独立ツールは存在しない）。呼び手は**ウィンドウの外からこの窓を操作しているエージェント**であり、その窓はたいてい最小化されている。5秒指定が1分の沈黙になる
-  - 残す判断をしたもの: `tsvExport.ts` の close タイムアウト（ハングした worker に対する最後の安全網であり、延びても壊れるものが無い）、ビューア/MCP の再接続バックオフ（そもそも指数バックオフで秒〜分のオーダー）、`AppStatusBar` の info 期限切れ掃除（1s・見えていないバーの表示更新なので抑制されて構わない）
+  - 残す判断をしたもの: `tsvExport.ts` の close タイムアウト（ハングした worker に対する最後の安全網であり、延びても壊れるものが無い）、ビューアの再接続バックオフ（そもそも指数バックオフで秒〜分のオーダー）、`AppStatusBar` の info 期限切れ掃除（1s・見えていないバーの表示更新なので抑制されて構わない）
   - **例外として要検討で残っているもの**: `App.tsx` のリモートビューア向け全状態再送（1s、`window.setInterval`）。ホストウィンドウが見られていない間こそ動くべきもので、上の基準からすると Worker タイマーにすべき側。実害は「ホスト最小化中にビューアの全状態同期が 1s から最大 1分 に延びる」で、差分更新は別経路なので致命ではないが、**基準に合っていないことを承知で残してある**
 - 仕組みはタイマーの**スケジュールだけ**を専用 Worker が持つ形（Worker のタイマーは抑制対象外）。コールバックは従来どおり主スレッドで走る。**ブラウザにページごと凍結された場合は救えない** — そこはスリープ抑制（下記）と Wake Lock の担当
 - **バックエンドは可視状態で切り替える**（`pageVisible()`）。表示中は `window` タイマー（そもそも抑制されないので Worker 往復は純粋な損）、非表示になったら Worker。**この分岐を「常に Worker」に単純化しないこと** — `readChunk()` はフレーム1本につき USB チャンク数だけタイマーを取り直すため、20Hz では毎秒 60〜120 往復になり、実測で 20Hz が 16Hz まで落ちた（v3.17 の回帰）。非表示へ遷移した時点で生存中の `window` タイマーは Worker へ移し替える（delay は振り直しになるので、遷移1回につき最大1周期ぶん遅れる）
@@ -206,30 +202,15 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - バージョンは **`package.json` の `pyodide` 依存（現在 `^314.0.3`）が一次情報源**。アセットは `node_modules` の実インストール版からコピーされるためバージョンずれは構造的に起きない。URL 直書き・他ファイルへのバージョン直書きは禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
   - v314.0 以降は **module worker 必須**（classic worker 非対応）。本 Worker は `{ type: 'module' }` で生成済み
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
-- **SAB は Worker 生成と切り離して mount 時に先行確保する**（`useScriptRunner` の `ensureShares()`）。SAB は Worker 専用のデータ経路ではなく、ポーリングループが毎周期書き込み、MCP ブリッジが同じメモリを読み書きするため。Worker（重い方）の遅延生成は維持
+- **SAB は Worker 生成と切り離して mount 時に先行確保する**（`useScriptRunner` の `ensureShares()`）。SAB は Worker 専用のデータ経路ではなく、ポーリングループが毎周期書き込み、Worker が同じメモリを読み書きするため。Worker（重い方）の遅延生成は維持
 - `set_ao()` でメインスレッドへ AO 制御命令を postMessage
 - `set_notify(msg)` は `{ type: 'notify' }` を送るだけで、通知するかどうかはメインスレッドが決める（上記「通知」）。Worker から `Notification` を触らないこと
 - `SharedArrayBuffer` による割込み停止（`interruptBuffer[0] = 2`）
 - **COOP/COEP ヘッダー必須**（`SharedArrayBuffer` 利用のため）
 - Worker init 失敗時は `initPromise` をリセットし再試行可能。メインスレッドは `init` を Worker 生成時に1度しか送らないため、Worker 側は `initArgs` を保持して `run` 受信時に**自力で再 init する**
-- **stdout/stderr は `pyodide.setStdout/setStderr`（batched）でメインスレッドへ転送する**（`{ type: 'output' }`）。Worker のコンソールに出しても UI にも MCP クライアントにも届かないため。エラー時は `{ type: 'error', message, traceback }` で**要約1行と完全なトレースバックの両方**を送る（ステータス表示は要約、ログはトレースバック）
-- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と `scriptLog` に記録する**。ログは実行開始時にクリアし直近 300 行（`SCRIPT_LOG_MAX`）を保持。両者は **ref にもミラーする**（MCP ブリッジは WS ハンドラ＝React のレンダリング外から読むため、state だけでは直前の失敗を取り逃す）
+- **stdout/stderr は `pyodide.setStdout/setStderr`（batched）でメインスレッドへ転送する**（`{ type: 'output' }`）。Worker のコンソールはページの devtools に既定では出ないため。エラー時は `{ type: 'error', message, traceback }` で**要約1行と完全なトレースバックの両方**を送る（ステータス表示は要約、ログはトレースバック）
+- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と `scriptLog` に記録する**。ログは実行開始時にクリアし直近 300 行（`SCRIPT_LOG_MAX`）を保持。両者は **ref にもミラーする**（Worker のメッセージハンドラは React のレンダリング外で走るため、state だけでは直前の失敗を取り逃す）
 - **`pyodide.setInterruptBuffer()` は init の最後に呼ぶこと**。Pyodide は `runPython()` のたびに割込みバッファを見るため、Pyodide ロード中に Stop された状態（`interruptBuffer[0] === 2`）で先に arm すると `RUNNER_SETUP` 実行時に KeyboardInterrupt が飛び、**init 自体が失敗して Worker が再起動まで使えなくなる**
-
-### MCP サーバー（`launcher/mcp.ts` + `launcher/bridge.ts` + `useMcpBridge.ts`）
-- **デスクトップ版（exe）限定**。ページ側は `utils/appMode.ts` の `isLauncherMode` で gate し、Web 版・PWA には一切影響させない
-- エンドポイントは `http://127.0.0.1:8765/mcp`（Streamable HTTP・ステートレス・JSON レスポンス）。**ポート固定は MCP クライアント設定を安定させるため**で、多重起動は**先勝ち**（bind 失敗＝2つ目以降は MCP 無効で通常起動。fatal にしないこと）
-- **ステートレスモードでは transport / McpServer をリクエストごとに新規生成する**（SDK が使い回しを拒否する。状態はすべてページ側にあるため生成コストは実質ゼロ）
-- launcher は状態を持たない。ツールはすべて `bridge.call()` の薄いラッパで、実処理はページ側の `useMcpBridge` が**PyScriptRunner と同じ SAB・同じ `setAo` / `handleTareCalibration` へディスパッチする**。API の同一性はロジックの複製ではなくこの共有で担保している
-- **launcher プロセスから Modbus を触ってはならない**。書込みは必ず `setAo` → `doAoWriteAsync` → `transfer()` を通し、フレーム間隔の不変条件（下記「USB転送間隔制約」）を維持する
-- 書込み許可の判定は**ページ側の1箇所**（`useMcpBridge` の `writeEnabledRef`）に置く。既定 OFF、`McpPanel` のトグルで opt-in。launcher 側にゲートを二重実装しないこと
-- **PyScriptRunner の実体は1つ**なので MCP 実行と UI 実行は同一の実行系・同一のエディタ内容を共有する（二重実行は構造的に起こらない）。実行中は反対側からの起動と直接書込み（`set_ao` 等）を拒否する。**「MCP 接続中は UI 側をロックする」といった所有権フラグを追加しないこと** — ブリッジ WS は exe 起動中ずっと繋がっているため、それを基準にすると UI が常時使用不能になる
-- **MCP ハンドシェイクのバージョンは `package.json` から取得する**（`launcher/mcp.ts` の `import pkg from '../package.json' with { type: 'json' }`）。Bun がビルド時に解決し `bun build --compile` が exe へインライン化する。**バージョン文字列を直書きに戻さないこと**（v3.5 以前は直書きで、実際に 3.3 のまま取り残されていた）
-- **`get_labels` は MCP 専用**（PyScriptRunner の Python API には持たせない）。チャネルの自由記述ラベルは外部クライアントが「どの ch が何を測っているか」を解釈するための情報で、ハードウェア直近で回る制御ループには不要なため。ラベルの実体は `App.tsx` の `aiFreeLabels` / `aoFreeLabels` / `paramFreeLabels`（localStorage 永続化）で、`PyScriptRunnerPanel` の AI プロンプト生成と同じ `{ ai, ao, param }` 形状を返す
-- `run_script` はエディタ内容を上書きするため、直前のコードを `scriptRunnerCodeBackup` へ退避し UI の「Restore」で戻せるようにしてある
-- **スクリプトの失敗は「ツールのエラー」ではなく「結果のデータ」として返す**。投入した Python は別ワーカーで非同期に走るので、ツール呼び出し自体は必ず成功してしまう。そのため `run_script` は `wait_ms`（既定 3000ms・最大 60s・0 で即時）だけ完了を待ち、`{ outcome, error, traceback, log }` を返す。起動直後に落ちる失敗（構文エラー等）をここで捕まえるのが目的で、走り続けるループは `outcome: "running"` で返るのが正常。**「起動したら `started: true` だけ返す」形へ戻さないこと**（エラーが一切見えなくなる）
-- `dispatch` は **Promise を返してよい**（`run_script` の待機）。WS ハンドラ側で resolve してから応答フレームを送る。launcher 側の `bridge.call` タイムアウトは `wait_ms + RUN_SCRIPT_HEADROOM_MS` を渡すこと（待機時間を超えると待機自体がタイムアウトになる）
-- 実行中・実行後の出力は `get_script_log(n)`、直近の実行結果は `get_script()` の `lastRun` から取れる。同じログを `PyScriptRunnerPanel` の Output 欄が表示する（UI と MCP で同一データ）
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
@@ -242,7 +223,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### リモート監視（`launcher/viewerServer.ts` + `viewerHub.ts` + `hostFeed.ts` + `useViewerFeed.ts`）
 - **デスクトップ版（exe）限定・既定 OFF**。ホストページの Remote Monitoring パネルのトグルで起動し、他 PC のブラウザから**閲覧のみ**できる
-- **サーバーは2本に分ける**。アプリサーバー（`127.0.0.1`・ランダムポート）はハードウェアを持つホストページ用で `__bridge`（MCP）と `__feed`（監視アップリンク＋公開トグル）を持つ。ビューアサーバー（`:8766`）は静的アセットと push 専用の `__viewer` しか持たない。**MCP エンドポイント（書込みツールを持つ）は 127.0.0.1 のままにすること**
+- **サーバーは2本に分ける**。アプリサーバー（`127.0.0.1`・ランダムポート）はハードウェアを持つホストページ用で `__feed`（監視アップリンク＋公開トグル）を持つ。ビューアサーバー（`:8766`）は静的アセットと push 専用の `__viewer` しか持たない。**アプリサーバーは 127.0.0.1 のままにすること**
 - **公開方法は2モード**（`ViewerMode`）。`lan` は `0.0.0.0` を bind して LAN から直接（インターネット不要）、`tunnel` は `127.0.0.1` のみ bind し Cloudflare Quick Tunnel（`tunnel.ts`）が HTTPS で公開する。**tunnel モードでは LAN に何も listen していない**（cloudflared がローカルに繋ぐだけ）。モード切替は必ずサーバーを作り直すこと（bind 先が違うため使い回せない）
 - **read-only はトランスポートの性質であって UI の性質ではない**。ビューアが受け取るバンドルはホストと同一の JavaScript なので、ボタンを隠すことは根拠にならない。`viewerServer.ts` の `websocket.message` は**意図的に空**で、ビューアが送るフレームは一切パースされない。ここを実装で埋めないこと
 - **アクセス範囲は CIDR で先に切る**（`viewerServer.ts` の `ALLOWED_CIDRS`・モード別）。`tunnel` はループバックのみで、範囲外はパスに関係なく 403（ポートの背後に何があるか漏らさないため）。**`lan` は IPv4 を全許可（`0.0.0.0/0`）**：大学・研究室ネットは各台がグローバル IP を持ち `157.82.159.64/26` のような小さいサブネットに切られていることがあり、Tailscale の仮想 NIC は CGNAT の /32 として見えるため、**自ホストの NIC からサブネットを導出しても全ピアを弾いてしまう**。実利用ネットで誤判定するレンジチェックは、無いより悪い（守っていないのに守っているように読める上、機能が黙って壊れる）。この モードの境界はトークンであって IP ではない。したがって `lanViewerUrls()` もフィルタせず、全 NIC の IPv4 を並べる（APIPA `169.254.0.0/16` のみ除外＝そもそも到達不能）
@@ -366,9 +347,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info、`PyScriptRunnerPanel` = PyScript Runner（**メニュー表記は2語**。ドキュメント側で "PyScriptRunner" と1語で書いているのは機能全体を指すときで、メニュー項目を指すときは2語）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
 - **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
-- **`launcher/` は `.gitignore` 対象**。`launcher/mcp.ts`・`launcher/bridge.ts` のような新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe と cloudflared バイナリ（54MB）は**コミットしない**
+- **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe と cloudflared バイナリ（54MB）は**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isViewerMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため、**別 PC から LAN アドレスで開いた瞬間に web 版と誤認して Service Worker を登録し**、no-store ヘッダーで排除したはずのキャッシュ層を復活させる。マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
-- **MCP ツールを追加する場合は3箇所を揃える**: `launcher/mcp.ts` の `registerTool`（zod スキーマ）、`useMcpBridge.ts` の `dispatch`（実処理・書込みゲート）、`McpPanel.tsx` のツール一覧。実処理は既存のコールバック / SAB を経由させ、新しい状態を作らないこと
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）
 - **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと。**UI のドロップダウンの中身**（`POLLING_OPTIONS`・`SAVE_RATE_OPTIONS`・`BAUD_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照

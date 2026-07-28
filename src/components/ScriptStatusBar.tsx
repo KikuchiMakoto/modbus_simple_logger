@@ -1,4 +1,4 @@
-import type { ScriptLogEntry, ScriptOutcome, ScriptSource } from '../hooks/useScriptRunner';
+import type { ScriptLogEntry, ScriptOutcome } from '../hooks/useScriptRunner';
 
 const OUTCOME_BADGE: Record<ScriptOutcome, { label: string; dot: string }> = {
   idle: { label: 'Idle', dot: 'bg-slate-400' },
@@ -17,13 +17,11 @@ const STREAM_COLOR: Record<ScriptLogEntry['stream'], string> = {
 export function ScriptStatusBar({
   running,
   outcome,
-  source,
   status,
   lastLogLine,
 }: {
   running: boolean;
   outcome: ScriptOutcome;
-  source: ScriptSource;
   status: string;
   lastLogLine: ScriptLogEntry | null;
 }) {
@@ -49,11 +47,6 @@ export function ScriptStatusBar({
             Pyodide {import.meta.env.VITE_PYODIDE_VERSION ?? ''}
           </span>
           <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
-          {source === 'mcp' && (
-            <span className="rounded bg-slate-200 px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-              MCP
-            </span>
-          )}
         </div>
         <div className={`ml-3 min-w-0 flex-1 truncate font-mono ${lineColor}`}>
           {line ? (

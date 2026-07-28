@@ -101,17 +101,6 @@ export function PyScriptRunnerPanel({
           >
             {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
           </button>
-          {scriptRunner.hasScriptBackup && (
-            <button
-              type="button"
-              className="button-secondary py-1 text-sm"
-              onClick={scriptRunner.restoreScriptBackup}
-              disabled={scriptRunner.scriptRunning}
-              title="Restore the script that was in the editor before MCP replaced it"
-            >
-              Restore
-            </button>
-          )}
           {/* A swipe, not a button: it discards whatever is in the editor for
               the default script, and an editor holds work that exists nowhere
               else — there is no undo behind it. Same gesture as the header's
@@ -133,13 +122,6 @@ export function PyScriptRunnerPanel({
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
         <p className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
           <span>Status: {scriptRunner.scriptRunnerStatus}</span>
-          {/* One PyScriptRunner, one editor: a script submitted over MCP replaces
-              what is shown here, so say where the running code came from. */}
-          {scriptRunner.scriptRunning && scriptRunner.scriptSource === 'mcp' && (
-            <span className="rounded bg-emerald-500 px-1.5 py-0.5 font-semibold text-emerald-950">
-              Running from MCP
-            </span>
-          )}
         </p>
         <textarea
           value={scriptRunner.scriptCode}
@@ -148,9 +130,8 @@ export function PyScriptRunnerPanel({
           className="min-h-[180px] w-full flex-1 resize-none rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           spellCheck={false}
         />
-        {/* print() output and Python tracebacks. Before this existed a failing
-            script left only a one-line status, and a script started over MCP
-            left nothing the caller could read at all. */}
+        {/* print() output and tracebacks. Before this existed a failing script
+            left only a one-line status with no way to see which line failed. */}
         <details
           className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
           open

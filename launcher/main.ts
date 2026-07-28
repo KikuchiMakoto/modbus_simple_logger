@@ -7,8 +7,6 @@
 // next launch.
 import { createServer, loadAssets, BASE_PATH } from './server';
 import { findBrowser, launchBrowser, type BrowserInfo } from './browser';
-import { startMcpServer, MCP_PORT, MCP_PATH, type McpHandle } from './mcp';
-import { bridge } from './bridge';
 import { hostFeed, OFF_STATUS } from './hostFeed';
 import { startViewerServer, lanViewerUrls, viewerUrl, type ViewerServerHandle } from './viewerServer';
 import { startTunnel, type TunnelHandle } from './tunnel';
@@ -49,7 +47,7 @@ const fatal = (message: string): never => {
 };
 
 // Single instance. A second copy would open a second window onto the same one
-// serial port, lose the race for the MCP endpoint and fight over the browser
+// serial port, fight over the viewer port and over the browser
 // profile — and it is nearly always an accidental double-click of the exe or of
 // a taskbar icon. Claimed before anything else is started so the loser exits
 // without having bound a port or spawned a browser.
@@ -131,25 +129,8 @@ hostFeed.setControlHandler(async (action) => {
 
 const appUrl = `http://127.0.0.1:${server.port}${BASE_PATH}`;
 
-// MCP endpoint for generative-AI clients. Unlike the app server this uses a
-// fixed port so clients can be configured once; if another instance already
-// owns it we simply run without MCP (first instance wins) instead of failing to
-// start or stealing the endpoint from the instance the AI is already talking to.
-const mcp: McpHandle | null = await startMcpServer();
-// The console is hidden in the packaged exe, so the page is the only place this
-// can be surfaced: tell it over the bridge and let the UI show the state.
-bridge.setEndpointInfo(
-  mcp ? { enabled: true, url: `http://127.0.0.1:${mcp.port}${MCP_PATH}` } : { enabled: false, url: null },
-);
-if (!mcp) {
-  console.error(
-    `MCP disabled: 127.0.0.1:${MCP_PORT} is already in use (another instance owns ${MCP_PATH}).`,
-  );
-}
-
 const browser: BrowserInfo | null = findBrowser();
 if (!browser) {
-  mcp?.stop();
   server.stop(true);
   fatal(
     'No compatible browser found.\n\n' +
@@ -170,11 +151,6 @@ const shutdown = (code: number) => {
     child.kill();
   } catch {
     // already gone
-  }
-  try {
-    mcp?.stop();
-  } catch {
-    // already stopped
   }
   try {
     stopSharing();

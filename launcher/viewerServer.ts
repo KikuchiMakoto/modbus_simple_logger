@@ -1,9 +1,9 @@
 // Optional outward-facing server for read-only remote monitoring.
 //
 // It deliberately exposes strictly less than the app server: the static app
-// shell, and a push-only `__viewer` WebSocket. There is no MCP bridge and no
+// shell, and a push-only `__viewer` WebSocket. There is no control channel and no
 // `__feed` here, so a remote page has no path to the hardware even though it is
-// running the same bundle. The MCP endpoint (mcp.ts), which does have write
+// running the same bundle. The loopback app server (server.ts), which does carry write
 // tools, stays on 127.0.0.1.
 //
 // Two ways to reach it, chosen by the user (see ViewerMode):
@@ -19,7 +19,7 @@ import { viewerHub, VIEWER_PATH_SUFFIX } from './viewerHub';
 import { hostFeed } from './hostFeed';
 
 // Fixed so the URL a user hands to a colleague stays valid across restarts.
-// Adjacent to the MCP port (8765) purely as a mnemonic; they share nothing else.
+// Adjacent to the single-instance lock port (8764) purely as a mnemonic; they share nothing else.
 export const VIEWER_PORT = 8766;
 
 export const VIEWER_PATH = `${BASE_PATH}${VIEWER_PATH_SUFFIX}`;

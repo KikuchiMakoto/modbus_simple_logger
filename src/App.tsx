@@ -101,14 +101,12 @@ import { ManualPanel } from './components/ManualPanel';
 import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
 import { AppStatusBar } from './components/AppStatusBar';
-import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
 import { useNotifications } from './hooks/useNotifications';
-import { useMcpBridge, type McpApi } from './hooks/useMcpBridge';
 import {
   useViewerHost,
   useViewerClient,
@@ -507,7 +505,6 @@ function App() {
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
-  const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -656,8 +653,6 @@ function App() {
       setManualPanelOpen(true);
     } else if (item === 'scriptRunner') {
       setScriptRunnerPanelOpen(true);
-    } else if (item === 'mcp') {
-      setMcpPanelOpen(true);
     } else if (item === 'remoteViewer') {
       setRemoteViewerPanelOpen(true);
     }
@@ -1096,80 +1091,6 @@ function App() {
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
 
-  // --- MCP bridge (desktop exe only) -------------------------------------
-  //
-  // The launcher's MCP server owns no state; it relays tool calls here. The
-  // handlers below deliberately reuse the same sources the polling loop and the
-  // PyScriptRunner use (aiRawSourceRef / aoRawSourceRef / the Parameter share /
-  // setAo / handleTareCalibration), so the MCP tools and the Python API cannot
-  // drift apart. There is exactly one PyScriptRunner, so a script started over MCP
-  // and one started from the panel are the same run — never two.
-  const [mcpWriteEnabled, setMcpWriteEnabled] = useState(false);
-  const mcpApiRef = useRef<McpApi>(null as unknown as McpApi);
-  mcpApiRef.current = {
-    getAiRaw: (ch) => aiRawSourceRef.current[ch] ?? 0,
-    getAiPhy: (ch) =>
-      aiToPhysical(aiRawSourceRef.current[ch] ?? 0, aiCalibrationRef.current[ch] ?? { a: 0, b: 1, c: 0 }),
-    // AO state is held in millivolts; set_ao/get_ao speak volts like PyScriptRunner.
-    getAo: (ch) => (aoRawSourceRef.current[ch] ?? 0) / 1000,
-    getParam: (ch) => scriptRunner.paramShareRef.current?.[ch] ?? 0,
-    getStatus: () => ({
-      connected,
-      polling: acquiringRef.current,
-      saving: activeSaveFilename !== '',
-      // Two rates, deliberately both reported: the wire runs at the first, rows
-      // land in the file at the second. A control script asking how fresh its
-      // inputs are wants pollingIntervalMs.
-      pollingIntervalMs: pollIntervalRef.current,
-      saveIntervalMs: saveRate.valueMs,
-      serial: `${formatSerialSettings(serialSettings)} slave ${slaveId}`,
-      scriptRunning: scriptRunner.scriptRunning,
-      scriptSource: scriptRunner.scriptSource,
-      writeEnabled: mcpWriteEnabled,
-    }),
-    // Same source and shape as the PyScriptRunner panel's AI-prompt button, padded
-    // to full channel counts so index always equals ch.
-    getLabels: () => ({
-      ai: Array.from({ length: AI_CHANNELS }, (_, i) => aiFreeLabels[i] ?? ''),
-      ao: Array.from({ length: AO_CHANNELS }, (_, i) => aoFreeLabels[i] ?? ''),
-      param: Array.from({ length: PARAM_CHANNELS }, (_, i) => paramFreeLabels[i] ?? ''),
-    }),
-    readRecent: (n) =>
-      dataBufferRef.current.slice(-n).map((point) => ({
-        seq: point.seq,
-        timestamp: point.timestamp,
-        raw: Array.from(point.aiRaw),
-        phy: Array.from(point.aiPhysical),
-        param: Array.from(point.param),
-      })),
-    getScript: () => ({
-      code: scriptRunner.scriptCode,
-      status: scriptRunner.scriptRunnerStatus,
-      running: scriptRunner.scriptRunning,
-      source: scriptRunner.scriptSource,
-      // How the last run ended. Read from the ref, not the rendered value: the
-      // bridge answers from a socket handler that can run before React has
-      // re-rendered, and a caller polling right after a crash must not be told
-      // the run is still fine.
-      lastRun: scriptRunner.scriptRunRef.current,
-    }),
-    getScriptLog: (n) => scriptRunner.scriptLogRef.current.slice(-n),
-    waitForScript: scriptRunner.waitForScriptRun,
-    setAo,
-    setParam: (ch, value) => {
-      const share = scriptRunner.paramShareRef.current;
-      if (!share) throw new Error('Parameter channels are unavailable (no cross-origin isolation).');
-      share[ch] = value;
-    },
-    setAiTare: handleTareCalibration,
-    runScript: scriptRunner.runScriptFromMcp,
-    stopScript: () => {
-      scriptRunner.stopScriptRunner('Stopped by MCP');
-      return scriptRunner.scriptRunRef.current;
-    },
-  };
-  const mcpBridge = useMcpBridge(mcpApiRef, mcpWriteEnabled);
-
   // --- Remote monitoring (desktop exe only) ------------------------------
   //
   // Host side. The per-sample feed is tapped off the chart flush above; what is
@@ -1181,7 +1102,7 @@ function App() {
   const viewerHost = useViewerHost();
   viewerHostRef.current = viewerHost;
 
-  // Rebuilt every render (like mcpApiRef above) so the timer below always reads
+  // Rebuilt every render (see viewerStateRef below) so the timer below always reads
   // current values without owning them as dependencies.
   const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
   viewerStateRef.current = () => ({
@@ -1593,7 +1514,7 @@ function App() {
     }
   }, [pruneFailuresInWindow, writeAoBlockOnce]);
 
-  // Direct assignment during render, like mcpApiRef/viewerStateRef below: an
+  // Direct assignment during render, like viewerStateRef below: an
   // effect would leave the first AO change of the session with no writer.
   requestAoWriteRef.current = () => {
     void doAoWriteAsync();
@@ -2207,7 +2128,7 @@ function App() {
 
   // AO state is held in millivolts; the Output Tester speaks volts, like the AO
   // cards and set_ao(). Derived from state rather than the ref so the panel's
-  // readout follows a value written from anywhere — a script, MCP, or itself.
+  // readout follows a value written from anywhere — a script or itself.
   const aoVoltages = useMemo(
     () => aoChannels.map((ch) => ch.physical / 1000),
     [aoChannels],
@@ -2905,7 +2826,6 @@ function App() {
         onSelectItem={handleMenuSelect}
         isDarkMode={isDarkMode}
         onToggleTheme={toggleTheme}
-        showMcp={mcpBridge.bridgeConnected || mcpBridge.mcpEnabled}
         showRemoteViewer={viewerHost.status !== null}
       />
 
@@ -2993,13 +2913,6 @@ function App() {
         channelLabels={{ ai: aiFreeLabels, ao: aoFreeLabels, param: paramFreeLabels }}
       />
 
-      <McpPanel
-        open={mcpPanelOpen}
-        onClose={() => setMcpPanelOpen(false)}
-        bridge={mcpBridge}
-        writeEnabled={mcpWriteEnabled}
-        onWriteEnabledChange={setMcpWriteEnabled}
-      />
 
       <RemoteViewerPanel
         open={remoteViewerPanelOpen}
@@ -3015,7 +2928,6 @@ function App() {
         <ScriptStatusBar
           running={scriptRunner.scriptRunning}
           outcome={scriptRunner.scriptRun.outcome}
-          source={scriptRunner.scriptSource}
           status={scriptRunner.scriptRunnerStatus}
           lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
         />
