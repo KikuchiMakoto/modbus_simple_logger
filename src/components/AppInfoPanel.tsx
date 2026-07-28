@@ -204,7 +204,8 @@ export function AppInfoPanel({
                   className="text-emerald-600 hover:underline dark:text-emerald-400"
                 >
                   Web Serial API
-                </a>
+                </a>{' '}
+                <span className="text-slate-500 dark:text-slate-400">(or WebUSB fallback on mobile)</span>
               </li>
               <li>
                 <a
