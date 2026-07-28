@@ -4,7 +4,22 @@
 
 🔌 **デモ**: https://kikuchimakoto.github.io/modbus_simple_logger/
 
+## 動作環境
+
+**Chromium 系ブラウザが必須**です。Web Serial API / File System Access API / Wake Lock API を使用するため、Safari と Firefox は動作対象外です。
+
+| ブラウザ | 最低バージョン | 根拠 |
+|----------|----------------|------|
+| Google Chrome | **89+** | Web Serial API (`navigator.serial`) |
+| Microsoft Edge | **89+** | 同上 |
+| Android Chrome | **89+** | 同上 |
+
+> ただし File System Access API は Chrome / Edge **86+**、Wake Lock API は **84+** が必要です。これらはいずれもずっと以前のリリースなので、現在インストールされている版を使っていれば問題になりません。古い環境を除き最新版の使用を推奨します。
+> SharedArrayBuffer（PyScriptRunner 用）は COOP/COEP ヘッダーでクロスオリジン分離された環境でのみ利用できます。本アプリの配信サーバーはこれを付与済みです。
+
 ---
+
+## 主な機能
 
 ## 主な機能
 
