@@ -150,6 +150,8 @@ export class WebSerialModbusClient {
   private readonly debugPrefix = '[WebSerialModbusClient]';
   private readonly verboseFrameLogging: boolean;
   private disconnecting = false;
+  /** The teardown in progress, so re-entrant callers await it instead of racing it. */
+  private disconnectPromise: Promise<void> | null = null;
 
   /**
    * @param slaveId - Modbus slave ID.
@@ -297,35 +299,70 @@ export class WebSerialModbusClient {
     return true;
   }
 
-  async disconnect() {
-    if (this.disconnecting) return;
+  /**
+   * Tear the connection down.
+   *
+   * Re-entrant callers share one teardown rather than the second returning
+   * early. `connect()` awaits this before requesting a new port, and an early
+   * return made that await a lie: the first teardown was still running, and
+   * because its steps resolved `this.port` at call time, it went on to close and
+   * null the port `connect()` had just opened.
+   */
+  async disconnect(): Promise<void> {
+    if (!this.disconnectPromise) {
+      this.disconnectPromise = this.runDisconnect().finally(() => {
+        this.disconnectPromise = null;
+      });
+    }
+    return this.disconnectPromise;
+  }
+
+  private async runDisconnect(): Promise<void> {
+    // Set synchronously, before the first await: reopenPort() and
+    // recoverAfterTransferError() read it to refuse to run during a teardown.
     this.disconnecting = true;
     console.info(`${this.debugPrefix} disconnect() start`);
 
-    if (this.reader) {
+    // Detach the handles up front and tear down locals from here on. This is
+    // what removes the race rather than the mutex wait below: an in-flight
+    // transfer can no longer see a half-torn-down client, and a teardown that
+    // overlaps a later connect() cannot reach the new port.
+    const reader = this.reader;
+    const writer = this.writer;
+    const port = this.port;
+    this.reader = null;
+    this.writer = null;
+    this.port = null;
+    this.pendingRead = null;
+
+    // Bounded courtesy wait for an in-flight transfer to finish its read: not
+    // load-bearing, since the handles above are already detached, but it avoids
+    // writing into a closing port and spilling an error log on every disconnect.
+    await settleWithin(
+      this.transferMutex.acquire().then(() => this.transferMutex.release()),
+      TEARDOWN_STEP_TIMEOUT_MS,
+    );
+
+    if (reader) {
       console.info(`${this.debugPrefix} cancelling reader`);
-      await this.teardownStep('reader cancel', () => this.reader!.cancel());
-      try { this.reader.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} reader releaseLock failed`, err); }
-      this.reader = null;
+      await this.teardownStep('reader cancel', () => reader.cancel());
+      try { reader.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} reader releaseLock failed`, err); }
     }
 
-    if (this.writer) {
+    if (writer) {
       console.info(`${this.debugPrefix} closing writer`);
-      await this.teardownStep('writer close', () => this.writer!.close());
+      await this.teardownStep('writer close', () => writer.close());
       // close() finishes the stream but keeps the writer's lock; port.close()
       // throws on a still-locked writable, which would leave the USB device
       // claimed and make the next Connect fail.
-      try { this.writer.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} writer releaseLock failed`, err); }
-      this.writer = null;
+      try { writer.releaseLock(); } catch (err) { console.warn(`${this.debugPrefix} writer releaseLock failed`, err); }
     }
 
-    if (this.port) {
+    if (port) {
       console.info(`${this.debugPrefix} closing port`);
-      await this.teardownStep('port close', () => this.port!.close());
-      this.port = null;
+      await this.teardownStep('port close', () => port.close());
     }
 
-    this.pendingRead = null;
     this.streamDead = false;
     this.rxSuspect = false;
     this.disconnecting = false;
@@ -522,6 +559,13 @@ export class WebSerialModbusClient {
    * @throws If the port cannot be re-opened.
    */
   private async reopenPort(): Promise<void> {
+    // A teardown is closing this port; reopening it here is how the client ended
+    // up holding an open, stream-locked port it no longer referenced — which
+    // made the next Connect throw "the port is already open" and left the device
+    // unusable until a page reload, while the UI reported a clean disconnect.
+    if (this.disconnecting) {
+      throw new Error('Disconnecting');
+    }
     const port = this.port;
     if (!port) {
       throw new Error('Device not connected');
@@ -562,6 +606,9 @@ export class WebSerialModbusClient {
    * unplugged device does not spin on reopen attempts every polling cycle.
    */
   private async recoverAfterTransferError(): Promise<void> {
+    // Nothing to recover into: the handles are already detached and the port is
+    // being closed. Flushing or reopening here would fight the teardown.
+    if (this.disconnecting) return;
     if (!this.streamDead) {
       try {
         await this.flushReceiveBuffer();
