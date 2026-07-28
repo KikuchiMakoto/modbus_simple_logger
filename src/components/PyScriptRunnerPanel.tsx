@@ -32,7 +32,7 @@ const API_DOCS = [
 
 const buildAiPrompt = (channelLabels: ChannelLabels): string =>
   [
-    'Write a Python script for ModbusSimpleLogger PyScriptRunner (Pyodide; async context, top-level await OK).',
+    'Write a Python script for ModbusSimpleLogger PyScript Runner (Pyodide; async context, top-level await OK).',
     '',
     'API:',
     ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
@@ -83,7 +83,7 @@ export function PyScriptRunnerPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="PyScriptRunner"
+      title="PyScript Runner"
       subtitle="Python (Pyodide)"
       defaultWidth={640}
       defaultHeight={620}

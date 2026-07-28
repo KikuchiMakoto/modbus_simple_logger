@@ -29,7 +29,7 @@ const MENU_ITEMS = [
   // range, and a lightning bolt read as "power" next to Connection Config.
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
-  { key: 'scriptRunner', label: 'PyScriptRunner', icon: '📜', wip: false },
+  { key: 'scriptRunner', label: 'PyScript Runner', icon: '🐍', wip: false },
   { key: 'mcp', label: 'MCP Server', icon: '🤖', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
