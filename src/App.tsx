@@ -98,6 +98,7 @@ import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
+import { ScriptStatusBar } from './components/ScriptStatusBar';
 import { McpPanel } from './components/McpPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
@@ -2928,6 +2929,19 @@ function App() {
         status={viewerHost.status}
         onEnabledChange={viewerHost.setEnabled}
       />
+
+      {/* Not on a viewer: it has no menu, so PyScript Runner is unreachable
+          there and a bar reporting its state would describe a feature the
+          window does not offer. */}
+      {!isViewerMode && (
+        <ScriptStatusBar
+          running={scriptRunner.scriptRunning}
+          outcome={scriptRunner.scriptRun.outcome}
+          source={scriptRunner.scriptSource}
+          status={scriptRunner.scriptRunnerStatus}
+          lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
+        />
+      )}
     </div>
   );
 }
