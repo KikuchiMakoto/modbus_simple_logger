@@ -195,6 +195,48 @@ export function AppInfoPanel({
                 </tr>
               </tbody>
             </table>
+            <ul className="mt-2 space-y-0.5">
+              <li>
+                <a
+                  href="https://developer.mozilla.org/docs/Web/API/Web_Serial_API"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  Web Serial API
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://developer.mozilla.org/docs/Web/API/File_System_Access_API"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  File System Access API
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  Screen Wake Lock API
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  SharedArrayBuffer
+                </a>
+              </li>
+            </ul>
           </div>
         </div>
 
