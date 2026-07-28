@@ -78,7 +78,7 @@ export function tokenize(source: string): Token[] {
     if (c === '\r') { i += 1; continue; }
 
     if (c === '\n') {
-      pushEol();
+      pushEol('\n');
       i += 1;
       line += 1;
       continue;
@@ -101,7 +101,7 @@ export function tokenize(source: string): Token[] {
     }
 
     if (c === ':') {
-      pushEol();
+      pushEol(':');
       i += 1;
       continue;
     }
@@ -172,7 +172,7 @@ export function tokenize(source: string): Token[] {
     throw new BasicSyntaxError(`Unexpected character '${c}'`, line);
   }
 
-  pushEol();
+  pushEol('\n');
   push('eof', '');
   return tokens;
 }

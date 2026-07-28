@@ -15,8 +15,14 @@ export type Expr =
   | { kind: 'num'; value: number }
   | { kind: 'str'; value: string }
   | { kind: 'var'; name: string }
-  /** `A(1)` — an array element or a function call; decided at run time. */
-  | { kind: 'index'; name: string; args: Expr[] }
+  /**
+   * `A(1)` — an array element or a function call; decided at run time.
+   *
+   * `name` is upper-cased for lookup (the dialect is case-insensitive);
+   * `spelling` keeps what the user typed, so an error about a misspelled
+   * function quotes `Sqr` back rather than `SQR`.
+   */
+  | { kind: 'index'; name: string; spelling: string; args: Expr[] }
   | { kind: 'unary'; op: string; operand: Expr }
   | { kind: 'binary'; op: string; left: Expr; right: Expr };
 
@@ -33,7 +39,7 @@ export type Instr =
   | { op: 'gosub'; target: number; line: number }
   | { op: 'return'; line: number }
   | { op: 'sleep'; seconds: Expr; line: number }
-  | { op: 'call'; name: string; args: Expr[]; line: number }
+  | { op: 'call'; name: string; spelling: string; args: Expr[]; line: number }
   | { op: 'end'; line: number };
 
 export type Program = {
@@ -113,8 +119,15 @@ class Parser {
   }
 
   private endOfStatement(): boolean {
-    const k = this.peek().kind;
-    return k === 'eol' || k === 'eof';
+    const t = this.peek();
+    if (t.kind === 'eol' || t.kind === 'eof') return true;
+    // `Else` ends a statement as surely as a newline does. Without this, the
+    // single-line `If a Then Print "x" Else Print "y"` fed `Else` to parsePrint
+    // as another thing to print, and the whole form — the one an N88 or QBasic
+    // user reaches for first — failed to parse. No statement may legitimately
+    // contain a bare Else, so this is safe everywhere, and the block form still
+    // stops at Else in parseBlock before a statement is ever started.
+    return t.kind === 'ident' && t.upper === 'ELSE';
   }
 
   private expectEnd(): void {
@@ -240,7 +253,7 @@ class Parser {
           do { args.push(this.parseExpr()); } while (this.takeOp(','));
         }
         this.expectOp(')');
-        return { kind: 'index', name: t.upper, args };
+        return { kind: 'index', name: t.upper, spelling: t.text, args };
       }
       return { kind: 'var', name: t.upper };
     }
@@ -271,10 +284,25 @@ class Parser {
     return { instrs: this.instrs, labels: this.labels };
   }
 
+  /**
+   * Is the next token one of `stops`?
+   *
+   * `END` is special-cased: it both closes a block (`End If`, `End Select`) and
+   * is a statement in its own right that terminates the program. Treating a
+   * bare `End` as a block terminator made the perfectly ordinary
+   * `If done Then` / `End` / `End If` a syntax error.
+   */
+  private atBlockEnd(stops: string[]): boolean {
+    if (!this.atKeyword(...stops)) return false;
+    if (this.peek().upper !== 'END') return true;
+    const after = this.peek(1);
+    return after.kind === 'ident' && (after.upper === 'IF' || after.upper === 'SELECT');
+  }
+
   /** Parse statements until one of `stops` is the next keyword. */
   private parseBlock(stops: string[]): void {
     this.skipEols();
-    while (!this.atKeyword(...stops)) {
+    while (!this.atBlockEnd(stops)) {
       if (this.peek().kind === 'eof') {
         throw new BasicSyntaxError(`Expected ${stops.join(' or ')}`, this.line);
       }
@@ -299,11 +327,16 @@ class Parser {
       return this.parseStatement();
     }
 
-    // `name:` label.
-    if (t.kind === 'ident' && !RESERVED.has(t.upper) && this.peek(1).kind === 'eol'
-        && this.tokens[this.pos + 1]?.text === '\n' && false) {
-      // Unreachable: `:` is lexed as an EOL, so a label is indistinguishable
-      // from a bare identifier statement. Handled in the ident branch below.
+    // `Retry:` — a label. `:` is lexed as an end-of-statement, so the only
+    // thing that separates this from the bare procedure call `Retry` is which
+    // separator the lexer recorded; that is why pushEol() keeps the spelling.
+    // The eol is deliberately left unconsumed, so parseProgram's expectEnd()
+    // sees a well-formed statement.
+    if (t.kind === 'ident' && !RESERVED.has(t.upper)
+        && this.peek(1).kind === 'eol' && this.peek(1).text === ':') {
+      this.labels.set(t.upper, this.instrs.length);
+      this.pos += 1;
+      return;
     }
 
     if (t.kind === 'ident') {
@@ -332,7 +365,7 @@ class Parser {
             if (!this.atOp(')')) { do { args.push(this.parseExpr()); } while (this.takeOp(',')); }
             this.expectOp(')');
           }
-          this.emit({ op: 'call', name: name.upper, args, line });
+          this.emit({ op: 'call', name: name.upper, spelling: name.text, args, line });
           return;
         }
         default: break;
@@ -371,7 +404,7 @@ class Parser {
     if (!this.endOfStatement()) {
       do { args.push(this.parseExpr()); } while (this.takeOp(','));
     }
-    this.emit({ op: 'call', name: name.upper, args, line });
+    this.emit({ op: 'call', name: name.upper, spelling: name.text, args, line });
   }
 
   private parseAssignment(line: number): void {
@@ -466,6 +499,25 @@ class Parser {
     }
   }
 
+  /**
+   * The body of a single-line `If ... Then X` / `Else X`.
+   *
+   * A bare line number there is an implied GoTo (`IF A>1 THEN 100`), which is
+   * how every line-numbered BASIC writes a conditional branch. Without this it
+   * would be read as parseStatement's line-number *label*, silently redefining
+   * a label instead of jumping to one.
+   */
+  private parseThenBranch(line: number): void {
+    const t = this.peek();
+    if (t.kind === 'number' && this.peek(1).kind !== 'op') {
+      this.pos += 1;
+      const index = this.emit({ op: 'jump', target: -1, line });
+      this.gotoFixups.push({ index, label: t.text, line });
+      return;
+    }
+    this.parseStatement();
+  }
+
   private parseIf(line: number): void {
     this.expectKeyword('IF');
     const cond = this.parseExpr();
@@ -475,11 +527,11 @@ class Parser {
     // the one with nothing but an end-of-line after Then.
     if (!this.endOfStatement()) {
       const skipThen = this.emit({ op: 'jumpIfFalse', cond, target: -1, line });
-      this.parseStatement();
+      this.parseThenBranch(line);
       if (this.takeKeyword('ELSE')) {
         const skipElse = this.emit({ op: 'jump', target: -1, line });
         (this.instrs[skipThen] as { target: number }).target = this.instrs.length;
-        this.parseStatement();
+        this.parseThenBranch(line);
         (this.instrs[skipElse] as { target: number }).target = this.instrs.length;
       } else {
         (this.instrs[skipThen] as { target: number }).target = this.instrs.length;
@@ -572,11 +624,9 @@ class Parser {
     this.expectKeyword('DO');
     const top = this.instrs.length;
     let headExit = -1;
-    let headUntil = false;
     if (this.takeKeyword('WHILE')) {
       headExit = this.emit({ op: 'jumpIfFalse', cond: this.parseExpr(), target: -1, line });
     } else if (this.takeKeyword('UNTIL')) {
-      headUntil = true;
       const cond = this.parseExpr();
       headExit = this.emit({
         op: 'jumpIfFalse',
@@ -585,7 +635,6 @@ class Parser {
         line,
       });
     }
-    void headUntil;
 
     const frame: LoopFrame = { kind: 'do', exits: [] };
     this.loops.push(frame);
