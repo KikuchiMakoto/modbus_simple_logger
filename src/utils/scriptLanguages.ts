@@ -166,7 +166,12 @@ Loop`,
 const LUA: ScriptLanguage = {
   id: 'lua',
   label: 'Lua',
-  runtime: 'Lua 5.4 (wasmoon)',
+  // No version here, unlike the AI prompt below. The three subtitles read
+  // "Python (Pyodide)", "BASIC (VB6 dialect)" and "Lua (wasmoon)"; carrying a
+  // version in one of them and not the others just looks unfinished. The prompt
+  // keeps "Lua 5.4" because there it prevents a wrong answer — an assistant
+  // told only "Lua" may reach for 5.1 spellings like `unpack`.
+  runtime: 'Lua (wasmoon)',
   badge: 'wasmoon',
   storageKey: 'scriptRunnerCodeLua',
   apiDocs: [
