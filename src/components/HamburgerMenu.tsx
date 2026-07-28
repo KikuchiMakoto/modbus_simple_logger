@@ -27,7 +27,7 @@ const MENU_ITEMS = [
   // range, and a lightning bolt read as "power" next to Connection Config.
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
-  { key: 'scriptRunner', label: 'PyScript Runner', icon: '🐍', wip: false },
+  { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },

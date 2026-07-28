@@ -98,8 +98,9 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
-import { PyScriptRunnerPanel } from './components/PyScriptRunnerPanel';
+import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
+import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
 import { AppStatusBar } from './components/AppStatusBar';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
@@ -2922,7 +2923,7 @@ function App() {
         onClose={() => setManualPanelOpen(false)}
       />
 
-      <PyScriptRunnerPanel
+      <ScriptRunnerPanel
         open={scriptRunnerPanelOpen}
         onClose={() => setScriptRunnerPanelOpen(false)}
         scriptRunner={scriptRunner}
@@ -2938,7 +2939,7 @@ function App() {
         onEnabledChange={viewerHost.setEnabled}
       />
 
-      {/* Not on a viewer: it has no menu, so PyScript Runner is unreachable
+      {/* Not on a viewer: it has no menu, so Script Runner is unreachable
           there and a bar reporting its state would describe a feature the
           window does not offer. */}
       {!isViewerMode && (
@@ -2947,6 +2948,8 @@ function App() {
           outcome={scriptRunner.scriptRun.outcome}
           status={scriptRunner.scriptRunnerStatus}
           lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
+          languageLabel={SCRIPT_LANGUAGES[scriptRunner.scriptLanguage].label}
+          runtimeBadge={SCRIPT_LANGUAGES[scriptRunner.scriptLanguage].badge}
         />
       )}
 

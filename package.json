@@ -20,6 +20,7 @@
     "react-dom": "^19.2.8",
     "react-plotly.js": "^4.0.0",
     "react-rnd": "^10.5.3",
+    "wasmoon": "^1.16.0",
     "web-serial-polyfill": "^1.0.15"
   },
   "devDependencies": {

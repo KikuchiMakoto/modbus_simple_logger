@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
+import {
+  SCRIPT_LANGUAGES,
+  SCRIPT_LANGUAGE_LIST,
+  buildAiPrompt,
+} from '../utils/scriptLanguages';
 import { FloatingWindow } from './FloatingWindow';
 import { SlideToConfirm } from './SlideToConfirm';
 
@@ -10,7 +15,7 @@ type ChannelLabels = {
   param: string[];
 };
 
-type PyScriptRunnerPanelProps = {
+type ScriptRunnerPanelProps = {
   open: boolean;
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
@@ -18,50 +23,22 @@ type PyScriptRunnerPanelProps = {
   channelLabels: ChannelLabels;
 };
 
-const API_DOCS = [
-  { name: 'get_ai_raw(ch)', desc: 'Raw AI value. ch: 0-15.' },
-  { name: 'get_ai_phy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
-  { name: 'set_ai_tare(ch)', desc: 'Tare AI ch: set offset c so the current phy reads 0 (a, b kept). Applied async.' },
-  { name: 'get_ao(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
-  { name: 'set_ao(ch, vlt)', desc: 'Set AO voltage [V], clamped to 0-10. Applied async; get_ao() updates slightly later.' },
-  { name: 'get_param(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
-  { name: 'set_param(ch, val)', desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.' },
-  { name: 'set_notify(msg)', desc: 'Raise an OS notification (needs Notifications on in the menu). Always written to Output.' },
-  { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait. NEVER time.sleep().' },
-];
-
-const buildAiPrompt = (channelLabels: ChannelLabels): string =>
-  [
-    'Write a Python script for ModbusSimpleLogger PyScript Runner (Pyodide; async context, top-level await OK).',
-    '',
-    'API:',
-    ...API_DOCS.map((api) => `- ${api.name}: ${api.desc}`),
-    '',
-    'Absolute rules:',
-    '- Wait only with `await asyncio.sleep(s)`. NEVER time.sleep().',
-    '- Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
-    '',
-    'Channel labels (JSON; index = ch, "" = unlabeled):',
-    JSON.stringify(channelLabels),
-    '',
-    'Task: <your request here>',
-  ].join('\n');
-
 const formatLogTime = (t: number): string => {
   const d = new Date(t);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 };
 
-export function PyScriptRunnerPanel({
+export function ScriptRunnerPanel({
   open,
   onClose,
   scriptRunner,
   onEditorKeyDown,
   channelLabels,
-}: PyScriptRunnerPanelProps) {
+}: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const { scriptLog } = scriptRunner;
+  const language = SCRIPT_LANGUAGES[scriptRunner.scriptLanguage];
 
   // Follow the tail: a script that prints while it runs is only useful if the
   // newest line is the one on screen.
@@ -73,7 +50,7 @@ export function PyScriptRunnerPanel({
     // Inside <summary>: keep the click from toggling the <details>.
     event.preventDefault();
     event.stopPropagation();
-    navigator.clipboard.writeText(buildAiPrompt(channelLabels)).then(() => {
+    navigator.clipboard.writeText(buildAiPrompt(language, channelLabels)).then(() => {
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
     });
@@ -83,8 +60,8 @@ export function PyScriptRunnerPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="PyScript Runner"
-      subtitle="Python (Pyodide)"
+      title="Script Runner"
+      subtitle={language.runtime}
       defaultWidth={640}
       defaultHeight={620}
       headerActions={
@@ -120,9 +97,31 @@ export function PyScriptRunnerPanel({
       }
     >
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-        <p className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          {/* Disabled while running: the worker executing belongs to the
+              current language, and switching would leave Stop pointing at a
+              script no longer on screen. */}
+          <label className="flex items-center gap-1">
+            <span className="font-semibold">Language</span>
+            <select
+              value={scriptRunner.scriptLanguage}
+              onChange={(event) =>
+                scriptRunner.setScriptLanguage(
+                  event.target.value as typeof scriptRunner.scriptLanguage,
+                )
+              }
+              disabled={scriptRunner.scriptRunning}
+              className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-800 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              {SCRIPT_LANGUAGE_LIST.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <span>Status: {scriptRunner.scriptRunnerStatus}</span>
-        </p>
+        </div>
         <textarea
           value={scriptRunner.scriptCode}
           onChange={(e) => scriptRunner.setScriptCode(e.target.value)}
@@ -161,7 +160,7 @@ export function PyScriptRunnerPanel({
           <div className="max-h-16 min-h-[2rem] overflow-auto px-3 pb-2 font-mono text-xs">
             {scriptLog.length === 0 ? (
               <p className="py-1 text-slate-400 dark:text-slate-500">
-                No output. print() goes here, along with errors and tracebacks.
+                No output. Printed text goes here, along with errors.
               </p>
             ) : (
               scriptLog.map((entry, index) => (
@@ -196,7 +195,7 @@ export function PyScriptRunnerPanel({
             </button>
           </summary>
           <ul className="space-y-2 px-3 pb-3 text-xs text-slate-600 dark:text-slate-400">
-            {API_DOCS.map((api) => (
+            {language.apiDocs.map((api) => (
               <li key={api.name}>
                 <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                   {api.name}
