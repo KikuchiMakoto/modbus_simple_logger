@@ -63,6 +63,25 @@ export function ScriptRunnerPanel({
       defaultHeight={620}
       headerActions={
         <>
+          {/* A swipe, not a button: it discards whatever is in the editor for
+              the default script, and an editor holds work that exists nowhere
+              else — there is no undo behind it. Same gesture as the header's
+              Disconnect and the Output Tester's zero.
+
+              It sits to the LEFT of Run/Stop, which keeps Run/Stop as the
+              control nearest the window's edge — the one reached for in a
+              hurry, and the one whose position should not move. */}
+          <SlideToConfirm
+            label="Slide to clear"
+            armedLabel="Release"
+            knobLabel="✕"
+            onConfirm={scriptRunner.clearScriptCode}
+            disabled={scriptRunner.scriptRunning}
+            knobPx={24}
+            className="h-[26px] w-[7.5rem]"
+            labelClassName="text-[0.7rem]"
+            aria-label="Slide to reset the script to the default"
+          />
           <button
             type="button"
             className={
@@ -75,21 +94,6 @@ export function ScriptRunnerPanel({
           >
             {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
           </button>
-          {/* A swipe, not a button: it discards whatever is in the editor for
-              the default script, and an editor holds work that exists nowhere
-              else — there is no undo behind it. Same gesture as the header's
-              Disconnect and the Output Tester's zero. */}
-          <SlideToConfirm
-            label="Slide to clear"
-            armedLabel="Release"
-            knobLabel="✕"
-            onConfirm={scriptRunner.clearScriptCode}
-            disabled={scriptRunner.scriptRunning}
-            knobPx={24}
-            className="h-[26px] w-[7.5rem]"
-            labelClassName="text-[0.7rem]"
-            aria-label="Slide to reset the script to the default"
-          />
         </>
       }
     >
