@@ -3,20 +3,30 @@ import { FloatingWindow } from './FloatingWindow';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
 import type { NotificationsState } from '../hooks/useNotifications';
 
+// Installed version of every dependency, injected at build time from
+// node_modules (see vite.config.ts). Keeping the versions out of this file is
+// what stops the list below from going stale after a dependency bump.
+const DEP_VERSIONS: Record<string, string | undefined> = JSON.parse(
+  import.meta.env.VITE_DEP_VERSIONS ?? '{}',
+);
+
+// `pkg` is the package.json name to read the version from; only the display
+// name and the license are maintained by hand here.
 const LIBRARIES = [
-  { name: 'React', version: '19.2', license: 'MIT' },
-  { name: 'React DOM', version: '19.2', license: 'MIT' },
-  { name: 'Plotly.js', version: '3.7', license: 'MIT' },
-  { name: 'react-plotly.js', version: '4.0', license: 'MIT' },
-  { name: 'react-rnd', version: '10.5', license: 'MIT' },
-  { name: 'Tailwind CSS', version: '4.3', license: 'MIT' },
-  { name: 'Vite', version: '8', license: 'MIT' },
-  { name: 'TypeScript', version: '6.0', license: 'Apache-2.0' },
-  { name: 'web-serial-polyfill', version: '1.0', license: 'BSD-3-Clause' },
-  { name: 'Iosevka', version: '5.3', license: 'OFL-1.1' },
-  // Version injected from the exact pin in package.json (see vite.config.ts).
-  { name: 'Pyodide', version: import.meta.env.VITE_PYODIDE_VERSION ?? 'unknown', license: 'MPL-2.0' },
-];
+  { name: 'React', pkg: 'react', license: 'MIT' },
+  { name: 'React DOM', pkg: 'react-dom', license: 'MIT' },
+  { name: 'Plotly.js', pkg: 'plotly.js', license: 'MIT' },
+  { name: 'react-plotly.js', pkg: 'react-plotly.js', license: 'MIT' },
+  { name: 'react-rnd', pkg: 'react-rnd', license: 'MIT' },
+  { name: 'Tailwind CSS', pkg: 'tailwindcss', license: 'MIT' },
+  { name: 'Vite', pkg: 'vite', license: 'MIT' },
+  { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
+  { name: 'web-serial-polyfill', pkg: 'web-serial-polyfill', license: 'BSD-3-Clause' },
+  { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
+  { name: 'Wasmoon (Lua)', pkg: 'wasmoon', license: 'MIT' },
+  { name: 'qrcode-generator', pkg: 'qrcode-generator', license: 'MIT' },
+  { name: 'Pyodide', pkg: 'pyodide', license: 'MPL-2.0' },
+].map((lib) => ({ ...lib, version: DEP_VERSIONS[lib.pkg] ?? 'unknown' }));
 
 const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? 'unknown';
 const APP_NAME = import.meta.env.VITE_APP_NAME ?? 'modbus_simple_logger';

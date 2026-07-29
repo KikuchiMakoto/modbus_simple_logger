@@ -21,6 +21,28 @@ const PYODIDE_FILES = [
 ];
 const pyodidePkg = JSON.parse(readFileSync(resolve(PYODIDE_DIR, 'package.json'), 'utf-8'));
 
+// Versions of every declared dependency, read from the installed package in
+// node_modules (not from the range in package.json, which says `^19.2.8` and
+// not what is actually bundled). Injected as VITE_DEP_VERSIONS so the App Info
+// panel's library list can never drift from the lockfile — same principle as
+// VITE_PYODIDE_VERSION above.
+const DEP_VERSIONS: Record<string, string> = Object.fromEntries(
+  Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })
+    .map((name) => {
+      try {
+        const dep = JSON.parse(
+          readFileSync(resolve(__dirname, 'node_modules', name, 'package.json'), 'utf-8'),
+        );
+        return [name, dep.version as string] as const;
+      } catch {
+        // Not installed (e.g. a fresh clone before `bun install`) — the panel
+        // falls back to 'unknown' rather than failing the build.
+        return null;
+      }
+    })
+    .filter((entry): entry is readonly [string, string] => entry !== null),
+);
+
 function pyodideAssets(): Plugin {
   let outDir = 'dist';
   return {
@@ -112,6 +134,7 @@ export default defineConfig(({ command, isPreview }) => ({
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
     'import.meta.env.VITE_APP_NAME': JSON.stringify(pkg.name),
     'import.meta.env.VITE_PYODIDE_VERSION': JSON.stringify(pyodidePkg.version),
+    'import.meta.env.VITE_DEP_VERSIONS': JSON.stringify(JSON.stringify(DEP_VERSIONS)),
     // The custom Plotly bundle imports `plotly.js/lib` source, which references
     // Node's `global` (the prebuilt plotly dist shims this internally). esbuild
     // only substitutes free references, so locals named `global` (e.g. regl's
