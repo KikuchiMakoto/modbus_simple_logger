@@ -38,12 +38,11 @@ const SCRIPT_LOG_LINE_MAX = 2000;
 /**
  * One line of what a script reported.
  *
- * The Script Runner window no longer draws these — its Output pane came out
- * when the editor took the height back, and the log is to get a window of its
- * own. The recording side is deliberately untouched by that: every stream is
- * still captured, capped and kept here, and `scriptLog` / `clearScriptLog` are
- * exported for whatever displays it. Today that is the bottom status bar, which
- * shows the newest line.
+ * Read in the Script Log window (components/ScriptLogPanel), which replaced the
+ * pane inside the Script Runner when the editor took that height back, and in
+ * the bottom status bar, which shows the newest line. The recording side is
+ * independent of both: every stream is captured, capped and kept here whether or
+ * not anything is displaying it.
  */
 export type ScriptLogEntry = {
   /** Epoch ms. */

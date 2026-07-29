@@ -28,6 +28,10 @@ const MENU_ITEMS = [
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
   { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
+  // Directly under the runner, because it is the runner's other half: the
+  // window where a script is written, and the window where what it said is
+  // read. It was a pane inside that window until the editor needed the height.
+  { key: 'scriptLog', label: 'Script Log', icon: '🧾', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },

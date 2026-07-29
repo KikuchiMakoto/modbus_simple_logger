@@ -100,6 +100,7 @@ import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
+import { ScriptLogPanel } from './components/ScriptLogPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
 import { AppStatusBar } from './components/AppStatusBar';
@@ -470,6 +471,7 @@ function App() {
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
+  const [scriptLogPanelOpen, setScriptLogPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -619,6 +621,8 @@ function App() {
       setManualPanelOpen(true);
     } else if (item === 'scriptRunner') {
       setScriptRunnerPanelOpen(true);
+    } else if (item === 'scriptLog') {
+      setScriptLogPanelOpen(true);
     } else if (item === 'remoteViewer') {
       setRemoteViewerPanelOpen(true);
     }
@@ -2827,6 +2831,14 @@ function App() {
         channelLabels={{ ai: aiFreeLabels, ao: aoFreeLabels, param: paramFreeLabels }}
       />
 
+      {/* Opened separately from the runner: the two are meant to sit side by
+          side, and a log window that only existed while the editor was open
+          would be back to being a pane inside it. */}
+      <ScriptLogPanel
+        open={scriptLogPanelOpen}
+        onClose={() => setScriptLogPanelOpen(false)}
+        scriptRunner={scriptRunner}
+      />
 
       <RemoteViewerPanel
         open={remoteViewerPanelOpen}
