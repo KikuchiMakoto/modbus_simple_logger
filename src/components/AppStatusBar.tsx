@@ -6,9 +6,8 @@
 //
 // Sibling of ScriptStatusBar, with three deliberate differences:
 //
-//  - No `md:` gate. ScriptStatusBar hides itself below `md`; an error surface
-//    cannot, because the Android/WebUSB path is where several of the failures it
-//    reports actually happen.
+//  - Rendered on a viewer too, where ScriptStatusBar is not: a viewer can still
+//    lose its feed, and nothing else on that window would say so.
 //  - No spacer. ScriptStatusBar reserves an `h-8` because it is always present.
 //    This renders null when there is nothing to say, so it must be a pure
 //    overlay — a conditional spacer would reflow the whole page every time a
@@ -24,6 +23,7 @@ import {
   type AppStatusEntry,
   type AppStatusLevel,
 } from '../utils/appStatus';
+import { isViewerMode } from '../utils/appMode';
 import { FloatingWindow } from './FloatingWindow';
 
 // Red for errors is an exception to the emerald/slate rule, scoped to the
@@ -95,10 +95,14 @@ export function AppStatusBar() {
 
   return (
     <>
-      {/* bottom-8 on md and up clears the PyScript bar, which is h-8 and only
-          rendered at that breakpoint. Below it, that bar is hidden, so this
-          sits on the floor. */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 flex min-h-8 items-center gap-2 border-t border-slate-200 bg-slate-50/90 px-3 py-1 text-xs backdrop-blur dark:border-slate-800 dark:bg-slate-950/90 md:bottom-8">
+      {/* Sits on top of the script bar, so the offset tracks that bar's two
+          heights (h-6, then h-8 at md) — and drops to the floor on a viewer,
+          which does not render that bar at all. */}
+      <div
+        className={`fixed left-0 right-0 z-30 flex min-h-8 items-center gap-2 border-t border-slate-200 bg-slate-50/90 px-3 py-1 text-xs backdrop-blur dark:border-slate-800 dark:bg-slate-950/90 ${
+          isViewerMode ? 'bottom-0' : 'bottom-6 md:bottom-8'
+        }`}
+      >
         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
         <span className="shrink-0 font-semibold text-slate-800 dark:text-slate-100">
           {style.label}
