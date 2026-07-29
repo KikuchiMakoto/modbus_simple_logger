@@ -45,9 +45,23 @@ const SCRIPT_LOG_LINE_MAX = 2000;
  * not anything is displaying it.
  */
 export type ScriptLogEntry = {
+  /**
+   * Position in this run's output, from 1. Counted rather than taken from the
+   * array index because the array is a tail: once the cap trims the front, an
+   * index says where a line sits in the window, not which line it is — and "the
+   * 512th thing this script printed" is the number worth showing.
+   */
+  seq: number;
   /** Epoch ms. */
   t: number;
   stream: 'stdout' | 'stderr' | 'system';
+  /**
+   * Name of the script this line came out of — logcat's tag column. Held from
+   * the moment Run is pressed until the next Run, so the lines that arrive after
+   * a script ends ("Stopped", a traceback) still name the script they are about.
+   * Empty before anything has ever been run.
+   */
+  source: string;
   text: string;
 };
 
@@ -113,6 +127,10 @@ export function useScriptRunner(
   // Mirrored in refs because worker message handlers run outside React's render
   // cycle and must never observe a stale render's copy.
   const scriptLogRef = useRef<ScriptLogEntry[]>([]);
+  /** Lines produced by this run so far — see ScriptLogEntry.seq. */
+  const logSeqRef = useRef(0);
+  /** Script name stamped on new log lines — see ScriptLogEntry.source. */
+  const logSourceRef = useRef('');
   const scriptRunRef = useRef<ScriptRunInfo>(IDLE_RUN);
   const runIdRef = useRef(0);
   // One worker per language, kept alive once created. Pyodide costs seconds to
@@ -142,7 +160,11 @@ export function useScriptRunner(
       trimmed.length > SCRIPT_LOG_LINE_MAX
         ? `${trimmed.slice(0, SCRIPT_LOG_LINE_MAX)}… (${trimmed.length - SCRIPT_LOG_LINE_MAX} more characters)`
         : trimmed;
-    const next = [...scriptLogRef.current, { t: Date.now(), stream, text: capped }];
+    logSeqRef.current += 1;
+    const next = [
+      ...scriptLogRef.current,
+      { seq: logSeqRef.current, t: Date.now(), stream, source: logSourceRef.current, text: capped },
+    ];
     if (next.length > SCRIPT_LOG_MAX) next.splice(0, next.length - SCRIPT_LOG_MAX);
     scriptLogRef.current = next;
     setScriptLog(next);
@@ -150,6 +172,7 @@ export function useScriptRunner(
 
   const clearScriptLog = useCallback(() => {
     scriptLogRef.current = [];
+    logSeqRef.current = 0;
     setScriptLog([]);
   }, []);
 
@@ -369,6 +392,9 @@ export function useScriptRunner(
     // the whole run even if the user pages over to another one.
     const tab = activeTabOf(tabStateRef.current);
     const language = tab.language;
+    // Stamped on every line from here on, including the ones that arrive after
+    // the run ends. Not cleared when it does — see ScriptLogEntry.source.
+    logSourceRef.current = tab.name;
     try {
       const worker = ensureWorkerReady(language);
       if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;

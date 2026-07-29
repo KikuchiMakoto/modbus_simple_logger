@@ -8,6 +8,18 @@
 // opened next to the runner, made as tall as the failure needs, and left open
 // across runs.
 //
+// Laid out like logcat, for the reason logcat is laid out that way: one entry
+// per row, fixed columns, so the eye runs down a column instead of re-parsing
+// each line. Line number, time, script, message — and nothing is allowed to
+// break that grid, so a message with newlines in it is folded onto its single
+// row and truncated. The row expands on click, which is where a traceback is
+// read.
+//
+// No level column and no level filter. logcat has V/D/I/W/E because Android
+// logs carry a severity the writer chose; nothing here does — a script prints,
+// or it fails, and "failed" is already said in red. A letter that only ever took
+// three values, one of them per row, would be a column of decoration.
+//
 // Sibling of the Status Log that AppStatusBar opens: same idea (a record worth
 // reading after the fact rather than a strip glanced at), different source —
 // that one carries the app's own failures, this one carries the script's.
@@ -22,8 +34,9 @@ type ScriptLogPanelProps = {
   scriptRunner: ReturnType<typeof useScriptRunner>;
 };
 
-// Same tokens the bottom status bar uses for the same three streams, so a line
-// does not change colour on its way from one surface to the other.
+// The tokens the bottom status bar already uses for the same three streams, so a
+// line does not change colour on its way from one surface to the other. This is
+// not a severity — it is stderr being red, which is what stderr is.
 const STREAM_COLOR: Record<ScriptLogEntry['stream'], string> = {
   stdout: 'text-slate-700 dark:text-slate-200',
   stderr: 'text-rose-600 dark:text-rose-400',
@@ -38,21 +51,33 @@ const OUTCOME_LABEL: Record<ScriptOutcome, string> = {
   error: 'Error',
 };
 
+/** `14:22:31.482` — with milliseconds, which is what makes a burst readable. */
 const formatLogTime = (t: number): string => {
   const d = new Date(t);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  return (
+    `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:` +
+    `${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`
+  );
 };
 
+// Newlines folded to a visible arrow rather than a space: a traceback collapsed
+// onto one row should read as several lines standing in for themselves, not as
+// one sentence that happens to be strangely worded.
+const foldNewlines = (text: string): string => text.replace(/\r?\n/g, ' ⏎ ');
+
 // How close to the bottom still counts as "watching the tail", in pixels. Two
-// lines' worth at this line height: enough that the newly added line does not
-// itself look like the user has scrolled away, and little enough that a
-// deliberate scroll back is left alone.
+// rows' worth: enough that the newly added row does not itself look like the
+// user has scrolled away, and little enough that a deliberate scroll back is
+// left alone.
 const TAIL_SLACK_PX = 36;
 
 export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelProps) {
   const { scriptLog, scriptRun, scriptRunning, runningTab } = scriptRunner;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [copied, setCopied] = useState(false);
+  // Rows opened out to their full text. Keyed by seq, which is stable for the
+  // life of a run even as the tail trims the front of the array.
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
 
   // Follow the tail, but only while the tail is what is being read. The old pane
   // scrolled to the newest line unconditionally, which in a script printing every
@@ -61,15 +86,32 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
   useEffect(() => {
     const box = scrollRef.current;
     if (!box) return;
-    // Measured after the new line is in the DOM, so a box that was sitting at
-    // the bottom is now exactly that line short of it — the slack has to cover
-    // one line's height, not zero.
+    // Measured after the new row is in the DOM, so a box that was sitting at the
+    // bottom is now exactly that row short of it — the slack has to cover a row's
+    // height, not zero.
     const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
     if (distanceFromBottom <= TAIL_SLACK_PX) box.scrollTop = box.scrollHeight;
   }, [scriptLog]);
 
+  const toggleExpanded = (seq: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+  };
+
+  // The full text, unfolded and untruncated — what is on screen is a view of it,
+  // and a log pasted into a bug report has to be the real thing.
   const copyLog = () => {
-    const text = scriptLog.map((entry) => `${formatLogTime(entry.t)} ${entry.text}`).join('\n');
+    const text = scriptLog
+      .map((entry) =>
+        [String(entry.seq).padStart(4), formatLogTime(entry.t), entry.source, entry.text]
+          .filter((part) => part !== '')
+          .join(' '),
+      )
+      .join('\n');
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
@@ -92,16 +134,16 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
           : `${OUTCOME_LABEL[outcome]} · ${scriptLog.length} ${scriptLog.length === 1 ? 'line' : 'lines'}`
       }
       accent="blue"
-      defaultWidth={560}
-      defaultHeight={360}
+      defaultWidth={600}
+      defaultHeight={380}
       headerActions={
         <>
           <button
             type="button"
-            className="button-secondary py-1 text-xs"
+            className="button-secondary py-1 text-xs disabled:opacity-50"
             onClick={copyLog}
             disabled={scriptLog.length === 0}
-            title="Copy the whole log to the clipboard"
+            title="Copy the log to the clipboard, in full"
           >
             {copied ? 'Copied!' : 'Copy'}
           </button>
@@ -109,7 +151,7 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
               not work — and the next run clears it anyway. */}
           <button
             type="button"
-            className="button-secondary py-1 text-xs"
+            className="button-secondary py-1 text-xs disabled:opacity-50"
             onClick={scriptRunner.clearScriptLog}
             disabled={scriptLog.length === 0}
             title="Clear the log"
@@ -121,24 +163,57 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
     >
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-auto px-2 py-1 font-mono text-[0.7rem] leading-[1.05rem]"
+        className="min-h-0 flex-1 overflow-auto font-mono text-[0.7rem] leading-[1.15rem]"
       >
         {scriptLog.length === 0 ? (
-          <p className="text-slate-400 dark:text-slate-500">
+          <p className="px-2 py-1 text-slate-400 dark:text-slate-500">
             No output. Printed text goes here, along with errors and tracebacks.
           </p>
         ) : (
-          scriptLog.map((entry, index) => (
-            <div
-              key={`${entry.t}-${index}`}
-              className={`whitespace-pre-wrap break-words ${STREAM_COLOR[entry.stream]}`}
-            >
-              <span className="mr-2 text-slate-400 dark:text-slate-600">
-                {formatLogTime(entry.t)}
-              </span>
-              {entry.text}
-            </div>
-          ))
+          scriptLog.map((entry) => {
+            const isExpanded = expanded.has(entry.seq);
+            // Worth a click only if there is something the row is not showing.
+            const foldable = /\r?\n/.test(entry.text);
+            return (
+              <div
+                key={entry.seq}
+                onClick={() => toggleExpanded(entry.seq)}
+                className="flex cursor-pointer gap-2 px-2 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                title={isExpanded ? 'Click to collapse' : 'Click to show the whole line'}
+              >
+                {/* tabular-nums keeps the fixed columns from shivering as the
+                    digits change under them. */}
+                <span className="w-8 shrink-0 select-none text-right tabular-nums text-slate-400 dark:text-slate-600">
+                  {entry.seq}
+                </span>
+                <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
+                  {formatLogTime(entry.t)}
+                </span>
+                {/* Which script this came out of. A fixed width, truncated: a
+                    column that resizes itself to the longest name would move the
+                    message column every time a different tab is run. */}
+                <span
+                  className="w-20 shrink-0 truncate text-slate-500 dark:text-slate-400"
+                  title={entry.source}
+                >
+                  {entry.source}
+                </span>
+                <span
+                  className={`min-w-0 flex-1 ${STREAM_COLOR[entry.stream]} ${
+                    isExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'
+                  }`}
+                >
+                  {isExpanded ? entry.text : foldNewlines(entry.text)}
+                  {/* Says there is more where the row ends, for the case the
+                      truncation is not visible — a folded traceback whose first
+                      line happens to fit. */}
+                  {!isExpanded && foldable && (
+                    <span className="ml-1 text-slate-400 dark:text-slate-500">…</span>
+                  )}
+                </span>
+              </div>
+            );
+          })
         )}
       </div>
     </FloatingWindow>
