@@ -35,6 +35,12 @@ type CodeEditorProps = {
   onValueChange: (value: string) => void;
   language: ScriptLanguageId;
   className?: string;
+  /**
+   * Frozen: the caret still moves and the text can still be selected and
+   * copied, but nothing types. Used while this script is the one executing —
+   * see the note on setScriptCode in useScriptRunner.
+   */
+  readOnly?: boolean;
 };
 
 export function CodeEditor({
@@ -42,6 +48,7 @@ export function CodeEditor({
   onValueChange,
   language,
   className = '',
+  readOnly = false,
 }: CodeEditorProps) {
   // One entry per line. A trailing newline means a real (empty) last line, which
   // is why this counts separators rather than non-empty lines.
@@ -55,7 +62,14 @@ export function CodeEditor({
   // away from code that cannot move with them.
   return (
     <div
-      className={`relative flex items-start overflow-auto rounded border border-slate-300 bg-white font-mono text-xs leading-[1.125rem] text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${className}`}
+      // The frozen state is dimmed rather than only announced in words: the
+      // editor looks identical whether or not it accepts keys, and finding out
+      // by typing a line that goes nowhere is the wrong way to learn it.
+      className={`relative flex items-start overflow-auto rounded border font-mono text-xs leading-[1.125rem] text-slate-900 dark:text-slate-100 ${
+        readOnly
+          ? 'border-amber-300 bg-amber-50/40 dark:border-amber-500/40 dark:bg-amber-500/5'
+          : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-800'
+      } ${className}`}
     >
       {/* sticky so the numbers stay put when a long line scrolls the box
           sideways; aria-hidden because a screen reader reading the code out
@@ -75,6 +89,10 @@ export function CodeEditor({
       <Editor
         value={value}
         onValueChange={onValueChange}
+        // The library's own readOnly, so Tab/Shift+Tab and its undo stack are
+        // held back too — a `disabled` textarea would also stop the text being
+        // selected and copied, which is most of what a frozen script is for.
+        readOnly={readOnly}
         highlight={(code) => highlightScript(code, language)}
         padding={PADDING_PX}
         // Tab indents by two spaces, Shift+Tab outdents, both across a

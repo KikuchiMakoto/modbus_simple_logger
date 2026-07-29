@@ -2844,8 +2844,8 @@ function App() {
           outcome={scriptRunner.scriptRun.outcome}
           status={scriptRunner.scriptRunnerStatus}
           lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
-          languageLabel={SCRIPT_LANGUAGES[scriptRunner.scriptLanguage].label}
-          runtimeBadge={SCRIPT_LANGUAGES[scriptRunner.scriptLanguage].badge}
+          languageLabel={SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label}
+          runtimeBadge={SCRIPT_LANGUAGES[scriptRunner.statusLanguage].badge}
         />
       )}
 

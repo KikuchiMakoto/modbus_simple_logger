@@ -1,0 +1,147 @@
+// The Script Runner's open documents.
+//
+// The editor used to hold exactly one script per language, keyed by
+// SCRIPT_LANGUAGES[id].storageKey. That is one script per *runtime*, which is
+// not how the panel is actually used: a rig ends up with a warm-up script, a
+// sweep and a shutdown, all Python, and keeping three of those meant keeping two
+// of them somewhere outside the app.
+//
+// So: tabs, but a separate strip of them per language rather than one mixed
+// list. The Language selector still chooses the mode, and the tabs shown are
+// that mode's scripts — a Python tab cannot become a Lua tab, and a Lua script
+// never sits in the middle of the Python ones. A tab therefore belongs to its
+// language for life; changing language means changing which strip is on screen.
+import {
+  DEFAULT_SCRIPT_LANGUAGE,
+  SCRIPT_LANGUAGES,
+  isScriptLanguageId,
+  type ScriptLanguageId,
+} from './scriptLanguages';
+import { readJsonStorage, writeJsonStorage } from './cookies';
+
+export type ScriptTab = {
+  id: string;
+  /** Shown on the tab. Free text; the extension is only a default. */
+  name: string;
+  language: ScriptLanguageId;
+  code: string;
+};
+
+export const SCRIPT_TABS_STORAGE_KEY = 'scriptRunnerTabs';
+
+/**
+ * Upper bound on open tabs *per language*. Not a storage limit — it is that the
+ * strip is the width of a floating window, and past a dozen it is a scrollbar
+ * with no readable labels on it.
+ */
+export const SCRIPT_TABS_MAX = 12;
+
+/**
+ * Longest tab name, in characters. Names are the only thing telling two Python
+ * scripts apart, so they are the user's to choose — but a tab is about eight
+ * characters wide before it starts pushing its neighbours off the strip, and a
+ * name that has to be truncated to be shown is not doing its job. Long enough
+ * for `sweep-up-slow.py`, short enough that a dozen tabs still fit.
+ */
+export const SCRIPT_TAB_NAME_MAX = 24;
+
+type StoredTabs = {
+  tabs: { id: string; name: string; language: string; code: string }[];
+  activeId: string;
+};
+
+let idCounter = 0;
+
+/**
+ * Unique enough to key a React list and to name a tab. Not crypto.randomUUID():
+ * that is unavailable outside secure contexts, and the launcher serves this app
+ * over plain HTTP to other machines on the LAN.
+ */
+export const newTabId = (): string => {
+  idCounter += 1;
+  return `tab-${Date.now().toString(36)}-${idCounter}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+};
+
+export const sanitizeTabName = (name: string, language: ScriptLanguageId): string => {
+  const trimmed = name.replace(/\s+/g, ' ').trim().slice(0, SCRIPT_TAB_NAME_MAX);
+  // An empty name would leave a tab that cannot be pointed at, so fall back to
+  // the same default a new tab would have got.
+  return trimmed === '' ? `main.${SCRIPT_LANGUAGES[language].extension}` : trimmed;
+};
+
+/** `main.py`, then `main2.py`, … — the first name not already on a tab. */
+export const defaultTabName = (language: ScriptLanguageId, existing: ScriptTab[]): string => {
+  const ext = SCRIPT_LANGUAGES[language].extension;
+  const taken = new Set(existing.map((tab) => tab.name.toLowerCase()));
+  for (let n = 1; n <= SCRIPT_TABS_MAX + 1; n += 1) {
+    const candidate = `main${n === 1 ? '' : n}.${ext}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `main-${newTabId()}.${ext}`;
+};
+
+export const createTab = (language: ScriptLanguageId, existing: ScriptTab[]): ScriptTab => ({
+  id: newTabId(),
+  name: defaultTabName(language, existing),
+  language,
+  code: SCRIPT_LANGUAGES[language].defaultScript,
+});
+
+export const tabsOfLanguage = (tabs: ScriptTab[], language: ScriptLanguageId): ScriptTab[] =>
+  tabs.filter((tab) => tab.language === language);
+
+/**
+ * The open tabs, or — on the first run after this replaced the per-language
+ * editors — one tab per language that had a script stored under the old keys.
+ *
+ * The legacy keys are left in place rather than deleted. They are a few kB, and
+ * they are the only copy of that code if this version is ever rolled back.
+ */
+export function loadScriptTabs(): { tabs: ScriptTab[]; activeId: string } {
+  const stored = readJsonStorage<StoredTabs>(SCRIPT_TABS_STORAGE_KEY) as StoredTabs | null;
+  const tabs: ScriptTab[] = [];
+  if (stored && Array.isArray(stored.tabs)) {
+    for (const entry of stored.tabs) {
+      if (!entry || typeof entry.code !== 'string' || !isScriptLanguageId(entry.language)) continue;
+      tabs.push({
+        id: typeof entry.id === 'string' && entry.id !== '' ? entry.id : newTabId(),
+        name: sanitizeTabName(typeof entry.name === 'string' ? entry.name : '', entry.language),
+        language: entry.language,
+        code: entry.code,
+      });
+      // The cap is per language, so a stored file with twelve Python tabs must
+      // not shut out the one Lua tab behind them.
+      if (tabsOfLanguage(tabs, entry.language).length > SCRIPT_TABS_MAX) tabs.pop();
+    }
+  }
+  if (tabs.length > 0) {
+    const activeId = tabs.some((tab) => tab.id === stored?.activeId) ? stored!.activeId : tabs[0].id;
+    return { tabs, activeId };
+  }
+  return migrateLegacyTabs();
+}
+
+function migrateLegacyTabs(): { tabs: ScriptTab[]; activeId: string } {
+  const tabs: ScriptTab[] = [];
+  for (const language of ['python', 'basic', 'lua'] as ScriptLanguageId[]) {
+    const code = readJsonStorage<string>(SCRIPT_LANGUAGES[language].storageKey);
+    if (typeof code !== 'string') continue;
+    tabs.push({
+      id: newTabId(),
+      name: defaultTabName(language, tabs),
+      language,
+      code,
+    });
+  }
+  if (tabs.length === 0) tabs.push(createTab(DEFAULT_SCRIPT_LANGUAGE, tabs));
+
+  // Whichever language the panel was last set to is the tab that should be in
+  // front, so the window opens on the script it closed on.
+  const last = readJsonStorage<string>('scriptRunnerLanguage');
+  const active = isScriptLanguageId(last) ? tabs.find((tab) => tab.language === last) : undefined;
+  return { tabs, activeId: (active ?? tabs[0]).id };
+}
+
+export const saveScriptTabs = (tabs: ScriptTab[], activeId: string): void => {
+  writeJsonStorage(SCRIPT_TABS_STORAGE_KEY, { tabs, activeId });
+};
