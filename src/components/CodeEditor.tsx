@@ -42,9 +42,15 @@ export function CodeEditor({
   // is why this counts separators rather than non-empty lines.
   const lineCount = useMemo(() => value.split('\n').length, [value]);
 
+  // `items-start` below is load-bearing. Under flexbox's default `stretch` the
+  // editor is sized to the box rather than to the script, and its own wrapper
+  // (react-simple-code-editor sets `overflow: hidden` on it) then clips every
+  // line past the bottom edge — while the gutter, which is not clipped, is what
+  // makes the box scroll. The result is a box that scrolls the line numbers
+  // away from code that cannot move with them.
   return (
     <div
-      className={`relative flex min-h-0 overflow-auto rounded border border-slate-300 bg-white font-mono text-sm leading-5 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${className}`}
+      className={`relative flex items-start overflow-auto rounded border border-slate-300 bg-white font-mono text-sm leading-5 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${className}`}
     >
       {/* sticky so the numbers stay put when a long line scrolls the box
           sideways; aria-hidden because a screen reader reading the code out
@@ -52,7 +58,10 @@ export function CodeEditor({
       <div
         aria-hidden="true"
         className="sticky left-0 z-10 shrink-0 select-none border-r border-slate-200 bg-slate-100 px-2 text-right text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-500"
-        style={{ paddingTop: PADDING_PX, paddingBottom: PADDING_PX }}
+        // Both children are content-sized now (see items-start above), so the
+        // gutter needs its own minimum or its stripe stops at the last line
+        // instead of running the height of the box.
+        style={{ paddingTop: PADDING_PX, paddingBottom: PADDING_PX, minHeight: '100%' }}
       >
         {Array.from({ length: lineCount }, (_, i) => (
           <div key={i}>{i + 1}</div>
