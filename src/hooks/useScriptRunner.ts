@@ -14,7 +14,22 @@ const SCRIPT_LANGUAGE_STORAGE_KEY = 'scriptRunnerLanguage';
 
 // How many log lines are kept. A `while True:` loop that prints every iteration
 // would grow without bound otherwise; the log is a tail, not a transcript.
-const SCRIPT_LOG_MAX = 300;
+//
+// 100, not the 300 this started at. The cost that matters is not the bytes —
+// it is that every printed line re-renders the panel and re-maps the whole
+// array, on the same main thread the Modbus polling loop runs on, so the tail
+// length is paid per line rather than once. The Output pane shows about five
+// lines at a time and the last one is echoed in the status bar; anything a
+// script needs to keep beyond that belongs in Parameter channels or the TSV,
+// both of which are recorded rather than scrolled past.
+const SCRIPT_LOG_MAX = 100;
+
+// Longest single line kept, in characters. The line count above bounds how many
+// entries there are but not how big one can be: `print(huge_list)` is one entry
+// holding the whole thing, and in a loop that is the unbounded case the line cap
+// was supposed to close. Cut well above anything the pane can show, so this only
+// ever fires on output that was never readable there anyway.
+const SCRIPT_LOG_LINE_MAX = 2000;
 
 export type ScriptLogEntry = {
   /** Epoch ms. */
@@ -98,7 +113,13 @@ export function useScriptRunner(
   const appendLog = useCallback((stream: ScriptLogEntry['stream'], text: string) => {
     const trimmed = text.replace(/\s+$/, '');
     if (trimmed === '') return;
-    const next = [...scriptLogRef.current, { t: Date.now(), stream, text: trimmed }];
+    // Say so rather than silently dropping the tail: a line that ends mid-value
+    // otherwise reads as the script having produced garbage.
+    const capped =
+      trimmed.length > SCRIPT_LOG_LINE_MAX
+        ? `${trimmed.slice(0, SCRIPT_LOG_LINE_MAX)}… (${trimmed.length - SCRIPT_LOG_LINE_MAX} more characters)`
+        : trimmed;
+    const next = [...scriptLogRef.current, { t: Date.now(), stream, text: capped }];
     if (next.length > SCRIPT_LOG_MAX) next.splice(0, next.length - SCRIPT_LOG_MAX);
     scriptLogRef.current = next;
     setScriptLog(next);
@@ -229,13 +250,26 @@ export function useScriptRunner(
         notify(`${runnerName} Runner`, 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('completed');
       } else if (message.type === 'interrupted') {
+        // This is the worker CONFIRMING a Stop that stopScriptRunner already
+        // reported the moment it was requested — so the end of the run has
+        // normally been recorded once already, and recording it again wrote
+        // "Stopped" into the log twice for one press. (The notification did not
+        // double up only because both carry the same tag and the second
+        // replaced the first.)
+        //
+        // Still guarded on the flag rather than dropped outright: a worker that
+        // stops on its own, with no local Stop ahead of it, is the case this
+        // branch has to keep reporting.
+        const wasRunning = scriptExecutingRef.current;
         scriptExecutingRef.current = false;
         runningLanguageRef.current = null;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Stopped');
-        appendLog('system', message.message ?? 'Stopped');
-        notify(`${runnerName} Runner`, 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
-        settleRun('stopped');
+        if (wasRunning) {
+          appendLog('system', message.message ?? 'Stopped');
+          notify(`${runnerName} Runner`, 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
+          settleRun('stopped');
+        }
       } else if (message.type === 'error') {
         scriptExecutingRef.current = false;
         runningLanguageRef.current = null;
@@ -288,10 +322,11 @@ export function useScriptRunner(
     setScriptRunnerStatus(nextStatus);
     if (wasRunning) {
       appendLog('system', nextStatus);
-      // The worker answers this Stop with an 'interrupted' message of its own a
-      // moment later; both carry the same tag, so the second replaces the first
-      // rather than stacking. Notifying here too is what covers the case where
-      // no answer comes back at all (Pyodide was still booting).
+      // Reporting the stop from here, rather than waiting for the worker's
+      // 'interrupted' answer, is what covers the case where no answer comes
+      // back at all (Pyodide was still booting). The answer that does arrive
+      // sees scriptExecutingRef already false and stays quiet, so one press
+      // writes one line.
       notify('Script Runner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
       settleRun('stopped');
     }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent, MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
+import { CodeEditor } from './CodeEditor';
+import { CollapseButton } from './CollapseButton';
 import {
   SCRIPT_LANGUAGES,
   SCRIPT_LANGUAGE_LIST,
@@ -19,7 +20,6 @@ type ScriptRunnerPanelProps = {
   open: boolean;
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
-  onEditorKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   channelLabels: ChannelLabels;
 };
 
@@ -32,10 +32,10 @@ export function ScriptRunnerPanel({
   open,
   onClose,
   scriptRunner,
-  onEditorKeyDown,
   channelLabels,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
+  const [apiOpen, setApiOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const { scriptLog } = scriptRunner;
   const language = SCRIPT_LANGUAGES[scriptRunner.scriptLanguage];
@@ -46,10 +46,7 @@ export function ScriptRunnerPanel({
     logEndRef.current?.scrollIntoView({ block: 'nearest' });
   }, [scriptLog]);
 
-  const copyAiPrompt = (event: MouseEvent<HTMLButtonElement>) => {
-    // Inside <summary>: keep the click from toggling the <details>.
-    event.preventDefault();
-    event.stopPropagation();
+  const copyAiPrompt = () => {
     navigator.clipboard.writeText(buildAiPrompt(language, channelLabels)).then(() => {
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
@@ -66,6 +63,25 @@ export function ScriptRunnerPanel({
       defaultHeight={620}
       headerActions={
         <>
+          {/* A swipe, not a button: it discards whatever is in the editor for
+              the default script, and an editor holds work that exists nowhere
+              else — there is no undo behind it. Same gesture as the header's
+              Disconnect and the Output Tester's zero.
+
+              It sits to the LEFT of Run/Stop, which keeps Run/Stop as the
+              control nearest the window's edge — the one reached for in a
+              hurry, and the one whose position should not move. */}
+          <SlideToConfirm
+            label="Slide to clear"
+            armedLabel="Release"
+            knobLabel="✕"
+            onConfirm={scriptRunner.clearScriptCode}
+            disabled={scriptRunner.scriptRunning}
+            knobPx={24}
+            className="h-[26px] w-[7.5rem]"
+            labelClassName="text-[0.7rem]"
+            aria-label="Slide to reset the script to the default"
+          />
           <button
             type="button"
             className={
@@ -78,26 +94,16 @@ export function ScriptRunnerPanel({
           >
             {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
           </button>
-          {/* A swipe, not a button: it discards whatever is in the editor for
-              the default script, and an editor holds work that exists nowhere
-              else — there is no undo behind it. Same gesture as the header's
-              Disconnect and the Output Tester's zero. */}
-          <SlideToConfirm
-            label="Slide to clear"
-            armedLabel="Release"
-            knobLabel="✕"
-            onConfirm={scriptRunner.clearScriptCode}
-            disabled={scriptRunner.scriptRunning}
-            knobPx={24}
-            className="h-[26px] w-[7.5rem]"
-            labelClassName="text-[0.7rem]"
-            aria-label="Slide to reset the script to the default"
-          />
         </>
       }
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      {/* The editor is the only flex-1 child, so every pixel this column does
+          not spend on padding, gaps and the fixed rows around it becomes
+          editor height. That is why the type here runs a step smaller than the
+          rest of the app: the language row, the Output header and the API list
+          are all glanced at, while the editor is worked in. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
+        <div className="flex flex-wrap items-center gap-2 text-[0.7rem] text-slate-500 dark:text-slate-400">
           {/* Disabled while running: the worker executing belongs to the
               current language, and switching would leave Stop pointing at a
               script no longer on screen. */}
@@ -122,44 +128,38 @@ export function ScriptRunnerPanel({
           </label>
           <span>Status: {scriptRunner.scriptRunnerStatus}</span>
         </div>
-        <textarea
+        <CodeEditor
           value={scriptRunner.scriptCode}
-          onChange={(e) => scriptRunner.setScriptCode(e.target.value)}
-          onKeyDown={onEditorKeyDown}
-          className="min-h-[180px] w-full flex-1 resize-none rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          spellCheck={false}
+          onValueChange={scriptRunner.setScriptCode}
+          language={scriptRunner.scriptLanguage}
+          className="min-h-[180px] w-full flex-1"
         />
         {/* print() output and tracebacks. Before this existed a failing script
-            left only a one-line status with no way to see which line failed. */}
-        <details
-          className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
-          open
-        >
-          <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            left only a one-line status with no way to see which line failed.
+            Always open: it is the answer to "what did my script do", and a
+            traceback nobody can see is the same as no traceback. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex select-none items-center justify-between px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
             <span>
               Output
               {scriptRunner.scriptRun.outcome === 'error' && (
-                <span className="ml-2 rounded bg-rose-500 px-1.5 py-0.5 text-xs font-semibold text-rose-50">
+                <span className="ml-2 rounded bg-rose-500 px-1.5 py-0.5 text-[0.65rem] font-semibold text-rose-50">
                   Error
                 </span>
               )}
             </span>
             <button
               type="button"
-              className="button-secondary py-0.5 text-xs"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                scriptRunner.clearScriptLog();
-              }}
+              className="button-secondary py-0.5 text-[0.7rem]"
+              onClick={scriptRunner.clearScriptLog}
               title="Clear the output log"
             >
               Clear
             </button>
-          </summary>
-          <div className="max-h-16 min-h-[2rem] overflow-auto px-3 pb-2 font-mono text-xs">
+          </div>
+          <div className="max-h-16 min-h-[1.25rem] overflow-auto px-2 pb-1 font-mono text-[0.7rem] leading-[1.05rem]">
             {scriptLog.length === 0 ? (
-              <p className="py-1 text-slate-400 dark:text-slate-500">
+              <p className="text-slate-400 dark:text-slate-500">
                 No output. Printed text goes here, along with errors.
               </p>
             ) : (
@@ -181,30 +181,44 @@ export function ScriptRunnerPanel({
             )}
             <div ref={logEndRef} />
           </div>
-        </details>
-        <details className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
-          <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        </div>
+        {/* Collapsed by default — the editor is what this window is for, and
+            the list is long. It used to be a <details>, where the only hint
+            that the section opened at all was the tiny native triangle; the
+            chevron button is the same control the main page's Analog Input
+            group uses, so "this opens" is stated the same way everywhere. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex select-none items-center justify-between px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
             API Reference
-            <button
-              type="button"
-              className="button-secondary py-0.5 text-xs"
-              onClick={copyAiPrompt}
-              title="Copy an AI-ready prompt of this API reference to the clipboard"
-            >
-              {promptCopied ? 'Copied!' : 'Copy for AI'}
-            </button>
-          </summary>
-          <ul className="space-y-2 px-3 pb-3 text-xs text-slate-600 dark:text-slate-400">
-            {language.apiDocs.map((api) => (
-              <li key={api.name}>
-                <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-                  {api.name}
-                </code>
-                <span className="ml-2">{api.desc}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="button-secondary py-0.5 text-[0.7rem]"
+                onClick={copyAiPrompt}
+                title="Copy an AI-ready prompt of this API reference to the clipboard"
+              >
+                {promptCopied ? 'Copied!' : 'Copy for AI'}
+              </button>
+              <CollapseButton
+                collapsed={!apiOpen}
+                onToggle={() => setApiOpen((v) => !v)}
+                label="API Reference"
+              />
+            </div>
+          </div>
+          {apiOpen && (
+            <ul className="space-y-1 px-2 pb-1.5 text-[0.7rem] leading-snug text-slate-600 dark:text-slate-400">
+              {language.apiDocs.map((api) => (
+                <li key={api.name}>
+                  <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                    {api.name}
+                  </code>
+                  <span className="ml-2">{api.desc}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </FloatingWindow>
   );

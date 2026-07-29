@@ -61,6 +61,7 @@ src/
 │   ├── ScriptStatusBar.tsx          # 画面下端固定の ScriptRunner 状態バー（選択中の言語名を出す・md 以上のみ・常設なので h-8 スペーサを持つ）
 │   ├── AppStatusBar.tsx             # 画面下端固定のエラーバー（**失敗のみ**。正常時は出ない）。ScriptRunner バーの上に重なる。何も無ければ null（スペーサを持たない純オーバーレイ）・全ブレークポイントで表示
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／言語セレクタ／実行・停止・Output ログ・API 一覧（UI 名: Script Runner）
+│   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
 │   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー（ビューアのみアプリヘッダーにも出す）
@@ -247,7 +248,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **COOP/COEP ヘッダー必須**（`SharedArrayBuffer` 利用のため）
 - Worker init 失敗時は `initPromise` をリセットし再試行可能。メインスレッドは `init` を Worker 生成時に1度しか送らないため、Worker 側は `initArgs` を保持して `run` 受信時に**自力で再 init する**
 - **stdout/stderr は `pyodide.setStdout/setStderr`（batched）でメインスレッドへ転送する**（`{ type: 'output' }`）。Worker のコンソールはページの devtools に既定では出ないため。エラー時は `{ type: 'error', message, traceback }` で**要約1行と完全なトレースバックの両方**を送る（ステータス表示は要約、ログはトレースバック）
-- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と `scriptLog` に記録する**。ログは実行開始時にクリアし直近 300 行（`SCRIPT_LOG_MAX`）を保持。両者は **ref にもミラーする**（Worker のメッセージハンドラは React のレンダリング外で走るため、state だけでは直前の失敗を取り逃す）
+- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と `scriptLog` に記録する**。ログは実行開始時にクリアし直近 100 行（`SCRIPT_LOG_MAX`）・1行あたり 2000 文字（`SCRIPT_LOG_LINE_MAX`、超過分は残り文字数を添えて切る）を保持。**上限を増やす前に**、1行 print するたびにパネル全体が再レンダリングされ配列を map し直すコストが、Modbus ポーリングと同じ主スレッドに乗ることを踏まえること（バイト数ではなくこれが律速）。両者は **ref にもミラーする**（Worker のメッセージハンドラは React のレンダリング外で走るため、state だけでは直前の失敗を取り逃す）
 - **`pyodide.setInterruptBuffer()` は init の最後に呼ぶこと**。Pyodide は `runPython()` のたびに割込みバッファを見るため、Pyodide ロード中に Stop された状態（`interruptBuffer[0] === 2`）で先に arm すると `RUNNER_SETUP` 実行時に KeyboardInterrupt が飛び、**init 自体が失敗して Worker が再起動まで使えなくなる**
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
@@ -380,6 +381,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **ビルドチャンク分割**（`vite.config.ts`）: Plotly 等の vendor を `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
 - **プリキャッシュ注入**（`vite.config.ts` の `precache-manifest` プラグイン）: ビルド時に `dist` の全アセットを走査し `dist/sw.js` の `PRECACHE_MANIFEST` / `CACHE_VERSION` / `APP_VERSION` を置換。`sw.js` 側のプレースホルダ（`const PRECACHE_MANIFEST = [];` / `const CACHE_VERSION = 'dev';` / `const APP_VERSION = '';`）の文字列を変更するとマッチしなくなり**オフライン動作や更新プロンプトのバージョン表示が壊れる**ため注意。アセット追加時は手書き不要（自動で含まれる）
 - **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
+- **依存ライブラリのバージョン表示は自動生成**（`vite.config.ts` の `DEP_VERSIONS` → `VITE_DEP_VERSIONS`）: `package.json` の `dependencies`/`devDependencies` 全件について **`node_modules/<name>/package.json` の実インストール版**を JSON で注入する（`^19.2.8` のようなレンジではなく実際にバンドルされた版が出る）。`AppInfoPanel.tsx` の `LIBRARIES` は**表示名・パッケージ名・ライセンスのみ**を持ち、バージョンを直書きしないこと。ライブラリ追加時は 1 行足すだけでよく、バージョン更新時の同期作業は不要
+- **Prism の import 順序**（`utils/prism.ts`）: `prism-vbnet` は `Prism.languages.extend('basic', …)` で定義されているのに **prism-basic を自分では import しない**（Prism 本来のローダが依存解決する前提で、バンドラは通らない）。`prism-basic` → `prism-vbnet` の順を崩すと**モジュール評価時に throw してアプリ全体が起動しない**（エディタだけの問題では済まない）。文法は必要な3つだけを個別 import すること（`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
+- **エディタの Tab/undo は react-simple-code-editor 側の実装を使う**（`components/CodeEditor.tsx`）。v5.0 まで App.tsx に自前の Tab インデント handler があったが、ライブラリ内蔵と同等（2スペース・選択範囲対応）でありながら**ライブラリの undo スタックを迂回して Ctrl+Z を壊す**ため削除した。外から `onKeyDown` で `preventDefault()` するとライブラリ側の処理が丸ごと止まる仕様なので、キー処理を足すときはこの点に注意
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる

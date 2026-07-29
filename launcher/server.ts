@@ -44,6 +44,12 @@ const baseHeaders = (type: string): Record<string, string> => ({
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
   'Cache-Control': 'no-store',
+  // The UI is English. Chromium guesses a page's language from the content when
+  // nothing states it, and on a Japanese-locale machine it lands on Japanese
+  // often enough to raise a translate prompt over an English page. <html
+  // lang="en"> already says so, but the header is the stronger signal and is
+  // what a served page (as opposed to a file:// one) is expected to carry.
+  ...(type.startsWith('text/html') ? { 'Content-Language': 'en' } : {}),
 });
 
 export const INDEX = `${BASE_PATH}index.html`;
