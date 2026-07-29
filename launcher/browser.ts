@@ -109,6 +109,12 @@ export const launchBrowser = (browser: BrowserInfo, url: string) => {
       `--user-data-dir=${dir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      // The app window's language. The launcher profile is created empty, so
+      // Chromium would otherwise take the OS locale — Japanese on most machines
+      // this ships to — for both its UI and Accept-Language, and then treat the
+      // English app as a foreign-language page worth translating. Pinning it to
+      // en-US matches the UI, which is English only and not localised.
+      '--lang=en-US',
       // Initial window size for the `--app` window. Chromium otherwise opens
       // it at whatever default the profile remembers (often the last size the
       // user dragged to, including having been shrunk to a sliver). A
@@ -134,7 +140,11 @@ export const launchBrowser = (browser: BrowserInfo, url: string) => {
       // CalculateNativeWinOcclusion: Windows-specific detection that treats a
       // fully covered window as invisible and backgrounds the renderer even
       // with the flags above. IntensiveWakeUpThrottling: the 1/min policy.
-      '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling',
+      // Translate/msTranslator: the translate prompt and Edge's own translator.
+      // Nothing here is worth translating and a machine translation of the
+      // register map or the Script Runner API list is actively misleading, so
+      // the feature is removed rather than merely defaulted off.
+      '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,Translate,msTranslator',
     ],
     { stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' },
   );
