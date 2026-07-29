@@ -8,7 +8,8 @@
 // script: which line an error names, and where a string or a comment ends.
 // Highlighting and a gutter cover both at a few kB.
 import { useMemo } from 'react';
-import Editor from 'react-simple-code-editor';
+import EditorImport from 'react-simple-code-editor';
+import { interopDefault } from '../utils/interopDefault';
 import { highlightScript } from '../utils/prism';
 import type { ScriptLanguageId } from '../utils/scriptLanguages';
 
@@ -17,6 +18,12 @@ import type { ScriptLanguageId } from '../utils/scriptLanguages';
 // textarea. Line height and padding are set on the container and inherited (the
 // editor's own styles are all `inherit`).
 const PADDING_PX = 8;
+
+// react-simple-code-editor ships CommonJS only (no `exports` map, no `module`
+// field), so the default import can arrive wrapped as `{ default: … }` — which
+// React reports as "Element type is invalid … but got: object". Same treatment
+// as Plotly gets in src/plotly.ts.
+const Editor = interopDefault(EditorImport);
 
 type CodeEditorProps = {
   value: string;
