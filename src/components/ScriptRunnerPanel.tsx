@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent, MouseEvent } from 'react';
+import type { MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
+import { CodeEditor } from './CodeEditor';
 import {
   SCRIPT_LANGUAGES,
   SCRIPT_LANGUAGE_LIST,
@@ -19,7 +20,6 @@ type ScriptRunnerPanelProps = {
   open: boolean;
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
-  onEditorKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   channelLabels: ChannelLabels;
 };
 
@@ -32,7 +32,6 @@ export function ScriptRunnerPanel({
   open,
   onClose,
   scriptRunner,
-  onEditorKeyDown,
   channelLabels,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
@@ -122,12 +121,11 @@ export function ScriptRunnerPanel({
           </label>
           <span>Status: {scriptRunner.scriptRunnerStatus}</span>
         </div>
-        <textarea
+        <CodeEditor
           value={scriptRunner.scriptCode}
-          onChange={(e) => scriptRunner.setScriptCode(e.target.value)}
-          onKeyDown={onEditorKeyDown}
-          className="min-h-[180px] w-full flex-1 resize-none rounded border border-slate-300 bg-white p-2 font-mono text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          spellCheck={false}
+          onValueChange={scriptRunner.setScriptCode}
+          language={scriptRunner.scriptLanguage}
+          className="min-h-[180px] w-full flex-1"
         />
         {/* print() output and tracebacks. Before this existed a failing script
             left only a one-line status with no way to see which line failed. */}
