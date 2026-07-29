@@ -87,6 +87,7 @@ import {
 } from './utils/backgroundTimer';
 import { ChartPanel } from './components/ChartPanel';
 import { CalibrationPanel } from './components/CalibrationPanel';
+import { CollapseButton } from './components/CollapseButton';
 import {
   InputCalibratorPanel,
   CalibratorChannelInfo,
@@ -371,43 +372,6 @@ const axisOptions = [
 ];
 
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
-
-// Sun / moon for the theme switch, drawn as Feather Icons (MIT, (c) Cole Bemis)
-// — the same stroked 24x24 grid as the hamburger and collapse chevrons, so the
-// header reads as one icon set. Inlined rather than pulled from an icon package:
-// the app must precache every asset for offline use, and these are two paths.
-//
-function CollapseButton({
-  collapsed,
-  onToggle,
-  label,
-}: {
-  collapsed: boolean;
-  onToggle: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={!collapsed}
-      title={collapsed ? `Expand ${label}` : `Minimize ${label}`}
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
-    >
-      <svg
-        viewBox="0 0 20 20"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={`h-4 w-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
-      >
-        <polyline points="5 8 10 13 15 8" />
-      </svg>
-    </button>
-  );
-}
 
 /**
  * Ask the device whether it has the float32 register map, by reading the first

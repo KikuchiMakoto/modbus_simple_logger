@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MouseEvent } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { CodeEditor } from './CodeEditor';
+import { CollapseButton } from './CollapseButton';
 import {
   SCRIPT_LANGUAGES,
   SCRIPT_LANGUAGE_LIST,
@@ -35,6 +35,7 @@ export function ScriptRunnerPanel({
   channelLabels,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
+  const [apiOpen, setApiOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const { scriptLog } = scriptRunner;
   const language = SCRIPT_LANGUAGES[scriptRunner.scriptLanguage];
@@ -45,10 +46,7 @@ export function ScriptRunnerPanel({
     logEndRef.current?.scrollIntoView({ block: 'nearest' });
   }, [scriptLog]);
 
-  const copyAiPrompt = (event: MouseEvent<HTMLButtonElement>) => {
-    // Inside <summary>: keep the click from toggling the <details>.
-    event.preventDefault();
-    event.stopPropagation();
+  const copyAiPrompt = () => {
     navigator.clipboard.writeText(buildAiPrompt(language, channelLabels)).then(() => {
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
@@ -128,12 +126,11 @@ export function ScriptRunnerPanel({
           className="min-h-[180px] w-full flex-1"
         />
         {/* print() output and tracebacks. Before this existed a failing script
-            left only a one-line status with no way to see which line failed. */}
-        <details
-          className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
-          open
-        >
-          <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            left only a one-line status with no way to see which line failed.
+            Always open: it is the answer to "what did my script do", and a
+            traceback nobody can see is the same as no traceback. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             <span>
               Output
               {scriptRunner.scriptRun.outcome === 'error' && (
@@ -145,16 +142,12 @@ export function ScriptRunnerPanel({
             <button
               type="button"
               className="button-secondary py-0.5 text-xs"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                scriptRunner.clearScriptLog();
-              }}
+              onClick={scriptRunner.clearScriptLog}
               title="Clear the output log"
             >
               Clear
             </button>
-          </summary>
+          </div>
           <div className="max-h-16 min-h-[2rem] overflow-auto px-3 pb-2 font-mono text-xs">
             {scriptLog.length === 0 ? (
               <p className="py-1 text-slate-400 dark:text-slate-500">
@@ -179,30 +172,44 @@ export function ScriptRunnerPanel({
             )}
             <div ref={logEndRef} />
           </div>
-        </details>
-        <details className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
-          <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        </div>
+        {/* Collapsed by default — the editor is what this window is for, and
+            the list is long. It used to be a <details>, where the only hint
+            that the section opened at all was the tiny native triangle; the
+            chevron button is the same control the main page's Analog Input
+            group uses, so "this opens" is stated the same way everywhere. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex select-none items-center justify-between px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             API Reference
-            <button
-              type="button"
-              className="button-secondary py-0.5 text-xs"
-              onClick={copyAiPrompt}
-              title="Copy an AI-ready prompt of this API reference to the clipboard"
-            >
-              {promptCopied ? 'Copied!' : 'Copy for AI'}
-            </button>
-          </summary>
-          <ul className="space-y-2 px-3 pb-3 text-xs text-slate-600 dark:text-slate-400">
-            {language.apiDocs.map((api) => (
-              <li key={api.name}>
-                <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-                  {api.name}
-                </code>
-                <span className="ml-2">{api.desc}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="button-secondary py-0.5 text-xs"
+                onClick={copyAiPrompt}
+                title="Copy an AI-ready prompt of this API reference to the clipboard"
+              >
+                {promptCopied ? 'Copied!' : 'Copy for AI'}
+              </button>
+              <CollapseButton
+                collapsed={!apiOpen}
+                onToggle={() => setApiOpen((v) => !v)}
+                label="API Reference"
+              />
+            </div>
+          </div>
+          {apiOpen && (
+            <ul className="space-y-2 px-3 pb-3 text-xs text-slate-600 dark:text-slate-400">
+              {language.apiDocs.map((api) => (
+                <li key={api.name}>
+                  <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                    {api.name}
+                  </code>
+                  <span className="ml-2">{api.desc}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </FloatingWindow>
   );
