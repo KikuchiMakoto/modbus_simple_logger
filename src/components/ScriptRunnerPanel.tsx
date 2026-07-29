@@ -98,7 +98,7 @@ export function ScriptRunnerPanel({
           editor height. That is why the type here runs a step smaller than the
           rest of the app: the language row, the Output header and the API list
           are all glanced at, while the editor is worked in. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
         <div className="flex flex-wrap items-center gap-2 text-[0.7rem] text-slate-500 dark:text-slate-400">
           {/* Disabled while running: the worker executing belongs to the
               current language, and switching would leave Stop pointing at a
@@ -135,7 +135,7 @@ export function ScriptRunnerPanel({
             Always open: it is the answer to "what did my script do", and a
             traceback nobody can see is the same as no traceback. */}
         <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
-          <div className="flex select-none items-center justify-between px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+          <div className="flex select-none items-center justify-between px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
             <span>
               Output
               {scriptRunner.scriptRun.outcome === 'error' && (
@@ -153,9 +153,9 @@ export function ScriptRunnerPanel({
               Clear
             </button>
           </div>
-          <div className="max-h-16 min-h-[1.5rem] overflow-auto px-3 pb-1.5 font-mono text-[0.7rem] leading-[1.05rem]">
+          <div className="max-h-16 min-h-[1.25rem] overflow-auto px-2 pb-1 font-mono text-[0.7rem] leading-[1.05rem]">
             {scriptLog.length === 0 ? (
-              <p className="py-1 text-slate-400 dark:text-slate-500">
+              <p className="text-slate-400 dark:text-slate-500">
                 No output. Printed text goes here, along with errors.
               </p>
             ) : (
@@ -184,7 +184,7 @@ export function ScriptRunnerPanel({
             chevron button is the same control the main page's Analog Input
             group uses, so "this opens" is stated the same way everywhere. */}
         <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
-          <div className="flex select-none items-center justify-between px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+          <div className="flex select-none items-center justify-between px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
             API Reference
             <div className="flex items-center gap-2">
               <button
@@ -203,7 +203,7 @@ export function ScriptRunnerPanel({
             </div>
           </div>
           {apiOpen && (
-            <ul className="space-y-1.5 px-3 pb-3 text-[0.7rem] leading-snug text-slate-600 dark:text-slate-400">
+            <ul className="space-y-1 px-2 pb-1.5 text-[0.7rem] leading-snug text-slate-600 dark:text-slate-400">
               {language.apiDocs.map((api) => (
                 <li key={api.name}>
                   <code translate="no" className="rounded bg-slate-200 px-1 py-0.5 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">
