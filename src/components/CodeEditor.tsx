@@ -17,6 +17,11 @@ import type { ScriptLanguageId } from '../utils/scriptLanguages';
 // gutter drifts from the code: the gutter rows, the highlighted <pre>, and the
 // textarea. Line height and padding are set on the container and inherited (the
 // editor's own styles are all `inherit`).
+//
+// The type is a step smaller than the panel's prose (text-xs, 12px, on an 18px
+// line) because a script is read as a shape — indentation, block structure —
+// more than as sentences, and the extra lines on screen are worth more here
+// than the extra pixels per glyph. Iosevka stays legible well below this.
 const PADDING_PX = 8;
 
 // react-simple-code-editor ships CommonJS only (no `exports` map, no `module`
@@ -50,7 +55,7 @@ export function CodeEditor({
   // away from code that cannot move with them.
   return (
     <div
-      className={`relative flex items-start overflow-auto rounded border border-slate-300 bg-white font-mono text-sm leading-5 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${className}`}
+      className={`relative flex items-start overflow-auto rounded border border-slate-300 bg-white font-mono text-xs leading-[1.125rem] text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${className}`}
     >
       {/* sticky so the numbers stay put when a long line scrolls the box
           sideways; aria-hidden because a screen reader reading the code out
