@@ -250,13 +250,26 @@ export function useScriptRunner(
         notify(`${runnerName} Runner`, 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('completed');
       } else if (message.type === 'interrupted') {
+        // This is the worker CONFIRMING a Stop that stopScriptRunner already
+        // reported the moment it was requested — so the end of the run has
+        // normally been recorded once already, and recording it again wrote
+        // "Stopped" into the log twice for one press. (The notification did not
+        // double up only because both carry the same tag and the second
+        // replaced the first.)
+        //
+        // Still guarded on the flag rather than dropped outright: a worker that
+        // stops on its own, with no local Stop ahead of it, is the case this
+        // branch has to keep reporting.
+        const wasRunning = scriptExecutingRef.current;
         scriptExecutingRef.current = false;
         runningLanguageRef.current = null;
         setScriptRunning(false);
         setScriptRunnerStatus(message.message ?? 'Stopped');
-        appendLog('system', message.message ?? 'Stopped');
-        notify(`${runnerName} Runner`, 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
-        settleRun('stopped');
+        if (wasRunning) {
+          appendLog('system', message.message ?? 'Stopped');
+          notify(`${runnerName} Runner`, 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
+          settleRun('stopped');
+        }
       } else if (message.type === 'error') {
         scriptExecutingRef.current = false;
         runningLanguageRef.current = null;
@@ -309,10 +322,11 @@ export function useScriptRunner(
     setScriptRunnerStatus(nextStatus);
     if (wasRunning) {
       appendLog('system', nextStatus);
-      // The worker answers this Stop with an 'interrupted' message of its own a
-      // moment later; both carry the same tag, so the second replaces the first
-      // rather than stacking. Notifying here too is what covers the case where
-      // no answer comes back at all (Pyodide was still booting).
+      // Reporting the stop from here, rather than waiting for the worker's
+      // 'interrupted' answer, is what covers the case where no answer comes
+      // back at all (Pyodide was still booting). The answer that does arrive
+      // sees scriptExecutingRef already false and stays quiet, so one press
+      // writes one line.
       notify('Script Runner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
       settleRun('stopped');
     }
