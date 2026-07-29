@@ -86,7 +86,7 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
 
   // The tag column is as wide as the longest name actually in the log, plus its
   // colon — not a fixed width picked for the longest name allowed. A run
-  // normally has one script in it, so `main.py:` gets exactly `main.py:` worth
+  // normally has one script in it, so `main:` gets exactly `main:` worth
   // of column and the message starts right after it, while rows still line up
   // with each other (which is the only alignment that matters here). `ch` is the
   // advance width of a digit, and this is a monospace column, so the arithmetic

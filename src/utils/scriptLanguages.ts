@@ -34,8 +34,6 @@ export type ScriptLanguage = {
    * asks first (which dialect am I writing?) to be answered by trying it.
    */
   runtime: string;
-  /** Extension used when naming a new tab (`main.py`). */
-  extension: string;
   /** Short runtime chip for the bottom status bar. */
   badge: string;
   /**
@@ -86,7 +84,6 @@ const PYTHON: ScriptLanguage = {
   id: 'python',
   label: 'Python',
   runtime: `Python ${pythonVersion} (Pyodide)`,
-  extension: 'py',
   // The pin in package.json is the single source of truth for the version;
   // vite.config.ts injects it. AppInfoPanel reads the same variable.
   badge: `Pyodide ${import.meta.env.VITE_PYODIDE_VERSION ?? ''}`.trim(),
@@ -125,7 +122,6 @@ const BASIC: ScriptLanguage = {
   id: 'basic',
   label: 'BASIC',
   runtime: 'Visual Basic 6.0 dialect',
-  extension: 'bas',
   badge: 'VB6 dialect',
   storageKey: 'scriptRunnerCodeBasic',
   apiDocs: [
@@ -187,7 +183,6 @@ const LUA: ScriptLanguage = {
   // same reason the AI prompt has always carried it: told only "Lua", an author
   // (or an assistant) may reach for 5.1 spellings like `unpack`.
   runtime: 'Lua 5.4 (wasmoon)',
-  extension: 'lua',
   badge: 'wasmoon',
   storageKey: 'scriptRunnerCodeLua',
   apiDocs: [

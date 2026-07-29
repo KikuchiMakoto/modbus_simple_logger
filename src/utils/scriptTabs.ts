@@ -41,9 +41,16 @@ export const SCRIPT_TABS_MAX = 12;
  * scripts apart, so they are the user's to choose — but a tab is about eight
  * characters wide before it starts pushing its neighbours off the strip, and a
  * name that has to be truncated to be shown is not doing its job. Long enough
- * for `sweep-up-slow.py`, short enough that a dozen tabs still fit.
+ * for `sweep-up-slow`, short enough that a dozen tabs still fit.
  */
 export const SCRIPT_TAB_NAME_MAX = 24;
+
+// Names carry no extension. `main.py` was how the default names started, from
+// the habit of files — but a tab is not a file, and it sits in a strip that
+// belongs to exactly one language, under a selector naming that language. The
+// `.py` restated in every tab what the window says once, and it cost the widest
+// part of a name that has about eight characters to work with. Names already
+// stored with one are trimmed on load; see loadScriptTabs.
 
 type StoredTabs = {
   tabs: { id: string; name: string; language: string; code: string }[];
@@ -62,22 +69,24 @@ export const newTabId = (): string => {
   return `tab-${Date.now().toString(36)}-${idCounter}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 };
 
-export const sanitizeTabName = (name: string, language: ScriptLanguageId): string => {
+export const sanitizeTabName = (name: string): string => {
   const trimmed = name.replace(/\s+/g, ' ').trim().slice(0, SCRIPT_TAB_NAME_MAX);
   // An empty name would leave a tab that cannot be pointed at, so fall back to
-  // the same default a new tab would have got.
-  return trimmed === '' ? `main.${SCRIPT_LANGUAGES[language].extension}` : trimmed;
+  // the same default a new tab would have got. Typed extensions are the user's
+  // business — only the names this module generates are kept bare.
+  return trimmed === '' ? 'main' : trimmed;
 };
 
-/** `main.py`, then `main2.py`, … — the first name not already on a tab. */
+/** `main`, then `main2`, … — the first name not already on a tab. */
 export const defaultTabName = (language: ScriptLanguageId, existing: ScriptTab[]): string => {
-  const ext = SCRIPT_LANGUAGES[language].extension;
-  const taken = new Set(existing.map((tab) => tab.name.toLowerCase()));
+  const taken = new Set(
+    tabsOfLanguage(existing, language).map((tab) => tab.name.toLowerCase()),
+  );
   for (let n = 1; n <= SCRIPT_TABS_MAX + 1; n += 1) {
-    const candidate = `main${n === 1 ? '' : n}.${ext}`;
+    const candidate = `main${n === 1 ? '' : n}`;
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
-  return `main-${newTabId()}.${ext}`;
+  return `main-${newTabId()}`;
 };
 
 export const createTab = (language: ScriptLanguageId, existing: ScriptTab[]): ScriptTab => ({
@@ -105,7 +114,12 @@ export function loadScriptTabs(): { tabs: ScriptTab[]; activeId: string } {
       if (!entry || typeof entry.code !== 'string' || !isScriptLanguageId(entry.language)) continue;
       tabs.push({
         id: typeof entry.id === 'string' && entry.id !== '' ? entry.id : newTabId(),
-        name: sanitizeTabName(typeof entry.name === 'string' ? entry.name : '', entry.language),
+        // `main.py` → `main` for the names this module generated back when the
+        // defaults carried an extension. Only those: a name someone typed with a
+        // dot in it (`sweep.slow`) survives whatever it happens to end with.
+        name: sanitizeTabName(
+          typeof entry.name === 'string' ? entry.name.replace(/^(main\d*)\.(py|bas|lua)$/i, '$1') : '',
+        ),
         language: entry.language,
         code: entry.code,
       });

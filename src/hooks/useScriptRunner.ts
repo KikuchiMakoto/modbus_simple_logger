@@ -543,7 +543,7 @@ export function useScriptRunner(
     setTabState((prev) => ({
       ...prev,
       tabs: prev.tabs.map((tab) =>
-        tab.id === id ? { ...tab, name: sanitizeTabName(name, tab.language) } : tab,
+        tab.id === id ? { ...tab, name: sanitizeTabName(name) } : tab,
       ),
     }));
   }, []);
