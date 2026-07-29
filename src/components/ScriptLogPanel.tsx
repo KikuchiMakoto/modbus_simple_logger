@@ -10,10 +10,15 @@
 //
 // Laid out like logcat, for the reason logcat is laid out that way: one entry
 // per row, fixed columns, so the eye runs down a column instead of re-parsing
-// each line. Line number, time, script, message — and nothing is allowed to
-// break that grid, so a message with newlines in it is folded onto its single
-// row and truncated. The row expands on click, which is where a traceback is
-// read.
+// each line. Time, script, message — and nothing is allowed to break that grid,
+// so a message with newlines in it is folded onto its single row and truncated.
+// The row expands on click, which is where a traceback is read.
+//
+// No counter column either. Numbering the rows of a log that is already in
+// order, timestamped to the millisecond, tells the reader where they are in a
+// list they can already see — while taking width from the only column with
+// something to say. `seq` is still on the entry, as the identity the expanded
+// set and React's keys need.
 //
 // No level column and no level filter. logcat has V/D/I/W/E because Android
 // logs carry a severity the writer chose; nothing here does — a script prints,
@@ -107,7 +112,7 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
   const copyLog = () => {
     const text = scriptLog
       .map((entry) =>
-        [String(entry.seq).padStart(4), formatLogTime(entry.t), entry.source, entry.text]
+        [formatLogTime(entry.t), entry.source === '' ? '' : `${entry.source}:`, entry.text]
           .filter((part) => part !== '')
           .join(' '),
       )
@@ -183,20 +188,21 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
               >
                 {/* tabular-nums keeps the fixed columns from shivering as the
                     digits change under them. */}
-                <span className="w-8 shrink-0 select-none text-right tabular-nums text-slate-400 dark:text-slate-600">
-                  {entry.seq}
-                </span>
                 <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
                   {formatLogTime(entry.t)}
                 </span>
-                {/* Which script this came out of. A fixed width, truncated: a
-                    column that resizes itself to the longest name would move the
-                    message column every time a different tab is run. */}
-                <span
-                  className="w-20 shrink-0 truncate text-slate-500 dark:text-slate-400"
-                  title={entry.source}
-                >
-                  {entry.source}
+                {/* Which script this came out of, `name:` — the tag notation
+                    logcat and syslog both use, rather than [brackets]: a bracket
+                    that survives while the name inside it is truncated away
+                    reads as damage, where a trailing colon still reads as a
+                    label. Fixed width and truncated, because a column that
+                    resized itself to the longest name would move the message
+                    column every time a different tab is run. */}
+                <span className="flex w-24 shrink-0 text-slate-500 dark:text-slate-400">
+                  <span className="min-w-0 truncate" title={entry.source}>
+                    {entry.source}
+                  </span>
+                  {entry.source !== '' && <span>:</span>}
                 </span>
                 <span
                   className={`min-w-0 flex-1 ${STREAM_COLOR[entry.stream]} ${

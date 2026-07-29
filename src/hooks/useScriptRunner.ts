@@ -46,10 +46,11 @@ const SCRIPT_LOG_LINE_MAX = 2000;
  */
 export type ScriptLogEntry = {
   /**
-   * Position in this run's output, from 1. Counted rather than taken from the
-   * array index because the array is a tail: once the cap trims the front, an
-   * index says where a line sits in the window, not which line it is — and "the
-   * 512th thing this script printed" is the number worth showing.
+   * Position in this run's output, from 1. Not displayed — the log is in order
+   * and timestamped, so a counter column only says where the reader is in a list
+   * they can see. It is the entry's identity: stable for the life of a run even
+   * as the tail trims the front of the array, which the array index is not, and
+   * which is what a React key and the log window's expanded set need.
    */
   seq: number;
   /** Epoch ms. */
