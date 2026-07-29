@@ -14,11 +14,25 @@ export type ScriptLanguageId = 'python' | 'basic' | 'lua';
 
 export type ScriptApiDoc = { name: string; desc: string };
 
+// Which Python the Pyodide build actually runs, derived from the pinned package
+// version rather than written out twice: pyodide's version tracks the CPython it
+// ships (314.0.3 -> Python 3.14), so the pin in package.json stays the single
+// source of truth the same way it already is for the badge.
+const pyodideVersion = (import.meta.env.VITE_PYODIDE_VERSION ?? '').trim();
+const pythonVersion = ((): string => {
+  const major = /^(\d)(\d{2})\./.exec(pyodideVersion);
+  return major ? `${major[1]}.${Number(major[2])}` : '3';
+})();
+
 export type ScriptLanguage = {
   id: ScriptLanguageId;
   /** Shown in the language selector. */
   label: string;
-  /** Shown as the panel subtitle — which runtime is actually executing this. */
+  /**
+   * Shown as the panel subtitle — which language version is actually executing
+   * this, and on what. "Python" alone left the one question a script author
+   * asks first (which dialect am I writing?) to be answered by trying it.
+   */
   runtime: string;
   /** Short runtime chip for the bottom status bar. */
   badge: string;
@@ -69,7 +83,7 @@ const INSTRUMENT_API: ScriptApiDoc[] = [
 const PYTHON: ScriptLanguage = {
   id: 'python',
   label: 'Python',
-  runtime: 'Python (Pyodide)',
+  runtime: `Python ${pythonVersion} (Pyodide)`,
   // The pin in package.json is the single source of truth for the version;
   // vite.config.ts injects it. AppInfoPanel reads the same variable.
   badge: `Pyodide ${import.meta.env.VITE_PYODIDE_VERSION ?? ''}`.trim(),
@@ -78,8 +92,7 @@ const PYTHON: ScriptLanguage = {
     ...INSTRUMENT_API,
     { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait, in SECONDS. NEVER time.sleep().' },
   ],
-  promptIntro:
-    'Write a Python script for ModbusSimpleLogger Script Runner (Pyodide; async context, top-level await OK).',
+  promptIntro: `Write a Python ${pythonVersion} script for ModbusSimpleLogger Script Runner (Pyodide; async context, top-level await OK).`,
   promptRules: [
     'Wait only with `await asyncio.sleep(s)`. NEVER time.sleep().',
     'Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
@@ -108,7 +121,7 @@ while True:
 const BASIC: ScriptLanguage = {
   id: 'basic',
   label: 'BASIC',
-  runtime: 'BASIC (VB6 dialect)',
+  runtime: 'Visual Basic 6.0 dialect',
   badge: 'VB6 dialect',
   storageKey: 'scriptRunnerCodeBasic',
   apiDocs: [
@@ -166,12 +179,10 @@ Loop`,
 const LUA: ScriptLanguage = {
   id: 'lua',
   label: 'Lua',
-  // No version here, unlike the AI prompt below. The three subtitles read
-  // "Python (Pyodide)", "BASIC (VB6 dialect)" and "Lua (wasmoon)"; carrying a
-  // version in one of them and not the others just looks unfinished. The prompt
-  // keeps "Lua 5.4" because there it prevents a wrong answer — an assistant
-  // told only "Lua" may reach for 5.1 spellings like `unpack`.
-  runtime: 'Lua (wasmoon)',
+  // 5.4 is what wasmoon embeds. The version belongs in the subtitle for the
+  // same reason the AI prompt has always carried it: told only "Lua", an author
+  // (or an assistant) may reach for 5.1 spellings like `unpack`.
+  runtime: 'Lua 5.4 (wasmoon)',
   badge: 'wasmoon',
   storageKey: 'scriptRunnerCodeLua',
   apiDocs: [
