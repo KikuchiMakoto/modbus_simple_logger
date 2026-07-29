@@ -28,7 +28,7 @@
 // Sibling of the Status Log that AppStatusBar opens: same idea (a record worth
 // reading after the fact rather than a strip glanced at), different source —
 // that one carries the app's own failures, this one carries the script's.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import type { ScriptLogEntry, ScriptOutcome } from '../hooks/useScriptRunner';
 import { FloatingWindow } from './FloatingWindow';
@@ -83,6 +83,18 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
   // Rows opened out to their full text. Keyed by seq, which is stable for the
   // life of a run even as the tail trims the front of the array.
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+
+  // The tag column is as wide as the longest name actually in the log, plus its
+  // colon — not a fixed width picked for the longest name allowed. A run
+  // normally has one script in it, so `main.py:` gets exactly `main.py:` worth
+  // of column and the message starts right after it, while rows still line up
+  // with each other (which is the only alignment that matters here). `ch` is the
+  // advance width of a digit, and this is a monospace column, so the arithmetic
+  // is exact. Capped, or one long name would push every message off screen.
+  const tagWidthCh = useMemo(() => {
+    const longest = scriptLog.reduce((max, entry) => Math.max(max, entry.source.length), 0);
+    return Math.min(longest, 16) + 1;
+  }, [scriptLog]);
 
   // Follow the tail, but only while the tail is what is being read. The old pane
   // scrolled to the newest line unconditionally, which in a script printing every
@@ -195,10 +207,13 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
                     logcat and syslog both use, rather than [brackets]: a bracket
                     that survives while the name inside it is truncated away
                     reads as damage, where a trailing colon still reads as a
-                    label. Fixed width and truncated, because a column that
-                    resized itself to the longest name would move the message
-                    column every time a different tab is run. */}
-                <span className="flex w-24 shrink-0 text-slate-500 dark:text-slate-400">
+                    label. Width comes from the log's own longest name (see
+                    tagWidthCh), so the rows align without the message column
+                    being pushed off by slack nobody is using. */}
+                <span
+                  className="flex shrink-0 text-slate-500 dark:text-slate-400"
+                  style={{ width: `${tagWidthCh}ch` }}
+                >
                   <span className="min-w-0 truncate" title={entry.source}>
                     {entry.source}
                   </span>
