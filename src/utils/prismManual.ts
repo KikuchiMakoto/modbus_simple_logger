@@ -1,19 +1,35 @@
-// Prism's auto-highlight, off — imported for this side effect ALONE, and only
-// by utils/prism.ts, which imports it before prismjs itself.
+// Prism's core, evaluated and published on the global — imported for these two
+// side effects ALONE, and only by utils/prism.ts, which imports it before any
+// grammar.
 //
-// prism-core reads `window.Prism.manual` while it initialises (that is the only
-// moment it is read) and otherwise registers a DOMContentLoaded handler that
-// walks the whole document looking for `code[class*="language-"]`. Nothing in
-// this app is highlighted that way — the editor calls Prism.highlight() itself —
-// so the walk is pure startup cost on a page that is already doing a lot at
-// mount.
+// Prism's grammar files (`prismjs/components/prism-*.js`) are plain scripts that
+// assign to a BARE `Prism` global; nothing in them imports the core. That global
+// is published by the core itself, which is CommonJS — and a bundler is free to
+// wrap CJS in a factory that runs on first require rather than in place. In the
+// production build it does exactly that, so the grammars, emitted as eager
+// top-level statements, ran before anything had required the core:
 //
-// It has to be its own module because ES imports are hoisted: the assignment
-// could not run before `import 'prismjs'` if both lived in one file.
-// Cast rather than a `declare global` for window.Prism: @types/prismjs already
-// declares the global as the fully initialised namespace, and this partial
-// stand-in — which exists for the handful of milliseconds before prism-core
-// replaces it — cannot satisfy that type.
-(window as unknown as { Prism?: { manual?: boolean } }).Prism = { manual: true };
+//     Uncaught ReferenceError: Prism is not defined
+//
+// and the app died at load with a white page. Dev never showed it: esbuild's
+// dep pre-bundling evaluates the core in place.
+//
+// Requiring the core HERE forces the factory to run at this module's position —
+// ahead of every grammar — and the explicit assignment means the grammars find
+// the global no matter what the bundler decided to do with the core's own
+// `globalThis.Prism = …` line. Both of those only hold while this module and the
+// grammars end up in the same chunk, which is why vite.config.ts keeps prismjs
+// out of the vendor chunk. Do not "simplify" either half away.
+import Prism from 'prismjs';
+
+// `manual` is read by the core as it initialises, so it has to be on the global
+// before the import above — hence the assignment order below is the reverse of
+// what it looks like it should be: the core has already run, and this only
+// stops the DOMContentLoaded pass that walks the document for
+// `code[class*="language-"]`. Nothing in this app is highlighted that way (the
+// editor calls Prism.highlight() itself), so the walk is pure startup cost.
+const globalPrism = globalThis as unknown as { Prism?: unknown };
+globalPrism.Prism = Prism;
+Prism.manual = true;
 
 export {};

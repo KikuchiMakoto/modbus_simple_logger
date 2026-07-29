@@ -164,6 +164,16 @@ export default defineConfig(({ command, isPreview }) => ({
           if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
             return 'react-vendor';
           }
+          // Prism stays with the app code that imports it. Its grammar files
+          // assign to a bare `Prism` global that only the core publishes, and
+          // pulling them into `vendor` split those two across chunks: vendor
+          // evaluates first, so the grammars ran before anything had required
+          // the (lazily wrapped) CJS core and threw "Prism is not defined",
+          // white-pageing the app in the production build only.
+          // utils/prismManual.ts is the other half of this — it requires the
+          // core ahead of every grammar, which only works while they share a
+          // chunk.
+          if (/[\\/]node_modules[\\/]prismjs[\\/]/.test(id)) return;
           return 'vendor';
         },
       },
