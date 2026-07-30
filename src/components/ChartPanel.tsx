@@ -254,9 +254,19 @@ function ChartPanelComponent({
       autosize: true,
       paper_bgcolor: palette.paper,
       plot_bgcolor: palette.plot,
-      font: { color: palette.text },
+      // 10px ticks, 11px axis titles. Plotly's default is 12px for both, which
+      // put the tick labels a step ABOVE the X: / Y: chrome (0.7rem ≈ 11px)
+      // directly over them — backwards for text that is glanced at, on a plot
+      // this small. Sized against that row rather than against the app's body
+      // text: these read as part of the same chart header. The titles keep a
+      // point on the ticks because a title is user-entered ("Load [kg]") and is
+      // the one string here worth reading first.
+      //
+      // Everything in the graph div scales with the UI-scale zoom on #root, so
+      // these are the 100% sizes, not a fixed floor.
+      font: { color: palette.text, size: 10 },
       xaxis: {
-        title: { text: axisTitle(xAxis) },
+        title: { text: axisTitle(xAxis), font: { size: 11 } },
         gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
         // Explicit padded range (matplotlib-style 10% X margin). Falls back to
@@ -267,7 +277,7 @@ function ChartPanelComponent({
           : { autorange: true as const }),
       },
       yaxis: {
-        title: { text: axisTitle(yAxis) },
+        title: { text: axisTitle(yAxis), font: { size: 11 } },
         gridcolor: palette.grid,
         ...(plot.yRange
           ? { range: plot.yRange, autorange: false as const }
@@ -286,12 +296,14 @@ function ChartPanelComponent({
       // trace instead of sitting above it.
       // b/l: tick labels always, plus a row/column for the axis title only when
       // there is one — the time axis has no title, and a channel axis has none
-      // until the user labels the channel (see axisTitle).
+      // until the user labels the channel (see axisTitle). Both shrank again
+      // with the 10px ticks above: a tick row is ~14px rather than ~18, and a
+      // y label like "-1234.5" is ~36px wide rather than ~44.
       margin: {
         t: 22,
         r: 12,
-        b: axisTitle(xAxis) ? 46 : 26,
-        l: axisTitle(yAxis) ? 58 : 44,
+        b: axisTitle(xAxis) ? 36 : 20,
+        l: axisTitle(yAxis) ? 52 : 40,
       },
       // Belt-and-braces with the trace's `hoverinfo: 'skip'`: stops Plotly from
       // running hover hit-testing on mousemove at all. On its own this would
