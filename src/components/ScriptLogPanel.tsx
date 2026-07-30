@@ -150,7 +150,10 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
           ? `${runningTab.name} — ${OUTCOME_LABEL[outcome]}`
           : `${OUTCOME_LABEL[outcome]} · ${scriptLog.length} ${scriptLog.length === 1 ? 'line' : 'lines'}`
       }
-      accent="blue"
+      // Emerald (FloatingWindow's default), not the blue the config/tester
+      // panels use: this window is the other half of Script Runner — opened
+      // beside it, showing that window's run — and a title bar in a different
+      // colour read as a different kind of thing.
       defaultWidth={600}
       defaultHeight={380}
       headerActions={

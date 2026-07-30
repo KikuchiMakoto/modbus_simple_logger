@@ -91,6 +91,17 @@ html.msl-launcher body {
   @apply rounded-lg border border-slate-300 px-3 py-1.5 font-semibold text-slate-800 hover:border-emerald-400 dark:border-slate-700 dark:text-slate-50;
 }
 
+/* Same shape as .button-secondary — an outline, not a filled button — but rose
+   throughout. For the destructive controls that sit next to ordinary ones
+   (ScriptRunner's Clear, which throws away the only copy of a script): the
+   emerald hover .button-secondary carries is the app's "go" colour, and reading
+   it on the one control in the row that destroys work is exactly backwards.
+   Outline and not solid red so it still loses the eye to Run/Stop beside it —
+   this is "be careful", not "press me". */
+.button-danger {
+  @apply rounded-lg border border-rose-300 px-3 py-1.5 font-semibold text-rose-700 hover:border-rose-500 hover:bg-rose-50 dark:border-rose-500/60 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/40;
+}
+
 @keyframes stop-save-sine-pulse {
   0% {
     background-color: rgb(239 68 68 / 0.4);
@@ -136,6 +147,62 @@ html.msl-launcher body {
 @media (prefers-reduced-motion: reduce) {
   .button-stop-save-pulse {
     animation: stop-save-color-pulse 2s ease-in-out infinite;
+  }
+}
+
+/* Footer log line, rolled like a departure board: the arriving line rises from
+   below the bar and shoves the one it replaces out through the top. The bar
+   shows exactly one line of a log that can be hundreds long, and a line that
+   merely *changes in place* gives no sign whether it changed once or thirty
+   times — the motion is the only thing carrying "that was a new line", which is
+   the whole reason to glance at the bar at all.
+
+   Short on purpose. This has to survive a script in a tight print loop, where
+   the bar is a blur either way; a slower roll would just make it a smeared one. */
+@keyframes script-log-roll-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes script-log-roll-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+
+.script-log-roll-in {
+  animation: script-log-roll-in 200ms ease-out;
+}
+
+/* `forwards` is load-bearing: without it the outgoing line snaps back to its
+   resting position at the end and sits on top of the incoming one, since it
+   stays mounted until the next line displaces it. */
+.script-log-roll-out {
+  animation: script-log-roll-out 200ms ease-out forwards;
+}
+
+/* Reduced motion: no roll. Unlike the Stop/Save pulse there is no colour-only
+   substitute worth keeping — the text change is itself the information, and it
+   still happens. The outgoing line has to be taken out of the flow rather than
+   merely un-animated: with `animation: none` it would hold its resting position
+   and cover the line arriving underneath it. */
+@media (prefers-reduced-motion: reduce) {
+  .script-log-roll-in {
+    animation: none;
+  }
+  .script-log-roll-out {
+    display: none;
   }
 }
 

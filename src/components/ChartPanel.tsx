@@ -194,13 +194,32 @@ function ChartPanelComponent({
     const xData = new Float64Array(n);
     const yData = new Float64Array(n);
     const xIsTime = xDesc.kind === 'time';
+    // Plotly has no timezone support: a `type: 'date'` axis formats epoch-ms
+    // through d3's utcFormat / getUTCHours (see lib/dates.js formatTime, "only
+    // supports UTC times"), so feeding it a raw Date.now() draws the axis in
+    // UTC. The TSV's `timestamp` column (tsvFormat.ts, getHours) and the status
+    // bar clock (toLocaleTimeString) are both local, so the chart was the one
+    // surface disagreeing with the others — by 9 hours in JST.
+    //
+    // Pre-shifting the plotted value into a "local epoch" is the standard fix:
+    // Plotly then renders local wall-clock while thinking it is UTC. Only the
+    // copy handed to Plotly moves — DataPoint.timestamp stays true epoch-ms for
+    // the TSV, IndexedDB and the viewer feed, which must not be shifted.
+    //
+    // One offset for the whole buffer, taken from its newest point rather than
+    // per point, to keep the allocation out of this loop. A session spanning a
+    // DST transition therefore reads an hour off on the far side of it — the
+    // trade is deliberate: this loop runs over the whole buffer on every redraw.
+    const tzShiftMs = xIsTime
+      ? -new Date(dataPoints[n - 1].timestamp).getTimezoneOffset() * 60_000
+      : 0;
     let xMin = Infinity;
     let xMax = -Infinity;
     let yMin = Infinity;
     let yMax = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = dataPoints[i];
-      const xv = xIsTime ? p.timestamp : resolveAxisValue(p, xDesc);
+      const xv = xIsTime ? p.timestamp + tzShiftMs : resolveAxisValue(p, xDesc);
       const yv = resolveAxisValue(p, yDesc);
       xData[i] = xv;
       yData[i] = yv;
@@ -242,21 +261,40 @@ function ChartPanelComponent({
     };
   }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty]);
 
-  // Time axis has no label; every other axis shows the free-text label when
-  // the user has entered one, and nothing when it is blank — the dropdown
-  // already identifies the channel, so a redundant "raw_0" on the axis is
-  // noise.
+  // "Timestamp", not "Time": this axis is absolute local wall-clock — the
+  // instant each sample was captured — and "Time" reads just as naturally as
+  // elapsed time since the run started, which is not what is plotted. It also
+  // matches the TSV's own header for the same value, which is the vocabulary
+  // that matters: a chart is normally read next to the exported file.
+  //
+  // Every other axis shows the user's free-text label when there is one, and
+  // nothing when it is blank: the dropdown already identifies the channel, so a
+  // redundant "raw_0" on the axis is noise.
+  //
+  // This title is not free — all four charts default to x: time, so it is the
+  // difference between a 20px and a 36px bottom margin on every one of them
+  // (see `margin` below).
   const axisTitle = (key: string): string =>
-    key === 'time' ? '' : (axisLabels[key] ?? '');
+    key === 'time' ? 'Timestamp' : (axisLabels[key] ?? '');
 
   const plotLayout = useMemo(
     () => ({
       autosize: true,
       paper_bgcolor: palette.paper,
       plot_bgcolor: palette.plot,
-      font: { color: palette.text },
+      // 10px ticks, 11px axis titles. Plotly's default is 12px for both, which
+      // put the tick labels a step ABOVE the X: / Y: chrome (0.7rem ≈ 11px)
+      // directly over them — backwards for text that is glanced at, on a plot
+      // this small. Sized against that row rather than against the app's body
+      // text: these read as part of the same chart header. The titles keep a
+      // point on the ticks because a title is user-entered ("Load [kg]") and is
+      // the one string here worth reading first.
+      //
+      // Everything in the graph div scales with the UI-scale zoom on #root, so
+      // these are the 100% sizes, not a fixed floor.
+      font: { color: palette.text, size: 10 },
       xaxis: {
-        title: { text: axisTitle(xAxis) },
+        title: { text: axisTitle(xAxis), font: { size: 11 } },
         gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
         // Explicit padded range (matplotlib-style 10% X margin). Falls back to
@@ -267,13 +305,34 @@ function ChartPanelComponent({
           : { autorange: true as const }),
       },
       yaxis: {
-        title: { text: axisTitle(yAxis) },
+        title: { text: axisTitle(yAxis), font: { size: 11 } },
         gridcolor: palette.grid,
         ...(plot.yRange
           ? { range: plot.yRange, autorange: false as const }
           : { autorange: true as const }),
       },
-      margin: { t: 30, r: 30, b: 50, l: 50 },
+      // Margins sized to what is actually drawn in them, not to a uniform frame.
+      // At 240px tall and a card wide, the difference is most of the plot: the
+      // old { t: 30, r: 30, b: 50, l: 50 } spent ~30% of the width and ~33% of
+      // the height on blank paper, four times over on this page.
+      //
+      // r: nothing is ever drawn right of the plot — no second axis, no legend
+      // (one trace) — so this is only enough to keep the last x tick label from
+      // being clipped at the edge.
+      // t: only enough to keep the topmost y tick label from clipping. It used
+      // to be 22 to clear the always-on modebar; that bar is `'hover'` now, so
+      // nothing is parked here for the whole session.
+      // b/l: tick labels always, plus a row/column for the axis title only when
+      // there is one — the time axis has no title, and a channel axis has none
+      // until the user labels the channel (see axisTitle). Both shrank again
+      // with the 10px ticks above: a tick row is ~14px rather than ~18, and a
+      // y label like "-1234.5" is ~36px wide rather than ~44.
+      margin: {
+        t: 8,
+        r: 12,
+        b: axisTitle(xAxis) ? 36 : 20,
+        l: axisTitle(yAxis) ? 52 : 40,
+      },
       // Belt-and-braces with the trace's `hoverinfo: 'skip'`: stops Plotly from
       // running hover hit-testing on mousemove at all. On its own this would
       // only hide the labels (plotly.js#1987 — the spike lines still render),
@@ -287,11 +346,33 @@ function ChartPanelComponent({
 
   const plotConfig = useMemo(
     () => ({
-      displayModeBar: true,
+      // Only while the pointer is over the chart. The bar is an overlay — it
+      // reserves no layout space either way — but an always-on bar has to be
+      // cleared by the top margin for the whole session, and that clearance was
+      // ~14px of a 240px plot, four charts over. On hover it overlaps the top
+      // strip of the trace, which is not what is being read at the moment you
+      // are reaching for zoom.
+      //
+      // Turning the bar off entirely (or dropping scrollZoom/dragmode) buys no
+      // further space: the 8px top margin left behind is tick-label clearance,
+      // not modebar clearance. It would only cost the zoom.
+      displayModeBar: 'hover' as const,
       responsive: true,
       displaylogo: false,
       scrollZoom: true,
       doubleClick: 'reset' as const,
+      // Trimmed to the buttons that do something here. The three hover controls
+      // are dead on arrival against `hovermode: false` / `hoverinfo: 'skip'`,
+      // and box/lasso select has no consumer — nothing reads a selection off
+      // these charts. Fewer buttons also means a narrower bar covering less of
+      // the trace while it is up.
+      modeBarButtonsToRemove: [
+        'select2d',
+        'lasso2d',
+        'hoverClosestCartesian',
+        'hoverCompareCartesian',
+        'toggleSpikelines',
+      ],
     }),
     [],
   );

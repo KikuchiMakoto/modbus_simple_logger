@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ScriptLogEntry, ScriptOutcome } from '../hooks/useScriptRunner';
 
 const OUTCOME_BADGE: Record<ScriptOutcome, { label: string; dot: string }> = {
@@ -13,6 +14,78 @@ const STREAM_COLOR: Record<ScriptLogEntry['stream'], string> = {
   stderr: 'text-red-600 dark:text-red-400',
   system: 'text-emerald-600 dark:text-emerald-400',
 };
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+// Seconds, no milliseconds — where the Script Log window shows HH:MM:SS.mmm. The
+// difference is deliberate: this bar holds one line at a time and is glanced at,
+// so the clock answers "is this output fresh or from ten minutes ago", which
+// seconds settle. Sub-second precision is for reading lines against each other,
+// which needs the window. Local time, like every other clock in this app.
+const clockOf = (t: number): string => {
+  const d = new Date(t);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+};
+
+/** One rendered state of the bar's single line, and what makes it that one. */
+type Rung = {
+  /** Changes exactly when the line should roll. See `rungOf`. */
+  id: string;
+  text: string;
+  color: string;
+  /** Drives the `›` marker, which lives outside the roll — see the bar below. */
+  isLog: boolean;
+  /** Both empty for a status message. Inside the roll — see LogLine. */
+  time: string;
+  source: string;
+};
+
+// `seq` is the log entry's identity for the life of a run and survives the tail
+// trimming the front of the array, which is why it is preferred to an index. It
+// restarts at 1 per run though, so `t` is folded in: without it, clearing the log
+// and printing one line would produce seq 1 again and the bar would sit still.
+// The `s:` case is the no-log fallback (a status message), keyed by its own text.
+const rungOf = (line: ScriptLogEntry | null, text: string, color: string): Rung => ({
+  id: line ? `l:${line.seq}:${line.t}` : `s:${text}`,
+  text,
+  color,
+  isLog: line !== null,
+  time: line ? clockOf(line.t) : '',
+  // Blank on lines produced before a run has stamped a name — see
+  // ScriptLogEntry.source — so this is rendered conditionally, not as an empty gap.
+  source: line?.source ?? '',
+});
+
+function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
+  return (
+    // inset-0 over a self-stretch track, so translateY(±100%) is the full height
+    // of the bar: the line enters from below its bottom edge rather than from
+    // one text-height up, which is what makes it read as arriving from off-bar.
+    <div
+      className={`absolute inset-0 flex items-center gap-1.5 font-mono ${rung.color} ${animation}`}
+    >
+      {/* Time and script name roll WITH the message, unlike the `›` gutter mark:
+          they describe this particular line, and left fixed they would sit
+          stating the wrong time next to a message that had already changed.
+          Both drop below `md`, where the bar is 24px tall and already gives up
+          the runtime chip — the message is what the bar is for, and these two
+          would take ~40% of the room it has on a phone. */}
+      {rung.time && (
+        <span className="hidden shrink-0 text-slate-400 dark:text-slate-500 md:inline">
+          {rung.time}
+        </span>
+      )}
+      {rung.source && (
+        <span className="hidden max-w-[8rem] shrink-0 truncate font-semibold text-slate-500 dark:text-slate-400 md:inline">
+          {rung.source}
+        </span>
+      )}
+      {/* Last, and the only thing allowed to shrink: truncate needs min-w-0 to
+          go below its content width inside a flex row. */}
+      <span className="min-w-0 truncate">{rung.text}</span>
+    </div>
+  );
+}
 
 export function ScriptStatusBar({
   running,
@@ -34,6 +107,20 @@ export function ScriptStatusBar({
   const line = lastLogLine ?? null;
   const lineColor = line ? STREAM_COLOR[line.stream] : 'text-slate-500 dark:text-slate-400';
   const text = line ? line.text : (badge.label === status ? '' : status);
+  const incoming = rungOf(line, text, lineColor);
+
+  // The line currently on the bar and the one being pushed off it. `gen` only
+  // exists to be a React key: remounting both nodes is what restarts the CSS
+  // animations, which would otherwise run once and never again.
+  //
+  // Adjusted during render rather than in an effect. React re-runs this
+  // component immediately, before the browser paints, so the roll starts on the
+  // same frame the line arrives — an effect would paint the new text in place
+  // first and then animate it in from below, which flickers.
+  const [roll, setRoll] = useState({ current: incoming, outgoing: null as Rung | null, gen: 0 });
+  if (roll.current.id !== incoming.id) {
+    setRoll({ current: incoming, outgoing: roll.current, gen: roll.gen + 1 });
+  }
 
   return (
     <>
@@ -60,15 +147,37 @@ export function ScriptStatusBar({
           </span>
           <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
         </div>
-        <div className={`ml-2 min-w-0 flex-1 truncate font-mono md:ml-3 ${lineColor}`}>
-          {line ? (
-            <>
-              <span className="mr-1 text-slate-400 dark:text-slate-500">›</span>
-              {text}
-            </>
-          ) : (
-            text
+        <div className="ml-2 flex min-w-0 flex-1 items-center self-stretch md:ml-3">
+          {/* Outside the roll on purpose. The marker is not part of the message
+              — it is a gutter mark saying "what follows is script output rather
+              than a status line" — and a fixed frame with the text rolling
+              behind it is what makes this read as one bar being updated, rather
+              than two whole rows sliding past each other. It is also the same
+              mark on every line, so animating it only ever showed it replacing
+              itself. */}
+          {roll.current.isLog && (
+            <span className="mr-1 shrink-0 text-slate-400 dark:text-slate-500">›</span>
           )}
+          {/* The track the lines roll through: full bar height (self-stretch)
+              and clipped, so a line above or below its resting position is
+              simply not there. `relative` anchors the two absolute lines. */}
+          <div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
+            {roll.outgoing && (
+              <LogLine
+                key={`out-${roll.gen}`}
+                rung={roll.outgoing}
+                animation="script-log-roll-out"
+              />
+            )}
+            <LogLine
+              key={`in-${roll.gen}`}
+              rung={roll.current}
+              // gen 0 is the state the bar mounted with — nothing was displaced,
+              // so there is nothing to announce. Rolling it in would animate the
+              // bar on every page load.
+              animation={roll.gen === 0 ? '' : 'script-log-roll-in'}
+            />
+          </div>
         </div>
       </div>
     </>
