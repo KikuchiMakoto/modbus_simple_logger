@@ -47,6 +47,7 @@ const LEVEL_STYLE: Record<AppStatusLevel, { dot: string; text: string; label: st
 const SOURCE_LABEL: Record<AppStatusEntry['source'], string> = {
   link: 'Link',
   save: 'Save',
+  recording: 'Recording',
   calibration: 'Calibration',
   storage: 'Storage',
   app: 'App',

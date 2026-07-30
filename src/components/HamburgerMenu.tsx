@@ -27,6 +27,10 @@ const MENU_ITEMS = [
   // range, and a lightning bolt read as "power" next to Connection Config.
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
+  // Last of the hardware group and first of the recording one, which is where
+  // it belongs: it binds a camera and microphone like the entries above bind
+  // channels, but what it configures is what Start Save writes.
+  { key: 'recordingConfig', label: 'Recording Config', icon: '🎥', wip: false },
   { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
   // Directly under the runner, because it is the runner's other half: the
   // window where a script is written, and the window where what it said is

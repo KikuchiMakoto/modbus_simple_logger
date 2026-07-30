@@ -82,6 +82,18 @@ import {
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import {
+  hasBoundDevice,
+  loadRecordingConfig,
+  saveRecordingConfig,
+  type RecordingConfig,
+} from './utils/recordingConfig';
+import {
+  createVideoRecorder,
+  recordingBaseName,
+  type VideoRecorderHandle,
+} from './utils/videoRecorder';
+import { useCameraFeed } from './hooks/useCameraFeed';
+import {
   discardRecoveredRun,
   downloadRecoveredRun,
   formatRunSize,
@@ -113,6 +125,7 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
+import { RecordingConfigPanel } from './components/RecordingConfigPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { ScriptLogPanel } from './components/ScriptLogPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
@@ -132,7 +145,7 @@ import {
   type ViewerStatePayload,
 } from './hooks/useViewerFeed';
 import { RemoteViewerPanel } from './components/RemoteViewerPanel';
-import { isViewerMode } from './utils/appMode';
+import { isLauncherMode, isViewerMode } from './utils/appMode';
 import { serial as serialPolyfill } from 'web-serial-polyfill';
 
 function isMobileDevice(): boolean {
@@ -491,6 +504,12 @@ function App() {
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [scriptLogPanelOpen, setScriptLogPanelOpen] = useState(false);
+  const [recordingConfigPanelOpen, setRecordingConfigPanelOpen] = useState(false);
+  const [recordingConfig, setRecordingConfig] = useState<RecordingConfig>(() =>
+    loadRecordingConfig(),
+  );
+  /** Name of the video being written, or '' when nothing is recording. */
+  const [activeRecordingFilename, setActiveRecordingFilename] = useState('');
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -650,6 +669,8 @@ function App() {
       setScriptLogPanelOpen(true);
     } else if (item === 'remoteViewer') {
       setRemoteViewerPanelOpen(true);
+    } else if (item === 'recordingConfig') {
+      setRecordingConfigPanelOpen(true);
     }
   };
 
@@ -809,6 +830,10 @@ function App() {
   useEffect(() => {
     writeJsonStorage('param_collapsed', paramCollapsed);
   }, [paramCollapsed]);
+
+  useEffect(() => {
+    saveRecordingConfig(recordingConfig);
+  }, [recordingConfig]);
 
   const handleAiFreeLabelChange = useCallback((idx: number, value: string) => {
     setAiFreeLabels((prev) => {
@@ -1160,6 +1185,24 @@ function App() {
   // would eventually be.
   const viewerHost = useViewerHost();
   viewerHostRef.current = viewerHost;
+
+  // --- Camera / microphone capture ---------------------------------------
+  //
+  // One device, one stream, four consumers (this panel's preview, the chart
+  // slot on the launcher, the file recorder and the remote publisher). The
+  // device is opened only while one of them is actually looking, so a bound
+  // camera costs nothing until it is used — and it is frozen while recording,
+  // because re-opening it mid-run would cut the recording in half.
+  const cameraWanted =
+    !isViewerMode &&
+    hasBoundDevice(recordingConfig) &&
+    (recordingConfigPanelOpen || isLauncherMode || activeRecordingFilename !== '');
+  const cameraFeed = useCameraFeed({
+    config: recordingConfig,
+    active: cameraWanted,
+    locked: activeRecordingFilename !== '',
+  });
+  const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
 
   // Rebuilt every render (see viewerStateRef below) so the timer below always reads
   // current values without owning them as dependencies.
@@ -2233,6 +2276,95 @@ function App() {
     }
   };
 
+  /**
+   * Start the camera recording that accompanies a save, if one is configured.
+   *
+   * Never throws. Every failure path here ends in a status bar message and a
+   * return, because the save it accompanies is already running and taking it
+   * down would cost the user the measurement to protect the video of it.
+   */
+  const startRecording = async (tsvFileName: string) => {
+    if (!recordingConfig.enabled || !hasBoundDevice(recordingConfig)) return;
+
+    const stream = cameraFeed.stream;
+    if (!stream) {
+      // The feed opens asynchronously and the picker may have resolved first.
+      // Saying so is better than a silent absence of video.
+      postStatus(
+        'error',
+        cameraFeed.error
+          ? `Recording not started: ${cameraFeed.error}`
+          : 'Recording not started: the camera is not ready yet.',
+        'recording',
+      );
+      return;
+    }
+
+    try {
+      const recorder = await createVideoRecorder({
+        stream,
+        config: recordingConfig,
+        baseName: recordingBaseName(tsvFileName),
+        onError: (message, severity) => {
+          if (severity === 'warning') {
+            console.warn('Recording warning:', message);
+            return;
+          }
+          console.error('Recording error:', message);
+          postStatus('error', message, 'recording');
+        },
+      });
+      videoRecorderRef.current = recorder;
+      setActiveRecordingFilename(recorder.getFileName());
+      clearStatusSource('recording');
+    } catch (err) {
+      reportError('recording', err, 'Recording failed to start');
+    }
+  };
+
+  /**
+   * Stop the recording and hand the file over.
+   *
+   * A download rather than a save picker: there is no transient user activation
+   * left by the time this runs, and more to the point the TSV's own picker
+   * already consumed the one the click carried. The OPFS entry is only deleted
+   * after the download has been handed to the browser — until then it is the
+   * only copy.
+   */
+  const stopRecording = async () => {
+    const recorder = videoRecorderRef.current;
+    if (!recorder) return;
+    videoRecorderRef.current = null;
+    setActiveRecordingFilename('');
+
+    try {
+      const file = await recorder.stop();
+      if (!file) {
+        postStatus('error', 'Recording produced no data.', 'recording');
+        return;
+      }
+
+      const url = URL.createObjectURL(file);
+      try {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } finally {
+        // Revoking synchronously cancels the download in Chromium, so err long.
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+
+      await recorder.remove();
+      clearStatusSource('recording');
+    } catch (err) {
+      reportError('recording', err, 'Failed to save the recording');
+    }
+  };
+
   const handleStartSave = async () => {
     // Re-entry guard: a second Start (double-click, or a click racing the file
     // picker) would create a second writer that overwrites tsvWriterRef and
@@ -2320,6 +2452,13 @@ function App() {
         writer.close().catch(() => {});
         throw setupErr;
       }
+
+      // Deliberately outside the block above, which closes the writer on
+      // failure. Recording is a companion, not a condition: the button the user
+      // pressed was about the measurement and that has already succeeded, so an
+      // unplugged camera, a refused permission or a machine with no hardware
+      // encoder must not undo it. startRecording reports and returns.
+      await startRecording(writer.getFileName());
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         // The user cancelled the file picker. Not a failure.
@@ -2352,6 +2491,10 @@ function App() {
     } catch (err) {
       console.warn('Error closing TSV writer:', err);
     }
+
+    // After the TSV, deliberately: the measurement is the file that must land,
+    // and the recording's encoder flush should not sit in front of it.
+    await stopRecording();
 
     pendingDataPoints.current = [];
     // Re-phase the recording deadline the same way the save start did. The poll
@@ -2418,6 +2561,20 @@ function App() {
                 <span className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
                 </span>
+                {/* Only while a recording is actually running. It disappears the
+                    moment the encoder stops, which is what makes it worth the
+                    space: a save that is still going with no badge here is a
+                    save whose video died, and that is visible at a glance
+                    rather than at Stop Save. */}
+                {activeRecordingFilename !== '' && (
+                  <span
+                    className="font-semibold text-rose-600 dark:text-rose-400"
+                    translate="no"
+                    title={activeRecordingFilename}
+                  >
+                    ● REC
+                  </span>
+                )}
                 <span className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
                 </span>
@@ -2918,6 +3075,15 @@ function App() {
       <ManualPanel
         open={manualPanelOpen}
         onClose={() => setManualPanelOpen(false)}
+      />
+
+      <RecordingConfigPanel
+        open={recordingConfigPanelOpen}
+        onClose={() => setRecordingConfigPanelOpen(false)}
+        config={recordingConfig}
+        onConfigChange={setRecordingConfig}
+        feed={cameraFeed}
+        locked={activeRecordingFilename !== ''}
       />
 
       <ScriptRunnerPanel

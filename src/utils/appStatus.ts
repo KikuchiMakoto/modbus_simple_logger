@@ -43,7 +43,16 @@ export type AppStatusLevel =
  * Which subsystem is speaking. `clearStatusSource()` works per source so a
  * recovering link cannot wipe a pending save error.
  */
-export type AppStatusSource = 'link' | 'save' | 'calibration' | 'storage' | 'app';
+export type AppStatusSource =
+  | 'link'
+  | 'save'
+  // Separate from 'save' on purpose. A recording failure never means the TSV is
+  // in trouble, and sharing the source would let one clear the other's error —
+  // exactly backwards, since the save is the thing that must not be doubted.
+  | 'recording'
+  | 'calibration'
+  | 'storage'
+  | 'app';
 
 export type AppStatusEntry = {
   id: number;
