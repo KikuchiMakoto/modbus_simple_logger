@@ -357,10 +357,12 @@ const hasAoValuesChanged = (lastSent: number[] | null, current: number[]): boole
 };
 
 const axisOptions = [
-  // Label, not key: the cookie in useChartAxes stores 'time', so renaming the
-  // display text is free. "Timestamp" so the picker, the axis title ChartPanel
-  // draws and the TSV header all call this one value the same thing.
-  { key: 'time', label: 'Timestamp' },
+  // Deliberately the short, lowercase form, while ChartPanel titles the same
+  // axis "Timestamp": this picker is a narrow select sitting above a 240px plot,
+  // and every option beside it is a bare key (raw_00, phy_00, par_00), so `time`
+  // reads as one of that set. The axis title is where the width exists to spell
+  // out that the value is an absolute instant and not elapsed time.
+  { key: 'time', label: 'time' },
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
     key: `raw_${idx.toString().padStart(2, '0')}`,
     label: `raw_${idx.toString().padStart(2, '0')}`
