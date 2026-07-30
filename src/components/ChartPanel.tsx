@@ -194,13 +194,32 @@ function ChartPanelComponent({
     const xData = new Float64Array(n);
     const yData = new Float64Array(n);
     const xIsTime = xDesc.kind === 'time';
+    // Plotly has no timezone support: a `type: 'date'` axis formats epoch-ms
+    // through d3's utcFormat / getUTCHours (see lib/dates.js formatTime, "only
+    // supports UTC times"), so feeding it a raw Date.now() draws the axis in
+    // UTC. The TSV's `timestamp` column (tsvFormat.ts, getHours) and the status
+    // bar clock (toLocaleTimeString) are both local, so the chart was the one
+    // surface disagreeing with the others — by 9 hours in JST.
+    //
+    // Pre-shifting the plotted value into a "local epoch" is the standard fix:
+    // Plotly then renders local wall-clock while thinking it is UTC. Only the
+    // copy handed to Plotly moves — DataPoint.timestamp stays true epoch-ms for
+    // the TSV, IndexedDB and the viewer feed, which must not be shifted.
+    //
+    // One offset for the whole buffer, taken from its newest point rather than
+    // per point, to keep the allocation out of this loop. A session spanning a
+    // DST transition therefore reads an hour off on the far side of it — the
+    // trade is deliberate: this loop runs over the whole buffer on every redraw.
+    const tzShiftMs = xIsTime
+      ? -new Date(dataPoints[n - 1].timestamp).getTimezoneOffset() * 60_000
+      : 0;
     let xMin = Infinity;
     let xMax = -Infinity;
     let yMin = Infinity;
     let yMax = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = dataPoints[i];
-      const xv = xIsTime ? p.timestamp : resolveAxisValue(p, xDesc);
+      const xv = xIsTime ? p.timestamp + tzShiftMs : resolveAxisValue(p, xDesc);
       const yv = resolveAxisValue(p, yDesc);
       xData[i] = xv;
       yData[i] = yv;
@@ -242,8 +261,12 @@ function ChartPanelComponent({
     };
   }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty]);
 
-  // The time axis is titled "Time" — the same word the X: dropdown uses for it,
-  // not the internal `timestamp` field name, which appears nowhere in the UI.
+  // "Timestamp", not "Time": this axis is absolute local wall-clock — the
+  // instant each sample was captured — and "Time" reads just as naturally as
+  // elapsed time since the run started, which is not what is plotted. It also
+  // matches the TSV's own header for the same value, which is the vocabulary
+  // that matters: a chart is normally read next to the exported file.
+  //
   // Every other axis shows the user's free-text label when there is one, and
   // nothing when it is blank: the dropdown already identifies the channel, so a
   // redundant "raw_0" on the axis is noise.
@@ -252,7 +275,7 @@ function ChartPanelComponent({
   // difference between a 20px and a 36px bottom margin on every one of them
   // (see `margin` below).
   const axisTitle = (key: string): string =>
-    key === 'time' ? 'Time' : (axisLabels[key] ?? '');
+    key === 'time' ? 'Timestamp' : (axisLabels[key] ?? '');
 
   const plotLayout = useMemo(
     () => ({

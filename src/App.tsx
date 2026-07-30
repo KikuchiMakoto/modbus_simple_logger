@@ -357,7 +357,10 @@ const hasAoValuesChanged = (lastSent: number[] | null, current: number[]): boole
 };
 
 const axisOptions = [
-  { key: 'time', label: 'Time' },
+  // Label, not key: the cookie in useChartAxes stores 'time', so renaming the
+  // display text is free. "Timestamp" so the picker, the axis title ChartPanel
+  // draws and the TSV header all call this one value the same thing.
+  { key: 'time', label: 'Timestamp' },
   ...Array.from({ length: AI_CHANNELS }, (_, idx) => ({
     key: `raw_${idx.toString().padStart(2, '0')}`,
     label: `raw_${idx.toString().padStart(2, '0')}`
