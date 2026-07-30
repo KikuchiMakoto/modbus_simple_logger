@@ -12,8 +12,27 @@
 // nothing. A viewer PC has no serial port bound to the device and no channel
 // back to the host, so it cannot command the hardware even if its page is
 // modified.
+//
+// Media rides the same socket as binary frames (see src/utils/mediaFrame.ts for
+// the wire format, imported here rather than restated so one definition governs
+// both ends). The relay stays one-way: a fragment goes host -> hub -> viewer and
+// nothing comes back, so adding video did not require opening the viewer's
+// message handler.
+import { MEDIA_FLAG_INIT, MEDIA_HEADER_BYTES } from '../src/utils/mediaFrame';
+
 export const VIEWER_PATH_SUFFIX = '__viewer';
 export const HOST_FEED_PATH_SUFFIX = '__feed';
+
+// Past this much already queued on a viewer's socket, that viewer's fragments
+// are dropped instead of buffered. Matches STREAM_MAX_BUFFERED_BYTES in
+// src/constants.ts.
+//
+// Dropping is the right failure here and not a compromise: a viewer on a weak
+// link that is sent every fragment regardless falls further behind with each
+// one, and the backlog is held in the launcher's memory — eventually pushing
+// back on the host's own send. The measurement must not pay for someone else's
+// wifi, so the slow viewer loses frames instead.
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 // One plotted sample: [seq, timestamp, aiRaw[], aiPhysical[], param[]]. Tuples
 // rather than objects because this is the only frame that scales with the
@@ -34,14 +53,25 @@ export type ViewerState = Record<string, unknown>;
 const RING_CAPACITY = 2048;
 
 type ViewerSocket = {
-  send(data: string): unknown;
+  send(data: string | ArrayBufferView | ArrayBuffer): unknown;
   close(code?: number, reason?: string): void;
+  /** Bytes queued but not yet on the wire. Bun exposes this; older mocks may not. */
+  readonly bufferedAmount?: number;
 };
 
 class ViewerHub {
   private sockets = new Set<ViewerSocket>();
   private ring: ViewerSample[] = [];
   private state: ViewerState | null = null;
+  /**
+   * The last initialisation segment the host sent.
+   *
+   * Kept for exactly the reason the state snapshot above is kept: a viewer that
+   * arrives mid-stream has missed the one fragment without which none of the
+   * others decode. Replaying it on attach is what makes joining late work at
+   * all, and it is why this lives beside `state` rather than in the host page.
+   */
+  private mediaInit: ArrayBuffer | null = null;
 
   get viewerCount(): number {
     return this.sockets.size;
@@ -75,6 +105,10 @@ class ViewerHub {
     // value is drawn), then the backlog.
     if (this.state) this.send(socket, { type: 'state', state: this.state });
     if (this.ring.length > 0) this.send(socket, { type: 'append', samples: this.ring });
+    // The init segment last, because it is the only one whose absence is fatal
+    // rather than cosmetic — sending it after the JSON keeps it adjacent to the
+    // live fragments that follow it.
+    if (this.mediaInit) this.sendBinary(socket, this.mediaInit);
   }
 
   detach(socket: ViewerSocket): void {
@@ -93,6 +127,36 @@ class ViewerHub {
     this.broadcast({ type: 'append', samples });
   }
 
+  private sendBinary(socket: ViewerSocket, frame: ArrayBuffer): void {
+    try {
+      socket.send(frame);
+    } catch {
+      // as above
+    }
+  }
+
+  /**
+   * Relay one media fragment.
+   *
+   * Unlike publishSamples there is no ring buffer: a backlog of video is worth
+   * nothing to a viewer, who wants the picture as it is now, not the picture
+   * from ten seconds ago followed by a scramble to catch up. Only the init
+   * segment is kept, and only because nothing decodes without it.
+   */
+  publishMedia(frame: ArrayBuffer): void {
+    if (frame.byteLength >= MEDIA_HEADER_BYTES) {
+      const flags = new DataView(frame).getUint8(1);
+      if ((flags & MEDIA_FLAG_INIT) !== 0) this.mediaInit = frame;
+    }
+    for (const socket of this.sockets) {
+      // A viewer that is already behind gets nothing more until it catches up.
+      // Its stream will show a jump, which is the honest outcome; the
+      // alternative is the launcher holding video for a link that cannot take it.
+      if ((socket.bufferedAmount ?? 0) > MAX_BUFFERED_BYTES) continue;
+      this.sendBinary(socket, frame);
+    }
+  }
+
   // The host cleared its chart (connect, disconnect, save start/stop). Drop the
   // backlog too, or a viewer joining right afterwards would be seeded with
   // samples from the previous run that the host itself no longer shows.
@@ -101,11 +165,18 @@ class ViewerHub {
     this.broadcast({ type: 'reset' });
   }
 
+  /** The host stopped streaming: forget the init segment, tell the viewers. */
+  publishMediaEnd(): void {
+    this.mediaInit = null;
+    this.broadcast({ type: 'media-end' });
+  }
+
   // Called when the host page goes away: viewers are told, rather than being
   // left with a frozen chart they cannot distinguish from a stalled sensor.
   publishHostGone(): void {
     this.state = null;
     this.ring = [];
+    this.mediaInit = null;
     this.broadcast({ type: 'host-gone' });
   }
 
@@ -120,6 +191,7 @@ class ViewerHub {
     this.sockets.clear();
     this.ring = [];
     this.state = null;
+    this.mediaInit = null;
   }
 }
 

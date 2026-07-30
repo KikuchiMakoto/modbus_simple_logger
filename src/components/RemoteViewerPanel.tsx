@@ -1,3 +1,4 @@
+import { STREAM_BITRATE_OPTIONS } from '../constants';
 import { FloatingWindow } from './FloatingWindow';
 import { QrCode } from './QrCode';
 import type { ViewerMode, ViewerServerStatus } from '../hooks/useViewerFeed';
@@ -8,6 +9,13 @@ type RemoteViewerPanelProps = {
   /** Null until the launcher has answered — "unknown", not "off". */
   status: ViewerServerStatus | null;
   onEnabledChange: (enabled: boolean, mode?: ViewerMode) => void;
+  /** Whether the camera is being streamed to viewers. Reset whenever sharing stops. */
+  videoEnabled: boolean;
+  onVideoEnabledChange: (enabled: boolean) => void;
+  videoBitrate: number;
+  onVideoBitrateChange: (bitrate: number) => void;
+  /** False when no camera is bound, which is the only reason the toggle is dead. */
+  cameraAvailable: boolean;
 };
 
 const MODES: { key: ViewerMode; label: string; blurb: string }[] = [
@@ -23,7 +31,17 @@ const MODES: { key: ViewerMode; label: string; blurb: string }[] = [
   },
 ];
 
-export function RemoteViewerPanel({ open, onClose, status, onEnabledChange }: RemoteViewerPanelProps) {
+export function RemoteViewerPanel({
+  open,
+  onClose,
+  status,
+  onEnabledChange,
+  videoEnabled,
+  onVideoEnabledChange,
+  videoBitrate,
+  onVideoBitrateChange,
+  cameraAvailable,
+}: RemoteViewerPanelProps) {
   const running = status?.running ?? false;
   const starting = status?.starting ?? false;
   const urls = status?.urls ?? [];
@@ -93,6 +111,53 @@ export function RemoteViewerPanel({ open, onClose, status, onEnabledChange }: Re
             </p>
           )}
         </div>
+
+        {/* Video is opt-in every time sharing is turned on, and never sticky.
+            A camera pointed at a rig is a different kind of thing to share than
+            a chart of numbers, and on the tunnel it leaves the building — that
+            is a decision worth taking deliberately rather than inheriting from
+            a checkbox ticked last week. */}
+        {running && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+            <label className="flex items-center gap-2 font-semibold">
+              <input
+                type="checkbox"
+                checked={videoEnabled}
+                disabled={!cameraAvailable}
+                onChange={(e) => onVideoEnabledChange(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span>Send the camera too</span>
+            </label>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              {cameraAvailable
+                ? 'Live picture and sound from the bound camera, with about a second of delay.'
+                : 'Bind a camera in Recording Config first.'}
+            </p>
+            {videoEnabled && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xs text-slate-500 dark:text-slate-400">Quality</span>
+                <select
+                  value={videoBitrate}
+                  onChange={(e) => onVideoBitrateChange(Number(e.target.value))}
+                  className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  {STREAM_BITRATE_OPTIONS.map((bps) => (
+                    <option key={bps} value={bps}>
+                      {(bps / 1_000_000).toFixed(1)} Mbps
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {/* Said plainly rather than hidden behind the toggle: the encoder is
+                a second one, and it is skipped entirely while the count is 0. */}
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Encoding only runs while someone is watching. The saved recording keeps its own
+              quality regardless of this setting.
+            </p>
+          </div>
+        )}
 
         {running && urls.length > 0 && (
           <div>

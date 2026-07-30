@@ -21,6 +21,13 @@ import type { RecordingConfig } from '../utils/recordingConfig';
 export interface CameraFeed {
   /** What recorders and the preview should consume: composited if the overlay is on. */
   stream: MediaStream | null;
+  /**
+   * Object URL for a MediaSource, set only on a viewer (see useRemoteVideo).
+   * A local camera hands over a MediaStream; a remote one arrives as fragments
+   * appended to a MediaSource, and a <video> takes those through `src`. Both
+   * shapes live on one type so the card renders either without branching.
+   */
+  srcUrl: string | null;
   /** What the camera actually gave us, which is not always what was asked for. */
   settings: MediaTrackSettings | null;
   capabilities: MediaTrackCapabilities | null;
@@ -33,6 +40,7 @@ export interface CameraFeed {
 
 const emptyFeed: CameraFeed = {
   stream: null,
+  srcUrl: null,
   settings: null,
   capabilities: null,
   error: null,
@@ -237,6 +245,7 @@ export function useCameraFeed({ config, active, locked }: UseCameraFeedOptions):
 
         setFeed({
           stream: outputStream,
+          srcUrl: null,
           settings,
           capabilities,
           error: null,

@@ -53,6 +53,7 @@ import {
   PROMISE_CHAIN_RESET_INTERVAL,
   TSV_FLUSH_INTERVAL_MS,
   TSV_FLUSH_MAX_ROWS,
+  STREAM_DEFAULT_BITRATE,
 } from './constants';
 import {
   aiToPhysical,
@@ -93,6 +94,8 @@ import {
   type VideoRecorderHandle,
 } from './utils/videoRecorder';
 import { useCameraFeed } from './hooks/useCameraFeed';
+import { useMediaStreamHost } from './hooks/useMediaStreamHost';
+import { useRemoteVideo } from './hooks/useRemoteVideo';
 import {
   discardRecoveredRun,
   downloadRecoveredRun,
@@ -126,6 +129,8 @@ import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { RecordingConfigPanel } from './components/RecordingConfigPanel';
+import { CameraCard } from './components/CameraCard';
+import { ScriptLogCard } from './components/ScriptLogCard';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { ScriptLogPanel } from './components/ScriptLogPanel';
 import { ScriptStatusBar } from './components/ScriptStatusBar';
@@ -145,7 +150,7 @@ import {
   type ViewerStatePayload,
 } from './hooks/useViewerFeed';
 import { RemoteViewerPanel } from './components/RemoteViewerPanel';
-import { isLauncherMode, isViewerMode } from './utils/appMode';
+import { isLauncherMode, isLauncherServed, isViewerMode } from './utils/appMode';
 import { serial as serialPolyfill } from 'web-serial-polyfill';
 
 function isMobileDevice(): boolean {
@@ -1211,6 +1216,26 @@ function App() {
   });
   const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
 
+  // Host side of remote video. A second encoder, so it only runs when somebody
+  // is actually attached — see useMediaStreamHost.
+  const [streamVideoEnabled, setStreamVideoEnabled] = useState(false);
+  const [streamBitrate, setStreamBitrate] = useState<number>(STREAM_DEFAULT_BITRATE);
+  useMediaStreamHost({
+    stream: cameraFeed.stream,
+    enabled: streamVideoEnabled,
+    viewerCount: viewerHost.status?.viewers ?? 0,
+    bitrate: streamBitrate,
+    publishMedia: viewerHost.publishMedia,
+    publishMediaEnd: viewerHost.publishMediaEnd,
+    onError: (message) => postStatus('error', message, 'recording'),
+  });
+
+  // Turned off whenever sharing itself is off, so re-enabling sharing does not
+  // silently resume publishing video the user last enabled days ago.
+  useEffect(() => {
+    if (viewerHost.status?.running === false) setStreamVideoEnabled(false);
+  }, [viewerHost.status?.running]);
+
   // Rebuilt every render (see viewerStateRef below) so the timer below always reads
   // current values without owning them as dependencies.
   const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
@@ -1347,10 +1372,18 @@ function App() {
     setDisplayRevision((v) => v + 1);
   }, []);
 
+  // Viewer side of the host's camera. Inert on the host itself, where onMedia
+  // is never called.
+  const remoteVideo = useRemoteVideo();
+  const [remoteMuted, setRemoteMuted] = useState(true);
+  const remoteCameraFeed = remoteVideo.feed;
+
   const viewerClient = useViewerClient({
     onState: ingestRemoteState,
     onSamples: ingestRemoteSamples,
     onReset: ingestRemoteReset,
+    onMedia: remoteVideo.onMedia,
+    onMediaEnd: remoteVideo.onMediaEnd,
   });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
@@ -2970,32 +3003,61 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <ChartPanel
-          color="#f472b6"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart3X}
-          yAxis={chart3Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart3X}
-          onYAxisChange={setChart3Y}
-        />
-        <ChartPanel
-          color="#fbbf24"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart4X}
-          yAxis={chart4Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart4X}
-          onYAxisChange={setChart4Y}
-        />
+        {/* Slots 3 and 4 are the launcher's, and only the launcher's. On the web
+            build these stay plots, so nothing an existing user is looking at
+            moves. The axis selections for both are still loaded and still saved
+            — they are simply unused here, so switching between the two builds
+            does not cost the user their chart setup.
+
+            Slot 3 is the Script Log on the host and a plot on a viewer: a viewer
+            never runs a script, so its log is structurally empty and a card
+            promising output that can never arrive is worth less than the fourth
+            trace it displaced.
+
+            Slot 4 is the camera in both, from different sources — the local
+            device on the host, the host's stream on a viewer. That is the one
+            slot where a viewer gets more than the host, and deliberately: seeing
+            the rig is most of the reason to watch remotely at all. */}
+        {isLauncherMode ? (
+          <ScriptLogCard scriptRunner={scriptRunner} />
+        ) : (
+          <ChartPanel
+            color="#f472b6"
+            dataPoints={dataBufferRef.current}
+            purgeEpoch={chartEpoch}
+            displayRevision={displayRevision}
+            axisOptions={axisOptions}
+            axisLabels={chartAxisLabels}
+            xAxis={chart3X}
+            yAxis={chart3Y}
+            isDarkMode={isDarkMode}
+            onXAxisChange={setChart3X}
+            onYAxisChange={setChart3Y}
+          />
+        )}
+        {isLauncherServed ? (
+          <CameraCard
+            feed={isViewerMode ? remoteCameraFeed : cameraFeed}
+            recording={activeRecordingFilename !== ''}
+            remote={isViewerMode}
+            muted={isViewerMode ? remoteMuted : undefined}
+            onToggleMuted={isViewerMode ? () => setRemoteMuted((v) => !v) : undefined}
+          />
+        ) : (
+          <ChartPanel
+            color="#fbbf24"
+            dataPoints={dataBufferRef.current}
+            purgeEpoch={chartEpoch}
+            displayRevision={displayRevision}
+            axisOptions={axisOptions}
+            axisLabels={chartAxisLabels}
+            xAxis={chart4X}
+            yAxis={chart4Y}
+            isDarkMode={isDarkMode}
+            onXAxisChange={setChart4X}
+            onYAxisChange={setChart4Y}
+          />
+        )}
       </div>
       </div>
 
@@ -3114,6 +3176,11 @@ function App() {
         onClose={() => setRemoteViewerPanelOpen(false)}
         status={viewerHost.status}
         onEnabledChange={viewerHost.setEnabled}
+        videoEnabled={streamVideoEnabled}
+        onVideoEnabledChange={setStreamVideoEnabled}
+        videoBitrate={streamBitrate}
+        onVideoBitrateChange={setStreamBitrate}
+        cameraAvailable={cameraFeed.hasVideo}
       />
 
       {/* Not on a viewer: it has no menu, so Script Runner is unreachable

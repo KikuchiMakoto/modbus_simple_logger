@@ -88,6 +88,16 @@ class HostFeed {
     }
   }
 
+  /**
+   * A media fragment from the page, relayed verbatim.
+   *
+   * The launcher does not parse it beyond the flag byte the hub reads: this is
+   * a relay, and understanding the container would be work it has no use for.
+   */
+  handleBinaryMessage(data: ArrayBuffer): void {
+    viewerHub.publishMedia(data);
+  }
+
   handleMessage(raw: string): void {
     let frame: {
       type?: string;
@@ -110,6 +120,12 @@ class HostFeed {
         break;
       case 'reset':
         viewerHub.publishReset();
+        break;
+      // The page stopped publishing video. Sent explicitly rather than inferred
+      // from the fragments drying up, so a viewer is told the difference between
+      // "the host turned the camera off" and "the link went quiet".
+      case 'media-end':
+        viewerHub.publishMediaEnd();
         break;
       case 'enable':
         void this.runControl({ type: 'enable', mode: frame.mode === 'tunnel' ? 'tunnel' : 'lan' });
