@@ -2403,6 +2403,16 @@ function App() {
                       // in the header would be shouting at someone who is only
                       // ever looking at the channel grid behind it.
                       tone="neutral"
+                      // Squared off to .button-primary's rounded-lg. This slot
+                      // alternates between a plain button and this control, and
+                      // a pill swapping in for a button was the header visibly
+                      // restyling itself at the moment the link came up — read
+                      // as "something else appeared" rather than "the same
+                      // control now does the opposite". The gesture is what
+                      // separates them, and that is not carried by the corners.
+                      // Output Tester's zero keeps the pill: nothing swaps with
+                      // it there, so the shape is free to say "drag me".
+                      shape="boxy"
                       knobPx={28}
                       // Exactly the Connect button's 6rem: the two swap places
                       // in the same slot, so the header must not reflow when

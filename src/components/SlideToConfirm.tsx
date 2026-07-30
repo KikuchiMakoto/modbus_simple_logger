@@ -25,6 +25,26 @@ const COMMIT_FRACTION = 0.92;
  */
 export type SlideTone = 'warn' | 'neutral';
 
+/**
+ * Corner treatment. Purely cosmetic — the gesture, the travel and the commit
+ * point are identical.
+ *
+ *   pill  a track with fully round ends. The default, and what this control
+ *         looks like on its own: unmistakably something you drag.
+ *   boxy  the same corner radius as an ordinary .button-* — for the one slot
+ *         where this control SWAPS with a plain button (header Connect →
+ *         Disconnect) and the swap should not restyle the header.
+ */
+export type SlideShape = 'pill' | 'boxy';
+
+const SHAPE = {
+  pill: { track: 'rounded-full', knob: 'rounded-full' },
+  // Track matches .button-primary's rounded-lg exactly. The knob is a step
+  // tighter, as a nested corner has to be, and stays square-ish so it still
+  // reads as the grabbable part rather than as part of the track.
+  boxy: { track: 'rounded-lg', knob: 'rounded-md' },
+} as const;
+
 const TONE = {
   warn: {
     track: 'border-rose-300 bg-rose-50 dark:border-rose-500/50 dark:bg-rose-500/10',
@@ -54,6 +74,7 @@ type SlideToConfirmProps = {
   onConfirm: () => void;
   disabled?: boolean;
   tone?: SlideTone;
+  shape?: SlideShape;
   /**
    * Knob width in px. Set it to the track's INNER height — the height in
    * `className` minus the 1px border on each side — or the knob renders as a
@@ -74,6 +95,7 @@ export function SlideToConfirm({
   onConfirm,
   disabled = false,
   tone = 'warn',
+  shape = 'pill',
   // Defaults are a matched pair: h-9 is 36 px, less 1 px of border a side.
   knobPx = 34,
   className = 'h-9',
@@ -111,22 +133,24 @@ export function SlideToConfirm({
   const travelNow = maxTravel();
   const armed = travelNow > 0 && knobX >= travelNow * COMMIT_FRACTION;
   const palette = TONE[tone];
+  const corners = SHAPE[shape];
 
   return (
     <div
       ref={trackRef}
-      className={`relative select-none overflow-hidden rounded-full border ${className} ${
+      className={`relative select-none overflow-hidden border ${corners.track} ${className} ${
         disabled
           ? 'border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800'
           : palette.track
       }`}
     >
       {/* The trail the knob leaves. It ends at the knob's CENTRE, which is the
-          only x where a square edge can hide behind a circle: that is where the
-          circle spans the track's full height, so the fill's corners have
+          only x where a square edge can hide behind a rounded one: that is where
+          the knob spans the track's full height, so the fill's corners have
           nothing to poke out of. Ending at the knob's right edge overhung it
           under subpixel rounding; ending at its left edge left the two corners
-          showing where the circle had already curved away. */}
+          showing where the knob had already curved away. Holds for both shapes —
+          the boxy knob is rounded too, only less. */}
       <div
         className={`absolute inset-y-0 left-0 ${palette.fill} ${
           dragging ? '' : 'transition-[width] duration-200'
@@ -154,7 +178,7 @@ export function SlideToConfirm({
         onPointerUp={end}
         onPointerCancel={end}
         style={{ width: `${knobPx}px`, transform: `translateX(${knobX}px)` }}
-        className={`absolute inset-y-0 left-0 flex touch-none items-center justify-center rounded-full text-xs font-bold ${
+        className={`absolute inset-y-0 left-0 flex touch-none items-center justify-center text-xs font-bold ${corners.knob} ${
           disabled
             ? 'cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-600'
             : `cursor-grab active:cursor-grabbing ${palette.knob}`
