@@ -15,6 +15,18 @@ const STREAM_COLOR: Record<ScriptLogEntry['stream'], string> = {
   system: 'text-emerald-600 dark:text-emerald-400',
 };
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+// Seconds, no milliseconds — where the Script Log window shows HH:MM:SS.mmm. The
+// difference is deliberate: this bar holds one line at a time and is glanced at,
+// so the clock answers "is this output fresh or from ten minutes ago", which
+// seconds settle. Sub-second precision is for reading lines against each other,
+// which needs the window. Local time, like every other clock in this app.
+const clockOf = (t: number): string => {
+  const d = new Date(t);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+};
+
 /** One rendered state of the bar's single line, and what makes it that one. */
 type Rung = {
   /** Changes exactly when the line should roll. See `rungOf`. */
@@ -23,6 +35,9 @@ type Rung = {
   color: string;
   /** Drives the `›` marker, which lives outside the roll — see the bar below. */
   isLog: boolean;
+  /** Both empty for a status message. Inside the roll — see LogLine. */
+  time: string;
+  source: string;
 };
 
 // `seq` is the log entry's identity for the life of a run and survives the tail
@@ -35,6 +50,10 @@ const rungOf = (line: ScriptLogEntry | null, text: string, color: string): Rung 
   text,
   color,
   isLog: line !== null,
+  time: line ? clockOf(line.t) : '',
+  // Blank on lines produced before a run has stamped a name — see
+  // ScriptLogEntry.source — so this is rendered conditionally, not as an empty gap.
+  source: line?.source ?? '',
 });
 
 function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
@@ -42,8 +61,27 @@ function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
     // inset-0 over a self-stretch track, so translateY(±100%) is the full height
     // of the bar: the line enters from below its bottom edge rather than from
     // one text-height up, which is what makes it read as arriving from off-bar.
-    <div className={`absolute inset-0 flex items-center font-mono ${rung.color} ${animation}`}>
-      {/* truncate needs min-w-0 to shrink below its content inside a flex row. */}
+    <div
+      className={`absolute inset-0 flex items-center gap-1.5 font-mono ${rung.color} ${animation}`}
+    >
+      {/* Time and script name roll WITH the message, unlike the `›` gutter mark:
+          they describe this particular line, and left fixed they would sit
+          stating the wrong time next to a message that had already changed.
+          Both drop below `md`, where the bar is 24px tall and already gives up
+          the runtime chip — the message is what the bar is for, and these two
+          would take ~40% of the room it has on a phone. */}
+      {rung.time && (
+        <span className="hidden shrink-0 text-slate-400 dark:text-slate-500 md:inline">
+          {rung.time}
+        </span>
+      )}
+      {rung.source && (
+        <span className="hidden max-w-[8rem] shrink-0 truncate font-semibold text-slate-500 dark:text-slate-400 md:inline">
+          {rung.source}
+        </span>
+      )}
+      {/* Last, and the only thing allowed to shrink: truncate needs min-w-0 to
+          go below its content width inside a flex row. */}
       <span className="min-w-0 truncate">{rung.text}</span>
     </div>
   );
