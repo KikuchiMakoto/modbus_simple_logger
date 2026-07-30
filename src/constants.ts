@@ -199,3 +199,85 @@ export const TSV_MIRROR_FLUSH_INTERVAL_MS = 1_000;
 // Row-count cap for the same, so a high sampling rate does not leave a second's
 // worth of rows sitting in memory between ticks.
 export const TSV_MIRROR_FLUSH_MAX_ROWS = 100;
+
+// ---------------------------------------------------------------------------
+// Video recording (Recording Config)
+// ---------------------------------------------------------------------------
+
+// Floor on the capture size. Below this the timestamp overlay stops being
+// legible at the size it is drawn, which is the one thing the video is for.
+// There is deliberately no ceiling: what a camera can actually deliver is the
+// camera's business, and the USB budget below is what keeps it honest.
+export const VIDEO_MIN_WIDTH = 640;
+export const VIDEO_MIN_HEIGHT = 480;
+export const VIDEO_MIN_FPS = 1;
+export const VIDEO_MAX_FPS = 240;
+
+export const VIDEO_DEFAULT_WIDTH = 1280;
+export const VIDEO_DEFAULT_HEIGHT = 720;
+export const VIDEO_DEFAULT_FPS = 15;
+
+// One-touch sizes for the panel. Not a closed set — the fields take any value.
+export const VIDEO_PRESETS = [
+  { label: '640×480 · 10', width: 640, height: 480, fps: 10 },
+  { label: '1280×720 · 15', width: 1280, height: 720, fps: 15 },
+  { label: '1280×720 · 30', width: 1280, height: 720, fps: 30 },
+  { label: '1920×1080 · 30', width: 1920, height: 1080, fps: 30 },
+] as const;
+
+// Encoder bitrate, derived rather than tabulated because the size is free-form.
+// 0.07 bit per pixel per frame is around the knee for H.264 at these sizes:
+// 1280x720@15 -> 1.0 Mbps, 1920x1080@30 -> 4.4 Mbps.
+export const VIDEO_BITS_PER_PIXEL_FRAME = 0.07;
+export const VIDEO_MIN_BITRATE = 500_000;
+// A ceiling that still looks right at 4K and stops an accidental setting from
+// filling the disk: 40 Mbps is ~18 GB/hour, which is a lot but not unbounded.
+export const VIDEO_MAX_BITRATE = 40_000_000;
+
+// MediaRecorder chunk interval for the file. Each chunk is appended to OPFS
+// synchronously, so this is also the worst-case data loss on a crash.
+export const VIDEO_CHUNK_INTERVAL_MS = 1_000;
+
+// --- USB bandwidth budget ---------------------------------------------------
+//
+// A UVC camera reserves isochronous bandwidth up front, every microframe. The
+// Modbus adapter's USB serial (CDC-ACM / FTDI) is *bulk*, which is served from
+// what is left over. So an over-configured camera does not make the serial link
+// slow — it makes the reservation win and the serial link starve. Capping the
+// camera is the only lever that works, which is why this is a hard gate.
+export const USB_HS_EFFECTIVE_MBPS = 400; // typical real throughput of 480 Mbps HS
+export const MODBUS_RESERVE_MBPS = 12; // the full-speed device's own line rate
+// 75% of the effective bus, not `effective - 12`. Subtracting only what Modbus
+// asks for leaves the bulk endpoints with nothing but scraps once the isochronous
+// reservation is granted; what has to be true is that 12 Mbps *gets through*, not
+// that exactly 12 Mbps is unclaimed. This leaves ~100 Mbps for bulk.
+export const USB_CAMERA_BUDGET_MBPS = 300;
+export const USB_BUDGET_OPTIONS = [200, 300, 400] as const;
+
+// Bytes per pixel for each UVC payload format, used to estimate what the camera
+// will actually pull off the bus. The browser never reveals which format was
+// negotiated, so the panel makes the user declare it and always shows the YUY2
+// worst case alongside.
+export const UVC_BYTES_PER_PIXEL = {
+  // Uncompressed 4:2:2 — 16 bits per pixel, the worst case and the reason
+  // webcams cap their uncompressed modes at low frame rates.
+  yuy2: 2,
+  // Conservative 10:1 against YUY2. Real UVC MJPEG runs 8-15:1.
+  mjpeg: 0.2,
+} as const;
+// UVC cameras with an on-board H.264 encoder send a near-constant rate that
+// barely moves with resolution.
+export const UVC_H264_BITRATE = 20_000_000;
+
+// --- Remote streaming -------------------------------------------------------
+
+// Separate from the file's bitrate: the recording must not lose quality because
+// somebody is watching over a phone.
+export const STREAM_DEFAULT_BITRATE = 1_500_000;
+export const STREAM_BITRATE_OPTIONS = [500_000, 1_500_000, 3_000_000] as const;
+// Short chunks are what makes this feel live; this is most of the end-to-end
+// latency budget.
+export const STREAM_CHUNK_INTERVAL_MS = 200;
+// Past this much queued on a viewer's socket, that viewer's fragments are
+// dropped rather than buffered. A slow viewer must cost the host nothing.
+export const STREAM_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
