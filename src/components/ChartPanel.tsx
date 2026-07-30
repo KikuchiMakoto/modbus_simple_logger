@@ -242,12 +242,17 @@ function ChartPanelComponent({
     };
   }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty]);
 
-  // Time axis has no label; every other axis shows the free-text label when
-  // the user has entered one, and nothing when it is blank — the dropdown
-  // already identifies the channel, so a redundant "raw_0" on the axis is
-  // noise.
+  // The time axis is titled "Time" — the same word the X: dropdown uses for it,
+  // not the internal `timestamp` field name, which appears nowhere in the UI.
+  // Every other axis shows the user's free-text label when there is one, and
+  // nothing when it is blank: the dropdown already identifies the channel, so a
+  // redundant "raw_0" on the axis is noise.
+  //
+  // This title is not free — all four charts default to x: time, so it is the
+  // difference between a 20px and a 36px bottom margin on every one of them
+  // (see `margin` below).
   const axisTitle = (key: string): string =>
-    key === 'time' ? '' : (axisLabels[key] ?? '');
+    key === 'time' ? 'Time' : (axisLabels[key] ?? '');
 
   const plotLayout = useMemo(
     () => ({
