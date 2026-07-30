@@ -17,9 +17,13 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // Raised 1024 → 2048 in v3.1, funded by disabling the scattergl hover pick-index
 // (`hoverinfo: 'skip'`, see ChartPanel.tsx): that index is rebuilt per update and
 // its cost scales with this constant, so removing it buys headroom at the same
-// redraw rate (2 fps — see CHART_REDRAW_INTERVAL_MS). Deliberately conservative — the headroom has not been
-// measured on-device yet (docs/chart-library-comparison.md §11-1), so this is a
-// doubling rather than the 8192 the hardware may well allow.
+// redraw rate. Deliberately conservative — the headroom has not been measured
+// on-device yet (docs/chart-library-comparison.md §11-1), so this is a doubling
+// rather than the 8192 the hardware may well allow.
+//
+// That headroom has since been spent from the other side: CHART_REDRAW_INTERVAL_MS
+// went 500 -> 200 ms, so the same point budget is now drawn 2.5x as often. This
+// number and that one draw on the same unmeasured budget.
 export const CHART_MAX_POINTS = 2048;
 // How often a polled sample is fed to the chart buffer (and, while not saving,
 // to IndexedDB and the remote viewer feed). Applied as a poll-count stride, so
@@ -46,21 +50,53 @@ export const CHART_INPUT_INTERVAL_MS = 100;
 // data pushes it out.
 export const NON_SAVING_CHART_PREVIEW_POINTS = 768;
 // Minimum interval between chart redraws (setDisplayRevision bumps), saving or
-// not. Chart data flushes up to 10x/s and redrawing four scattergl charts that
-// often is wasteful and feeds WebGL/regl resource churn; 2 fps is plenty for a
-// preview and keeps the steady GPU/React cost off the acquisition loop, which
-// is the competition that matters. Recording is unaffected either way.
+// not. Chart data flushes up to 10x/s and redrawing four scattergl charts every
+// flush is wasteful and feeds WebGL/regl resource churn, so this keeps the
+// steady GPU/React cost off the acquisition loop — the competition that matters.
+// Recording is unaffected either way.
 //
 // One constant, not one per mode: the saving case used to be slower (500 vs
 // 200 ms) on the argument that a whole-capture view moves less per sample, but
 // the same is true of a 768-point preview, and two numbers only ever meant two
-// things to reason about.
+// things to reason about. Unified at 500 at the time — the slower of the two —
+// and now back at 200: 2 fps made a live trace visibly step rather than move,
+// which is the one thing a preview is for, and 5 fps is still half the 10 Hz
+// chart input rate so no flush goes unseen.
+//
+// The cost is real and unmeasured on-device: 2.5x the redraws, each over up to
+// CHART_MAX_POINTS x 4 charts. Which is why this is now the CAPABLE-device
+// figure only — see CHART_REDRAW_INTERVAL_CONSTRAINED_MS.
 //
 // This is a FLOOR, not a period. A redraw is only armed by a flush that
 // actually added a point to the chart buffer (see flushPendingDataPoints), so
 // late in a save — where the decimation stride means a new point every few
 // seconds — the redraw rate follows the points rather than this constant.
-export const CHART_REDRAW_INTERVAL_MS = 500;
+export const CHART_REDRAW_INTERVAL_MS = 200;
+// Redraw floor on a device that cannot afford the fast one. 5 fps of four
+// scattergl charts is cheap on a GPU and expensive without one, and this app's
+// standing rule is that display cost must never be paid out of the acquisition
+// loop's budget — so the display is what gives way, back to the 2 fps that was
+// the flat rate before.
+export const CHART_REDRAW_INTERVAL_CONSTRAINED_MS = 500;
+// What counts as "cannot afford it", checked at runtime (see App.tsx):
+//
+//   - Plotly reporting a CPU rasterizer (utils/renderBackend). The decisive
+//     signal: every redraw is then main-thread pixel work, competing directly
+//     with the serial I/O continuations rather than running on the GPU.
+//   - this many logical cores or fewer. Cores are what the WORKERS need — the
+//     TSV writer and whichever script runtime is live are on their own threads,
+//     so they are not fighting the main thread for time, they are fighting the
+//     renderer for cores.
+export const CHART_REDRAW_CONSTRAINED_MAX_CORES = 4;
+// A redraw that comes due mid-transfer waits for the gap between polls instead
+// of landing on top of it, re-checking this often. Short relative to a poll
+// period so the wait costs a fraction of the interval, not a whole one.
+export const CHART_REDRAW_DEFER_RETRY_MS = 20;
+// Ceiling on that waiting. Without it, a fast poll rate over a slow link — where
+// a transfer is in flight most of the time — would defer the chart indefinitely,
+// and a frozen chart is a worse failure than a jittery one. At the ceiling the
+// redraw goes through regardless.
+export const CHART_REDRAW_DEFER_MAX_MS = 1_000;
 // How often per-sample readouts (measured rate, saved-point count) are pushed
 // into React state. They are numbers a human reads, so 4/s is already more than
 // anyone can follow — while a state update per sample put a full re-render of

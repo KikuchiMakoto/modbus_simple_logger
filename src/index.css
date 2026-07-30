@@ -182,14 +182,14 @@ html.msl-launcher body {
 }
 
 .script-log-roll-in {
-  animation: script-log-roll-in 180ms ease-out;
+  animation: script-log-roll-in 200ms ease-out;
 }
 
 /* `forwards` is load-bearing: without it the outgoing line snaps back to its
    resting position at the end and sits on top of the incoming one, since it
    stays mounted until the next line displaces it. */
 .script-log-roll-out {
-  animation: script-log-roll-out 180ms ease-out forwards;
+  animation: script-log-roll-out 200ms ease-out forwards;
 }
 
 /* Reduced motion: no roll. Unlike the Stop/Save pulse there is no colour-only

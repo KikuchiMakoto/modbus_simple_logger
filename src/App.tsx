@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
   AiCalibration,
@@ -31,6 +39,10 @@ import {
   MAX_POINTS_IN_MEMORY,
   CHART_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
+  CHART_REDRAW_INTERVAL_CONSTRAINED_MS,
+  CHART_REDRAW_CONSTRAINED_MAX_CORES,
+  CHART_REDRAW_DEFER_RETRY_MS,
+  CHART_REDRAW_DEFER_MAX_MS,
   READOUT_PUBLISH_INTERVAL_MS,
   CHANNEL_CARD_MIN_INTERVAL_MS,
   CHART_INPUT_INTERVAL_MS,
@@ -80,6 +92,8 @@ import {
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
 import { clearStatusSource, postStatus, reportError } from './utils/appStatus';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
+import { runAtPriority } from './utils/taskPriority';
+import { useRenderBackend } from './utils/renderBackend';
 import {
   clearBackgroundTimer,
   setBackgroundInterval,
@@ -537,6 +551,12 @@ function App() {
   const displayUpdateCountRef = useRef(0);
   const flushTimerRef = useRef<number | undefined>(undefined);
   const chartRedrawTimerRef = useRef<number | undefined>(undefined);
+  // Current redraw floor. A ref, not state: flushPendingDataPoints runs on the
+  // acquisition path with no deps and must not be rebuilt when this changes.
+  const chartRedrawIntervalRef = useRef(CHART_REDRAW_INTERVAL_MS);
+  // When the pending redraw first came due, so deferring it around transfers
+  // cannot postpone it for ever — see CHART_REDRAW_DEFER_MAX_MS. 0 = not due yet.
+  const chartRedrawDueSinceRef = useRef(0);
   const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
@@ -814,6 +834,66 @@ function App() {
     });
   }, []);
 
+  // What Plotly actually rendered with. Detected by the charts, reported through
+  // a module store; read here only to pick the redraw floor below.
+  const renderBackend = useRenderBackend();
+
+  // The redraw floor follows the machine, because 5 fps of four scattergl charts
+  // is cheap on a GPU and expensive without one. Two signals, either sufficient:
+  //
+  //   CPU rasterizer — every redraw becomes main-thread pixel work, contending
+  //   with the serial I/O continuations instead of running on the GPU.
+  //   Few cores — what the WORKERS need. The TSV writer and whichever script
+  //   runtime is live have their own threads, so they never take main-thread time
+  //   from polling; what they can lose is a core, to the renderer.
+  //
+  // The backend is only known once a chart has drawn, so this settles a moment
+  // after the first data arrives rather than at startup. Costs nothing: the fast
+  // floor is the one it starts on, and a few hundred ms at 5 fps on a machine
+  // that turns out to be slow is not a failure worth engineering around.
+  useEffect(() => {
+    const cores = navigator.hardwareConcurrency ?? 0;
+    const constrained =
+      renderBackend?.accel === 'CPU' ||
+      (cores > 0 && cores <= CHART_REDRAW_CONSTRAINED_MAX_CORES);
+    chartRedrawIntervalRef.current = constrained
+      ? CHART_REDRAW_INTERVAL_CONSTRAINED_MS
+      : CHART_REDRAW_INTERVAL_MS;
+  }, [renderBackend]);
+
+  // Commit of a rate-limited chart redraw. Named function expression so the
+  // deferral below can re-arm the same function without a second binding.
+  const commitChartRedraw = useCallback(function commit() {
+    chartRedrawTimerRef.current = undefined;
+    const now = Date.now();
+    if (chartRedrawDueSinceRef.current === 0) chartRedrawDueSinceRef.current = now;
+
+    // Acquisition first, and this is the part priority alone cannot buy: a
+    // Plotly redraw is tens of ms of synchronous work, and once started nothing
+    // preempts it. Landing it while a transfer is awaiting its reply delays that
+    // promise continuation — jitter in the capture timestamps, and read timeouts
+    // at the fast poll rates. So it waits for the gap between polls, which costs
+    // the chart a fraction of a second and the recording nothing.
+    if (
+      pollingInProgressRef.current &&
+      now - chartRedrawDueSinceRef.current < CHART_REDRAW_DEFER_MAX_MS
+    ) {
+      chartRedrawTimerRef.current = window.setTimeout(commit, CHART_REDRAW_DEFER_RETRY_MS);
+      return;
+    }
+    chartRedrawDueSinceRef.current = 0;
+
+    // Queued behind anything else waiting, and marked interruptible inside React
+    // on top of that. The two work at different layers: 'background' is where
+    // this sits in the browser's task queues, startTransition is React being
+    // allowed to abandon the render half-done if something urgent arrives.
+    runAtPriority(() => {
+      startTransition(() => {
+        setDisplayRevision((v) => v + 1);
+      });
+    }, 'background');
+  }, []);
+
   const isSaving = !!tsvWriterRef.current;
   useEffect(() => {
     if (!isSaving || saveStartedAt === null) {
@@ -950,12 +1030,13 @@ function App() {
     // Reset paths (connect/disconnect/start/stop-save) still bump
     // setDisplayRevision directly for an immediate redraw.
     if (bufferChanged && chartRedrawTimerRef.current === undefined) {
-      chartRedrawTimerRef.current = window.setTimeout(() => {
-        chartRedrawTimerRef.current = undefined;
-        setDisplayRevision((v) => v + 1);
-      }, CHART_REDRAW_INTERVAL_MS);
+      chartRedrawDueSinceRef.current = 0;
+      chartRedrawTimerRef.current = window.setTimeout(
+        commitChartRedraw,
+        chartRedrawIntervalRef.current,
+      );
     }
-  }, []);
+  }, [commitChartRedraw]);
 
   const syncAoChannels = useCallback((values: number[]) => {
     if (values.length !== AO_CHANNELS) {

@@ -21,7 +21,7 @@ type Rung = {
   id: string;
   text: string;
   color: string;
-  /** Log lines get the `›` marker; a bare status message does not. */
+  /** Drives the `›` marker, which lives outside the roll — see the bar below. */
   isLog: boolean;
 };
 
@@ -43,9 +43,6 @@ function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
     // of the bar: the line enters from below its bottom edge rather than from
     // one text-height up, which is what makes it read as arriving from off-bar.
     <div className={`absolute inset-0 flex items-center font-mono ${rung.color} ${animation}`}>
-      {rung.isLog && (
-        <span className="mr-1 shrink-0 text-slate-400 dark:text-slate-500">›</span>
-      )}
       {/* truncate needs min-w-0 to shrink below its content inside a flex row. */}
       <span className="min-w-0 truncate">{rung.text}</span>
     </div>
@@ -112,25 +109,37 @@ export function ScriptStatusBar({
           </span>
           <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
         </div>
-        {/* The track the lines roll through: full bar height (self-stretch) and
-            clipped, so a line above or below its resting position is simply not
-            there. `relative` anchors the two absolutely-positioned lines. */}
-        <div className="relative ml-2 min-w-0 flex-1 self-stretch overflow-hidden md:ml-3">
-          {roll.outgoing && (
-            <LogLine
-              key={`out-${roll.gen}`}
-              rung={roll.outgoing}
-              animation="script-log-roll-out"
-            />
+        <div className="ml-2 flex min-w-0 flex-1 items-center self-stretch md:ml-3">
+          {/* Outside the roll on purpose. The marker is not part of the message
+              — it is a gutter mark saying "what follows is script output rather
+              than a status line" — and a fixed frame with the text rolling
+              behind it is what makes this read as one bar being updated, rather
+              than two whole rows sliding past each other. It is also the same
+              mark on every line, so animating it only ever showed it replacing
+              itself. */}
+          {roll.current.isLog && (
+            <span className="mr-1 shrink-0 text-slate-400 dark:text-slate-500">›</span>
           )}
-          <LogLine
-            key={`in-${roll.gen}`}
-            rung={roll.current}
-            // gen 0 is the state the bar mounted with — nothing was displaced,
-            // so there is nothing to announce. Rolling it in would animate the
-            // bar on every page load.
-            animation={roll.gen === 0 ? '' : 'script-log-roll-in'}
-          />
+          {/* The track the lines roll through: full bar height (self-stretch)
+              and clipped, so a line above or below its resting position is
+              simply not there. `relative` anchors the two absolute lines. */}
+          <div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
+            {roll.outgoing && (
+              <LogLine
+                key={`out-${roll.gen}`}
+                rung={roll.outgoing}
+                animation="script-log-roll-out"
+              />
+            )}
+            <LogLine
+              key={`in-${roll.gen}`}
+              rung={roll.current}
+              // gen 0 is the state the bar mounted with — nothing was displaced,
+              // so there is nothing to announce. Rolling it in would animate the
+              // bar on every page load.
+              animation={roll.gen === 0 ? '' : 'script-log-roll-in'}
+            />
+          </div>
         </div>
       </div>
     </>
