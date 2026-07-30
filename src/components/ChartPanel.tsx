@@ -291,16 +291,16 @@ function ChartPanelComponent({
       // r: nothing is ever drawn right of the plot — no second axis, no legend
       // (one trace) — so this is only enough to keep the last x tick label from
       // being clipped at the edge.
-      // t: the modebar is `displayModeBar: true`, always on, and Plotly floats it
-      // over the top-right of the graph div; below ~22px it starts covering the
-      // trace instead of sitting above it.
+      // t: only enough to keep the topmost y tick label from clipping. It used
+      // to be 22 to clear the always-on modebar; that bar is `'hover'` now, so
+      // nothing is parked here for the whole session.
       // b/l: tick labels always, plus a row/column for the axis title only when
       // there is one — the time axis has no title, and a channel axis has none
       // until the user labels the channel (see axisTitle). Both shrank again
       // with the 10px ticks above: a tick row is ~14px rather than ~18, and a
       // y label like "-1234.5" is ~36px wide rather than ~44.
       margin: {
-        t: 22,
+        t: 8,
         r: 12,
         b: axisTitle(xAxis) ? 36 : 20,
         l: axisTitle(yAxis) ? 52 : 40,
@@ -318,11 +318,33 @@ function ChartPanelComponent({
 
   const plotConfig = useMemo(
     () => ({
-      displayModeBar: true,
+      // Only while the pointer is over the chart. The bar is an overlay — it
+      // reserves no layout space either way — but an always-on bar has to be
+      // cleared by the top margin for the whole session, and that clearance was
+      // ~14px of a 240px plot, four charts over. On hover it overlaps the top
+      // strip of the trace, which is not what is being read at the moment you
+      // are reaching for zoom.
+      //
+      // Turning the bar off entirely (or dropping scrollZoom/dragmode) buys no
+      // further space: the 8px top margin left behind is tick-label clearance,
+      // not modebar clearance. It would only cost the zoom.
+      displayModeBar: 'hover' as const,
       responsive: true,
       displaylogo: false,
       scrollZoom: true,
       doubleClick: 'reset' as const,
+      // Trimmed to the buttons that do something here. The three hover controls
+      // are dead on arrival against `hovermode: false` / `hoverinfo: 'skip'`,
+      // and box/lasso select has no consumer — nothing reads a selection off
+      // these charts. Fewer buttons also means a narrower bar covering less of
+      // the trace while it is up.
+      modeBarButtonsToRemove: [
+        'select2d',
+        'lasso2d',
+        'hoverClosestCartesian',
+        'hoverCompareCartesian',
+        'toggleSpikelines',
+      ],
     }),
     [],
   );
