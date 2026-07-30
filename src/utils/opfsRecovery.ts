@@ -15,13 +15,30 @@
  */
 import {
   RECOVERY_DIR,
+  VIDEO_DIR,
   buildRecoveryName,
   parseRecoveryName,
   recoveredDownloadName,
 } from './opfsRecoveryShared';
 
+/**
+ * Both directories are swept, and the difference between them matters when
+ * deciding what a leftover is worth. A `tsv` entry is a mirror of a file the
+ * user picked, so a crash leaves two partial copies and this one is the better
+ * of them. A `video` entry is the recording itself — there was never a second
+ * copy — so it is the only thing standing between a crash and no video at all.
+ */
+export type RecoveryKind = 'tsv' | 'video';
+
+const DIR_OF: Record<RecoveryKind, string> = {
+  tsv: RECOVERY_DIR,
+  video: VIDEO_DIR,
+};
+
 /** A finished-but-unsaved run found in OPFS. */
 export interface RecoverableRun {
+  /** Which directory it came from; needed to read or delete it again. */
+  kind: RecoveryKind;
   /** Entry name inside the recovery directory. */
   opfsName: string;
   /** Name of the file the user originally chose in the save picker. */
@@ -36,11 +53,14 @@ function opfsAvailable(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory;
 }
 
-async function getRecoveryDir(create: boolean): Promise<FileSystemDirectoryHandle | null> {
+async function getRecoveryDir(
+  kind: RecoveryKind,
+  create: boolean,
+): Promise<FileSystemDirectoryHandle | null> {
   if (!opfsAvailable()) return null;
   try {
     const root = await navigator.storage.getDirectory();
-    return await root.getDirectoryHandle(RECOVERY_DIR, { create });
+    return await root.getDirectoryHandle(DIR_OF[kind], { create });
   } catch {
     // NotFoundError when the directory was never created (the common case on a
     // clean profile) — and anything else here means recovery is simply
@@ -106,7 +126,15 @@ async function readSizeWaitingForLock(handle: FileSystemFileHandle): Promise<num
  * captured no rows and there is nothing to restore.
  */
 export async function listRecoverableRuns(): Promise<RecoverableRun[]> {
-  const dir = await getRecoveryDir(false);
+  const runs: RecoverableRun[] = [];
+  for (const kind of Object.keys(DIR_OF) as RecoveryKind[]) {
+    runs.push(...(await listRunsIn(kind)));
+  }
+  return runs.sort((a, b) => b.startedAt - a.startedAt);
+}
+
+async function listRunsIn(kind: RecoveryKind): Promise<RecoverableRun[]> {
+  const dir = await getRecoveryDir(kind, false);
   if (!dir) return [];
 
   // Collect first, then act: removeEntry() while the async iterator is still
@@ -126,10 +154,10 @@ export async function listRecoverableRuns(): Promise<RecoverableRun[]> {
       await dir.removeEntry(name).catch(() => {});
       continue;
     }
-    runs.push({ opfsName: name, size, ...parts });
+    runs.push({ kind, opfsName: name, size, ...parts });
   }
 
-  return runs.sort((a, b) => b.startedAt - a.startedAt);
+  return runs;
 }
 
 /**
@@ -142,7 +170,7 @@ export async function listRecoverableRuns(): Promise<RecoverableRun[]> {
  * read into memory.
  */
 export async function downloadRecoveredRun(run: RecoverableRun): Promise<void> {
-  const dir = await getRecoveryDir(false);
+  const dir = await getRecoveryDir(run.kind, false);
   if (!dir) throw new Error('Recovery storage is unavailable.');
 
   const file = await (await dir.getFileHandle(run.opfsName)).getFile();
@@ -169,7 +197,7 @@ export async function downloadRecoveredRun(run: RecoverableRun): Promise<void> {
  * keeping it safe, it is nagging.
  */
 export async function discardRecoveredRun(run: RecoverableRun): Promise<void> {
-  const dir = await getRecoveryDir(false);
+  const dir = await getRecoveryDir(run.kind, false);
   if (!dir) return;
   await dir.removeEntry(run.opfsName).catch(() => {});
 }
@@ -181,4 +209,4 @@ export function formatRunSize(bytes: number): string {
 }
 
 /** Re-exported so the worker and the main thread agree on one implementation. */
-export { RECOVERY_DIR, buildRecoveryName, parseRecoveryName, recoveredDownloadName };
+export { RECOVERY_DIR, VIDEO_DIR, buildRecoveryName, parseRecoveryName, recoveredDownloadName };

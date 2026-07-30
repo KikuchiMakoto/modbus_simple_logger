@@ -728,8 +728,15 @@ function App() {
           : '';
 
       const started = new Date(found.startedAt).toLocaleString();
+      // A video leftover is not the same kind of thing as a TSV one and the
+      // prompt says so: the TSV mirror is the better of two partial copies,
+      // while the video entry is the only copy that ever existed.
+      const headline =
+        found.kind === 'video'
+          ? 'An unsaved video recording was found.'
+          : 'An unsaved recording was found.';
       const offer =
-        `An unsaved recording was found.\n\n` +
+        `${headline}\n\n` +
         `File: ${found.originalName}\n` +
         `Started: ${started}\n` +
         `Size: ${formatRunSize(found.size)}\n\n` +
