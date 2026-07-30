@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ScriptLogEntry, ScriptOutcome } from '../hooks/useScriptRunner';
 
 const OUTCOME_BADGE: Record<ScriptOutcome, { label: string; dot: string }> = {
@@ -13,6 +14,43 @@ const STREAM_COLOR: Record<ScriptLogEntry['stream'], string> = {
   stderr: 'text-red-600 dark:text-red-400',
   system: 'text-emerald-600 dark:text-emerald-400',
 };
+
+/** One rendered state of the bar's single line, and what makes it that one. */
+type Rung = {
+  /** Changes exactly when the line should roll. See `rungOf`. */
+  id: string;
+  text: string;
+  color: string;
+  /** Log lines get the `›` marker; a bare status message does not. */
+  isLog: boolean;
+};
+
+// `seq` is the log entry's identity for the life of a run and survives the tail
+// trimming the front of the array, which is why it is preferred to an index. It
+// restarts at 1 per run though, so `t` is folded in: without it, clearing the log
+// and printing one line would produce seq 1 again and the bar would sit still.
+// The `s:` case is the no-log fallback (a status message), keyed by its own text.
+const rungOf = (line: ScriptLogEntry | null, text: string, color: string): Rung => ({
+  id: line ? `l:${line.seq}:${line.t}` : `s:${text}`,
+  text,
+  color,
+  isLog: line !== null,
+});
+
+function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
+  return (
+    // inset-0 over a self-stretch track, so translateY(±100%) is the full height
+    // of the bar: the line enters from below its bottom edge rather than from
+    // one text-height up, which is what makes it read as arriving from off-bar.
+    <div className={`absolute inset-0 flex items-center font-mono ${rung.color} ${animation}`}>
+      {rung.isLog && (
+        <span className="mr-1 shrink-0 text-slate-400 dark:text-slate-500">›</span>
+      )}
+      {/* truncate needs min-w-0 to shrink below its content inside a flex row. */}
+      <span className="min-w-0 truncate">{rung.text}</span>
+    </div>
+  );
+}
 
 export function ScriptStatusBar({
   running,
@@ -34,6 +72,20 @@ export function ScriptStatusBar({
   const line = lastLogLine ?? null;
   const lineColor = line ? STREAM_COLOR[line.stream] : 'text-slate-500 dark:text-slate-400';
   const text = line ? line.text : (badge.label === status ? '' : status);
+  const incoming = rungOf(line, text, lineColor);
+
+  // The line currently on the bar and the one being pushed off it. `gen` only
+  // exists to be a React key: remounting both nodes is what restarts the CSS
+  // animations, which would otherwise run once and never again.
+  //
+  // Adjusted during render rather than in an effect. React re-runs this
+  // component immediately, before the browser paints, so the roll starts on the
+  // same frame the line arrives — an effect would paint the new text in place
+  // first and then animate it in from below, which flickers.
+  const [roll, setRoll] = useState({ current: incoming, outgoing: null as Rung | null, gen: 0 });
+  if (roll.current.id !== incoming.id) {
+    setRoll({ current: incoming, outgoing: roll.current, gen: roll.gen + 1 });
+  }
 
   return (
     <>
@@ -60,15 +112,25 @@ export function ScriptStatusBar({
           </span>
           <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
         </div>
-        <div className={`ml-2 min-w-0 flex-1 truncate font-mono md:ml-3 ${lineColor}`}>
-          {line ? (
-            <>
-              <span className="mr-1 text-slate-400 dark:text-slate-500">›</span>
-              {text}
-            </>
-          ) : (
-            text
+        {/* The track the lines roll through: full bar height (self-stretch) and
+            clipped, so a line above or below its resting position is simply not
+            there. `relative` anchors the two absolutely-positioned lines. */}
+        <div className="relative ml-2 min-w-0 flex-1 self-stretch overflow-hidden md:ml-3">
+          {roll.outgoing && (
+            <LogLine
+              key={`out-${roll.gen}`}
+              rung={roll.outgoing}
+              animation="script-log-roll-out"
+            />
           )}
+          <LogLine
+            key={`in-${roll.gen}`}
+            rung={roll.current}
+            // gen 0 is the state the bar mounted with — nothing was displaced,
+            // so there is nothing to announce. Rolling it in would animate the
+            // bar on every page load.
+            animation={roll.gen === 0 ? '' : 'script-log-roll-in'}
+          />
         </div>
       </div>
     </>

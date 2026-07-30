@@ -150,6 +150,62 @@ html.msl-launcher body {
   }
 }
 
+/* Footer log line, rolled like a departure board: the arriving line rises from
+   below the bar and shoves the one it replaces out through the top. The bar
+   shows exactly one line of a log that can be hundreds long, and a line that
+   merely *changes in place* gives no sign whether it changed once or thirty
+   times — the motion is the only thing carrying "that was a new line", which is
+   the whole reason to glance at the bar at all.
+
+   Short on purpose. This has to survive a script in a tight print loop, where
+   the bar is a blur either way; a slower roll would just make it a smeared one. */
+@keyframes script-log-roll-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes script-log-roll-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+
+.script-log-roll-in {
+  animation: script-log-roll-in 180ms ease-out;
+}
+
+/* `forwards` is load-bearing: without it the outgoing line snaps back to its
+   resting position at the end and sits on top of the incoming one, since it
+   stays mounted until the next line displaces it. */
+.script-log-roll-out {
+  animation: script-log-roll-out 180ms ease-out forwards;
+}
+
+/* Reduced motion: no roll. Unlike the Stop/Save pulse there is no colour-only
+   substitute worth keeping — the text change is itself the information, and it
+   still happens. The outgoing line has to be taken out of the flow rather than
+   merely un-animated: with `animation: none` it would hold its resting position
+   and cover the line arriving underneath it. */
+@media (prefers-reduced-motion: reduce) {
+  .script-log-roll-in {
+    animation: none;
+  }
+  .script-log-roll-out {
+    display: none;
+  }
+}
+
 /* Compact variant for the sticky header, where vertical space is the scarcest
    thing on the page. It has to be a real class rather than `px-2 py-0.5`
    utilities in the class attribute: every .button-* rule above is unlayered
