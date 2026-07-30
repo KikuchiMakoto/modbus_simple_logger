@@ -123,9 +123,9 @@ export function ScriptRunnerPanel({
             holdingLabel="Hold…"
             onConfirm={scriptRunner.clearScriptCode}
             disabled={!scriptRunner.scriptEditable}
-            // .button-secondary carries no disabled state of its own, and a
+            // .button-danger carries no disabled state of its own, and a
             // control that is dead while a script runs has to look it.
-            className="button-secondary py-1 text-xs disabled:opacity-50"
+            className="button-danger py-1 text-xs disabled:opacity-50"
             title={`Hold to reset ${scriptRunner.activeTab.name} to the example script`}
           />
           <button

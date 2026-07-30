@@ -91,6 +91,17 @@ html.msl-launcher body {
   @apply rounded-lg border border-slate-300 px-3 py-1.5 font-semibold text-slate-800 hover:border-emerald-400 dark:border-slate-700 dark:text-slate-50;
 }
 
+/* Same shape as .button-secondary — an outline, not a filled button — but rose
+   throughout. For the destructive controls that sit next to ordinary ones
+   (ScriptRunner's Clear, which throws away the only copy of a script): the
+   emerald hover .button-secondary carries is the app's "go" colour, and reading
+   it on the one control in the row that destroys work is exactly backwards.
+   Outline and not solid red so it still loses the eye to Run/Stop beside it —
+   this is "be careful", not "press me". */
+.button-danger {
+  @apply rounded-lg border border-rose-300 px-3 py-1.5 font-semibold text-rose-700 hover:border-rose-500 hover:bg-rose-50 dark:border-rose-500/60 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/40;
+}
+
 @keyframes stop-save-sine-pulse {
   0% {
     background-color: rgb(239 68 68 / 0.4);

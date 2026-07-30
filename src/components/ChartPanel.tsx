@@ -273,7 +273,26 @@ function ChartPanelComponent({
           ? { range: plot.yRange, autorange: false as const }
           : { autorange: true as const }),
       },
-      margin: { t: 30, r: 30, b: 50, l: 50 },
+      // Margins sized to what is actually drawn in them, not to a uniform frame.
+      // At 240px tall and a card wide, the difference is most of the plot: the
+      // old { t: 30, r: 30, b: 50, l: 50 } spent ~30% of the width and ~33% of
+      // the height on blank paper, four times over on this page.
+      //
+      // r: nothing is ever drawn right of the plot — no second axis, no legend
+      // (one trace) — so this is only enough to keep the last x tick label from
+      // being clipped at the edge.
+      // t: the modebar is `displayModeBar: true`, always on, and Plotly floats it
+      // over the top-right of the graph div; below ~22px it starts covering the
+      // trace instead of sitting above it.
+      // b/l: tick labels always, plus a row/column for the axis title only when
+      // there is one — the time axis has no title, and a channel axis has none
+      // until the user labels the channel (see axisTitle).
+      margin: {
+        t: 22,
+        r: 12,
+        b: axisTitle(xAxis) ? 46 : 26,
+        l: axisTitle(yAxis) ? 58 : 44,
+      },
       // Belt-and-braces with the trace's `hoverinfo: 'skip'`: stops Plotly from
       // running hover hit-testing on mousemove at all. On its own this would
       // only hide the labels (plotly.js#1987 — the spike lines still render),
