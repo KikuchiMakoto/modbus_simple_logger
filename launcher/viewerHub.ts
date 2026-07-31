@@ -23,16 +23,22 @@ import { MEDIA_FLAG_INIT, MEDIA_HEADER_BYTES } from '../src/utils/mediaFrame';
 export const VIEWER_PATH_SUFFIX = '__viewer';
 export const HOST_FEED_PATH_SUFFIX = '__feed';
 
-// Past this much already queued on a viewer's socket, that viewer's fragments
-// are dropped instead of buffered. Matches STREAM_MAX_BUFFERED_BYTES in
-// src/constants.ts.
+// How a slow viewer is detected.
 //
-// Dropping is the right failure here and not a compromise: a viewer on a weak
-// link that is sent every fragment regardless falls further behind with each
+// Not `bufferedAmount`: Bun's ServerWebSocket does not have it (it is undefined,
+// not 0 — a check against it silently never fires, which is worse than no check
+// at all, because it looks like protection). What Bun gives instead is send()'s
+// return value: the byte count on success, or -1 when the frame was queued
+// because the socket is already backed up. A `drain` callback says when it has
+// caught up.
+//
+// Dropping the fragment is the right failure and not a compromise: a viewer on a
+// weak link that is sent every fragment anyway falls further behind with each
 // one, and the backlog is held in the launcher's memory — eventually pushing
 // back on the host's own send. The measurement must not pay for someone else's
-// wifi, so the slow viewer loses frames instead.
-const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+// wifi, so the slow viewer loses frames instead. Video is the one stream where
+// that is harmless: nobody wants a ten-second-old picture caught up at speed.
+const BACKPRESSURE = -1;
 
 // One plotted sample: [seq, timestamp, aiRaw[], aiPhysical[], param[]]. Tuples
 // rather than objects because this is the only frame that scales with the
@@ -53,10 +59,9 @@ export type ViewerState = Record<string, unknown>;
 const RING_CAPACITY = 2048;
 
 type ViewerSocket = {
-  send(data: string | ArrayBufferView | ArrayBuffer): unknown;
+  /** Bun returns bytes sent, or -1 when the frame was queued under backpressure. */
+  send(data: string | ArrayBufferView | ArrayBuffer): number | unknown;
   close(code?: number, reason?: string): void;
-  /** Bytes queued but not yet on the wire. Bun exposes this; older mocks may not. */
-  readonly bufferedAmount?: number;
 };
 
 class ViewerHub {
@@ -72,6 +77,8 @@ class ViewerHub {
    * all, and it is why this lives beside `state` rather than in the host page.
    */
   private mediaInit: ArrayBuffer | null = null;
+  /** Sockets whose last media send hit backpressure; skipped until they drain. */
+  private congested = new Set<ViewerSocket>();
 
   get viewerCount(): number {
     return this.sockets.size;
@@ -113,6 +120,7 @@ class ViewerHub {
 
   detach(socket: ViewerSocket): void {
     this.sockets.delete(socket);
+    this.congested.delete(socket);
   }
 
   publishState(state: ViewerState): void {
@@ -127,11 +135,13 @@ class ViewerHub {
     this.broadcast({ type: 'append', samples });
   }
 
-  private sendBinary(socket: ViewerSocket, frame: ArrayBuffer): void {
+  /** Returns false when the socket is backed up and should be skipped next time. */
+  private sendBinary(socket: ViewerSocket, frame: ArrayBuffer): boolean {
     try {
-      socket.send(frame);
+      return socket.send(frame) !== BACKPRESSURE;
     } catch {
       // as above
+      return false;
     }
   }
 
@@ -149,12 +159,17 @@ class ViewerHub {
       if ((flags & MEDIA_FLAG_INIT) !== 0) this.mediaInit = frame;
     }
     for (const socket of this.sockets) {
-      // A viewer that is already behind gets nothing more until it catches up.
-      // Its stream will show a jump, which is the honest outcome; the
-      // alternative is the launcher holding video for a link that cannot take it.
-      if ((socket.bufferedAmount ?? 0) > MAX_BUFFERED_BYTES) continue;
-      this.sendBinary(socket, frame);
+      // A viewer that is already behind is skipped until its socket drains.
+      // Its stream shows a jump, which is the honest outcome; the alternative
+      // is the launcher holding video for a link that cannot take it.
+      if (this.congested.has(socket)) continue;
+      if (!this.sendBinary(socket, frame)) this.congested.add(socket);
     }
+  }
+
+  /** Bun's drain callback: this socket has caught up and can be sent to again. */
+  drained(socket: ViewerSocket): void {
+    this.congested.delete(socket);
   }
 
   // The host cleared its chart (connect, disconnect, save start/stop). Drop the
@@ -189,6 +204,7 @@ class ViewerHub {
       }
     }
     this.sockets.clear();
+    this.congested.clear();
     this.ring = [];
     this.state = null;
     this.mediaInit = null;
