@@ -13,6 +13,11 @@ import { useEffect, useRef } from 'react';
 import type { CameraFeed } from '../hooks/useCameraFeed';
 import { PLOT_HEIGHT } from './ChartPanel';
 
+/** How far behind the newest fragment playback may drift before it is pulled up. */
+const MAX_LAG_S = 1.5;
+/** Where it is pulled to — not zero, or the next hiccup stalls the picture. */
+const TARGET_LAG_S = 0.3;
+
 export function CameraCard({
   feed,
   recording,
@@ -44,6 +49,32 @@ export function CameraCard({
     }
     if (feed.stream || feed.srcUrl) void el.play().catch(() => {});
   }, [feed.stream, feed.srcUrl]);
+
+  /**
+   * Hold the picture at the live edge.
+   *
+   * Without this the delay grows without bound and never recovers. A
+   * MediaSource plays from wherever its buffer starts, so every pause, dropped
+   * fragment or slow append pushes playback further behind the fragments still
+   * arriving — and nothing pulls it forward again. What starts as a second ends
+   * up minutes behind, which for watching a rig is the same as being broken.
+   *
+   * Seeking rather than nudging playbackRate: a jump is honest about having
+   * skipped time, where playing fast quietly distorts how quickly things moved,
+   * which is the one thing this video is evidence of.
+   */
+  useEffect(() => {
+    if (!remote || !feed.srcUrl) return;
+    const el = videoRef.current;
+    if (!el) return;
+    const id = window.setInterval(() => {
+      const buffered = el.buffered;
+      if (buffered.length === 0) return;
+      const live = buffered.end(buffered.length - 1);
+      if (live - el.currentTime > MAX_LAG_S) el.currentTime = live - TARGET_LAG_S;
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [remote, feed.srcUrl]);
 
   const settings = feed.settings;
   const hasPicture = feed.stream !== null || feed.srcUrl !== null;

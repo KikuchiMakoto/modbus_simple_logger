@@ -8,7 +8,14 @@
     <!-- PWA Meta Tags -->
     <meta name="theme-color" content="#0f172a" />
     <meta name="description" content="Modbus WebUSB data logger and visualization tool" />
-    <link rel="manifest" href="manifest.json" />
+    <!--
+      crossorigin="use-credentials" because of the viewer server: a manifest is
+      fetched with credentials omitted by default, so the msl_viewer cookie was
+      not sent, the token check refused it, and every remote-monitoring page
+      load logged a 403 for the manifest. This does not weaken that check — it
+      makes the request carry the cookie the check is looking for.
+    -->
+    <link rel="manifest" href="manifest.json" crossorigin="use-credentials" />
     <link rel="icon" type="image/svg+xml" href="icon.svg" />
 
     <!-- Apple Touch Icon -->

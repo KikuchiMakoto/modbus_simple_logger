@@ -8,10 +8,7 @@ type RemoteViewerPanelProps = {
   /** Null until the launcher has answered — "unknown", not "off". */
   status: ViewerServerStatus | null;
   onEnabledChange: (enabled: boolean, mode?: ViewerMode) => void;
-  /** Whether the camera is being streamed to viewers. Reset whenever sharing stops. */
-  videoEnabled: boolean;
-  onVideoEnabledChange: (enabled: boolean) => void;
-  /** False when no camera is bound, which is the only reason the toggle is dead. */
+  /** Whether a camera is bound, which is all that decides if video is sent. */
   cameraAvailable: boolean;
 };
 
@@ -33,8 +30,6 @@ export function RemoteViewerPanel({
   onClose,
   status,
   onEnabledChange,
-  videoEnabled,
-  onVideoEnabledChange,
   cameraAvailable,
 }: RemoteViewerPanelProps) {
   const running = status?.running ?? false;
@@ -107,32 +102,22 @@ export function RemoteViewerPanel({
           )}
         </div>
 
-        {/* On by default: someone sharing a measurement with a camera bound
-            wants the rig visible, and a second switch to find only ever
-            produced a black box on the viewer. It stays a switch because the
-            tunnel sends it out of the building. */}
+        {/* Not a switch. Sharing a measurement and showing the rig it came from
+            are the same intent, and the toggle only ever stood between the user
+            and the thing they had already asked for. Binding a camera in
+            Recording Config is the control; this is the readout.
+
+            Worth knowing rather than hidden: over SmartPhone Link the picture
+            leaves the building along with the numbers. */}
         {running && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <label className="flex items-center gap-2 font-semibold">
-              <input
-                type="checkbox"
-                checked={videoEnabled}
-                disabled={!cameraAvailable}
-                onChange={(e) => onVideoEnabledChange(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span>Send the camera too</span>
-            </label>
+            <p className="font-semibold">
+              {cameraAvailable ? 'Camera is being sent' : 'No camera bound'}
+            </p>
             <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
               {cameraAvailable
-                ? 'Live picture and sound from the bound camera, with about a second of delay.'
-                : 'Bind a camera in Recording Config first.'}
-            </p>
-            {/* Said plainly rather than hidden behind the toggle: the encoder is
-                a second one, and it is skipped entirely while the count is 0. */}
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Encoding only runs while someone is watching, at a fixed 1 Mbps. The saved recording
-              keeps its own quality regardless.
+                ? 'Live picture and sound, about a second behind, at a fixed 1 Mbps. Encoding only runs while someone is watching, and the saved recording keeps its own quality regardless.'
+                : 'Bind one in Recording Config and viewers will see it too.'}
             </p>
           </div>
         )}

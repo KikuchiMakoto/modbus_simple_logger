@@ -1250,13 +1250,11 @@ function App() {
 
   // Host side of remote video. A second encoder, so it only runs when somebody
   // is actually attached — see useMediaStreamHost.
-  // On by default: someone who turns on remote monitoring with a camera bound
-  // wants to see the rig, and having to find a second switch to get it was a
-  // step that only ever produced a black box on the viewer.
-  const [streamVideoEnabled, setStreamVideoEnabled] = useState(true);
   useMediaStreamHost({
     stream: cameraFeed.stream,
-    enabled: streamVideoEnabled,
+    // Unconditional. Binding a camera is the decision; sharing a measurement
+    // and showing the rig it came from are the same intent.
+    enabled: true,
     viewerCount: viewerHost.status?.viewers ?? 0,
     bitrate: STREAM_DEFAULT_BITRATE,
     publishMedia: viewerHost.publishMedia,
@@ -3214,8 +3212,6 @@ function App() {
         onClose={() => setRemoteViewerPanelOpen(false)}
         status={viewerHost.status}
         onEnabledChange={viewerHost.setEnabled}
-        videoEnabled={streamVideoEnabled}
-        onVideoEnabledChange={setStreamVideoEnabled}
         cameraAvailable={cameraFeed.hasVideo}
       />
 
