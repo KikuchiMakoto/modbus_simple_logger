@@ -88,12 +88,6 @@ import {
   type RecordingConfig,
 } from './utils/recordingConfig';
 import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
-import {
-  ensureWritePermission,
-  loadOutputDirectory,
-  pickOutputDirectory,
-  saveOutputDirectory,
-} from './utils/outputDirectory';
 import { useCameraFeed } from './hooks/useCameraFeed';
 import { useMediaStreamHost } from './hooks/useMediaStreamHost';
 import { useRemoteVideo } from './hooks/useRemoteVideo';
@@ -1217,51 +1211,6 @@ function App() {
   });
   const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
-  // The folder recordings are written into. Held as a handle rather than a path
-  // because a path is not something a browser can be given — see
-  // utils/outputDirectory.
-  const [outputDir, setOutputDir] = useState<FileSystemDirectoryHandle | null>(null);
-  useEffect(() => {
-    if (isViewerMode) return;
-    loadOutputDirectory().then(setOutputDir, () => setOutputDir(null));
-  }, []);
-
-  /**
-   * Open the folder picker, unconditionally. This is what the Choose button
-   * does, and it has to be separate from ensureOutputDirectory below.
-   *
-   * They were the same function, and it made the button dead: once a folder was
-   * set and still permitted, "ensure" was satisfied and returned early without
-   * ever opening a picker — so a folder could be chosen once and never changed.
-   * Reusing what is already there is right when a recording is starting, and
-   * exactly wrong when the user has asked to pick.
-   *
-   * Returns null when the user cancels, which is an answer rather than a fault
-   * and so is not reported as an error.
-   */
-  const chooseOutputDirectory = async (): Promise<FileSystemDirectoryHandle | null> => {
-    const picked = await pickOutputDirectory();
-    if (!picked) return null;
-    await saveOutputDirectory(picked).catch(() => {
-      // Not fatal: the recording can still go ahead, the folder just will not
-      // be remembered next time.
-    });
-    setOutputDir(picked);
-    return picked;
-  };
-
-  /**
-   * The folder to record into, with write permission confirmed. Reuses the
-   * chosen one when it is still usable, and only falls back to the picker when
-   * there is nothing to reuse. Must be called from a user gesture — the grant
-   * does not survive a browser restart.
-   */
-  const ensureOutputDirectory = async (): Promise<FileSystemDirectoryHandle | null> => {
-    if (outputDir && (await ensureWritePermission(outputDir))) return outputDir;
-    // Either nothing chosen yet, or the grant lapsed and the user declined to
-    // restore it. Both end at the picker, which is the only way forward.
-    return chooseOutputDirectory();
-  };
 
   // Host side of remote video. A second encoder, so it only runs when somebody
   // is actually attached — see useMediaStreamHost.
@@ -2395,16 +2344,11 @@ function App() {
     }
 
     try {
-      // Asked for on the click, which is the only place it can be asked for:
-      // the grant does not survive a browser restart, and an effect has no
-      // gesture to prompt from.
-      const directory = await ensureOutputDirectory();
-      if (!directory) return;
-
+      // The save dialog opens inside this call, on this click — the only place
+      // it can, since a file picker needs a user gesture.
       const recorder = await createVideoRecorder({
         stream,
         config: recordingConfig,
-        directory,
         onError: (message, severity) => {
           if (severity === 'warning') {
             console.warn('Recording warning:', message);
@@ -2414,6 +2358,8 @@ function App() {
           postStatus('error', message, 'recording');
         },
       });
+      // Cancelled the save dialog. Nothing was started and nothing is said.
+      if (!recorder) return;
       videoRecorderRef.current = recorder;
       setActiveRecordingFilename(recorder.getFileName());
       setRecordingStartedAt(Date.now());
@@ -3194,10 +3140,6 @@ function App() {
         recordingStartedAt={recordingStartedAt}
         onStartRecording={handleStartRecording}
         onStopRecording={handleStopRecording}
-        outputDirName={outputDir?.name ?? null}
-        onChooseOutputDir={() => {
-          void chooseOutputDirectory();
-        }}
       />
 
       <ScriptRunnerPanel

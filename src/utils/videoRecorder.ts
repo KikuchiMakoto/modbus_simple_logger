@@ -4,24 +4,27 @@
  *
  * Started from its own button in Recording Config rather than riding along with
  * Start Save. That is what makes the destination a choice at all: a recording
- * begun by its own click carries the user activation a folder picker needs,
+ * begun by its own click carries the user activation the save dialog needs,
  * where one begun inside Start Save would be running after the TSV picker had
  * already spent it — which is why the first version of this could only offer a
  * download to the browser's own folder.
  *
- * The split of responsibilities matches createTsvWriter: the caller keeps the
- * picker and the permission prompt, and this owns everything after the file
- * handle exists.
+ * The picker lives here rather than in the caller, unlike createTsvWriter's,
+ * because the file extension is not known until the container has been chosen,
+ * and choosing it is this module's job. Everything before the first frame is
+ * therefore sequenced here: pick the codec, ask for the file, open it, and only
+ * then start the encoder.
  */
 
 import {
-  VIDEO_BITS_PER_PIXEL_FRAME,
   VIDEO_CHUNK_INTERVAL_MS,
+  VIDEO_FPS_EXPONENT,
   VIDEO_MAX_BITRATE,
   VIDEO_MIN_BITRATE,
+  bitsPerPixelFor,
 } from '../constants';
-import { bitrateFor, probeVideoAccel, selectAudioMime } from './videoAccel';
-import { timestampBaseName } from './outputDirectory';
+import { bitrateFor, selectAudioMime, selectVideoMime } from './videoAccel';
+import { pickRecordingFile, timestampBaseName } from './recordingOutput';
 import type { RecordingConfig } from './recordingConfig';
 import type { VideoWorkerRequest, VideoWorkerResponse } from './videoWorkerProtocol';
 
@@ -37,23 +40,25 @@ export interface CreateVideoRecorderOptions {
   /** From useCameraFeed — this function never opens a device itself. */
   stream: MediaStream;
   config: RecordingConfig;
-  /** The folder the user chose, with write permission already granted. */
-  directory: FileSystemDirectoryHandle;
   onError: (message: string, severity: 'error' | 'warning') => void;
 }
 
+/**
+ * Resolves with null when the user cancels the save dialog. Cancelling is an
+ * answer, not a failure, and the caller should say nothing about it.
+ */
 export async function createVideoRecorder({
   stream,
   config,
-  directory,
   onError,
-}: CreateVideoRecorderOptions): Promise<VideoRecorderHandle> {
+}: CreateVideoRecorderOptions): Promise<VideoRecorderHandle | null> {
   const hasVideo = stream.getVideoTracks().length > 0;
   const hasAudio = stream.getAudioTracks().length > 0;
   if (!hasVideo && !hasAudio) throw new Error('Nothing to record: no camera or microphone.');
 
   let mimeType: string;
   let ext: string;
+  let description: string;
   let bitrate = 0;
 
   if (hasVideo) {
@@ -64,36 +69,40 @@ export async function createVideoRecorder({
     // encoder has already been decimated to it by useCameraFeed's frame pump.
     const fps = config.recordFps;
 
-    bitrate = bitrateFor(
+    bitrate = bitrateFor({
       width,
       height,
       fps,
-      VIDEO_BITS_PER_PIXEL_FRAME,
-      VIDEO_MIN_BITRATE,
-      VIDEO_MAX_BITRATE,
-    );
+      bitsPerPixel: bitsPerPixelFor(config.quality),
+      fpsExponent: VIDEO_FPS_EXPONENT,
+      min: VIDEO_MIN_BITRATE,
+      max: VIDEO_MAX_BITRATE,
+    });
 
-    const accel = await probeVideoAccel(width, height, fps, bitrate);
-    if (!accel.candidate) throw new Error('This browser cannot record video.');
-    // Software encoding is allowed. It is reported rather than refused: the
-    // only signal available describes WebCodecs, MediaRecorder does not go
-    // through WebCodecs, and refusing on it was measured turning away machines
-    // that record H.264 at full rate.
-    if (!accel.hardware) onError(accel.summary, 'warning');
-    mimeType = accel.candidate.mimeType;
-    ext = accel.candidate.ext;
+    const video = selectVideoMime();
+    if (!video) throw new Error('This browser cannot record video.');
+    mimeType = video.mimeType;
+    ext = video.ext;
+    description = video.label;
   } else {
-    // Audio alone is not gated: an AAC or Opus encoder costs nothing this app
-    // needs to protect, so the rule that exists to keep the acquisition loop
-    // fed has nothing to say here.
     const audio = selectAudioMime();
     if (!audio) throw new Error('No supported audio container for recording.');
     mimeType = audio.mimeType;
     ext = audio.ext;
+    description = audio.label;
   }
 
-  const fileName = `${timestampBaseName()}${ext}`;
-  const fileHandle = await directory.getFileHandle(fileName, { create: true });
+  // Before anything is opened or started, so cancelling costs nothing. The
+  // dialog filter takes the container's own type without the codecs parameter,
+  // which the picker rejects as a malformed MIME type.
+  const fileHandle = await pickRecordingFile(
+    `${timestampBaseName()}${ext}`,
+    description,
+    mimeType.split(';')[0],
+    ext,
+  );
+  if (!fileHandle) return null;
+  const fileName = fileHandle.name;
 
   const worker = new Worker(new URL('../videoWriterWorker.ts', import.meta.url), {
     type: 'module',

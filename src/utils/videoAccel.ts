@@ -1,37 +1,22 @@
 /**
- * Container/codec choice, and what can be learned about hardware encoding.
+ * Which container and codec a recording is written in, and the bitrate it gets.
  *
- * This began as a gate: no confirmed hardware encoder, no recording, on the
- * grounds that software H.264 takes a core the acquisition loop needs. It is
- * now advisory, because measurement showed the gate was refusing machines that
- * record perfectly well.
+ * There used to be a hardware-encoder probe here, feeding a banner and a frame
+ * rate cap. Both are gone. Whether Media Foundation or libopenh264 does the
+ * work is not a question the person recording a rig can act on, and the app
+ * could not answer it honestly anyway: the only signal Chromium offers is
+ * VideoEncoder.isConfigSupported({hardwareAcceleration: 'prefer-hardware'}),
+ * which describes WebCodecs — a path MediaRecorder does not take. On the
+ * machine this was developed against it reported no hardware encoder for any
+ * codec while MediaRecorder wrote H.264 MP4 at full rate. (MediaCapabilities
+ * is no better: encodingInfo({type:'record'}) throws, and the 'webrtc' form
+ * answers powerEfficient:false for every codec on a machine that has an
+ * encoder.) A warning that is wrong on the machine it was written on is worse
+ * than no warning.
  *
- * What the browser actually offers, all established by testing rather than by
- * reading the specification:
- *
- *   - MediaCapabilities.encodingInfo({type: 'record'}) throws in Chromium.
- *     'record' is in the specification and was never shipped; the only accepted
- *     value is 'webrtc'.
- *   - encodingInfo({type: 'webrtc'}).powerEfficient answers false for H.264,
- *     VP8, VP9 and AV1 alike on a machine with a hardware encoder, so it says
- *     nothing about hardware at all.
- *   - VideoEncoder.isConfigSupported with 'prefer-hardware' does discriminate —
- *     but it describes WebCodecs, and MediaRecorder does not go through
- *     WebCodecs. On the machine this was developed against it reports no
- *     hardware encoder for any codec, while MediaRecorder writes real H.264 MP4
- *     at full rate.
- *   - Chromium flags do not move it: --ignore-gpu-blocklist,
- *     --disable-gpu-driver-bug-workarounds and --use-angle=vulkan were each
- *     tried, and the Vulkan backend does take effect (the renderer string
- *     changes) without changing the answer. Video encode goes through Media
- *     Foundation on Windows, which is a separate path from ANGLE's.
- *
- * So there is no signal that truthfully reports what MediaRecorder will do.
- * The probe is kept because "probably software" is worth saying next to a
- * feature that competes with the measurement — but it warns, it does not refuse.
+ * What keeps the encode cheap now is the defaults, which is where it belonged:
+ * a low recording rate and a size the user picked. See VIDEO_DEFAULT_RECORD_FPS.
  */
-
-import { probeRenderBackend } from './renderBackend';
 
 export interface MimeCandidate {
   mimeType: string;
@@ -39,7 +24,7 @@ export interface MimeCandidate {
   ext: string;
   /** What to show the user, e.g. "MP4 (H.264 / AAC)". */
   label: string;
-  /** The same codec as a WebCodecs identifier, which is what the probe takes. */
+  /** The same codec as a WebCodecs identifier. */
   codec: string;
 }
 
@@ -48,7 +33,14 @@ export interface MimeCandidate {
  *
  * H.264 first: it has hardware encoders on essentially every GPU, its software
  * encoder is fast, and MP4 is the container a colleague can open without being
- * told anything.
+ * told anything. (AVC and H.264 are the same codec — `avc1` is simply how the
+ * MP4 container names it, so there is no faster variant to switch to.)
+ *
+ * High profile before Baseline, because the picture this records is a rig at a
+ * low frame rate: CABAC and 8×8 transforms are worth several dB at the same
+ * bitrate on that kind of near-static scene, and every hardware encoder that
+ * does H.264 at all does High. Baseline stays behind it as the fallback for
+ * anything that refuses the string.
  *
  * Then VP8, then VP9 — the reverse of the usual preference, and deliberately.
  * VP9 compresses better but its software encoder costs several times VP8's, and
@@ -63,6 +55,20 @@ export interface MimeCandidate {
  * there to be remuxed rather than re-encoded.
  */
 export const VIDEO_MIME_CANDIDATES: MimeCandidate[] = [
+  // High profile, level 5.1 — the level is what the largest size in VIDEO_SIZES
+  // needs; a lower one would be a string the encoder is entitled to reject at 4K.
+  {
+    mimeType: 'video/mp4;codecs="avc1.640033,mp4a.40.2"',
+    ext: '.mp4',
+    label: 'MP4 (H.264 High / AAC)',
+    codec: 'avc1.640033',
+  },
+  {
+    mimeType: 'video/mp4;codecs="avc1.640033"',
+    ext: '.mp4',
+    label: 'MP4 (H.264 High)',
+    codec: 'avc1.640033',
+  },
   {
     mimeType: 'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
     ext: '.mp4',
@@ -103,113 +109,13 @@ const recorderSupports = (mimeType: string): boolean => {
   }
 };
 
-/** WebCodecs' VideoEncoder, absent outside a secure context and in older builds. */
-type VideoEncoderCtor = {
-  isConfigSupported(config: {
-    codec: string;
-    width: number;
-    height: number;
-    framerate?: number;
-    bitrate?: number;
-    hardwareAcceleration?: 'no-preference' | 'prefer-hardware' | 'prefer-software';
-  }): Promise<{ supported?: boolean }>;
-};
-
-const videoEncoder = (): VideoEncoderCtor | null => {
-  const ctor = (globalThis as unknown as { VideoEncoder?: VideoEncoderCtor }).VideoEncoder;
-  return ctor?.isConfigSupported ? ctor : null;
-};
-
 /**
- * Will a hardware encoder take this configuration? `null` means the question
- * could not be asked (no WebCodecs, or no secure context).
+ * The best container the recorder can actually produce, or null when it can
+ * produce none — which is the only thing about the encoder the user needs told,
+ * because it is the only one they can do anything about.
  */
-async function hasHardwareEncoder(
-  codec: string,
-  width: number,
-  height: number,
-  fps: number,
-  bitrate: number,
-): Promise<boolean | null> {
-  const encoder = videoEncoder();
-  if (!encoder) return null;
-  try {
-    const result = await encoder.isConfigSupported({
-      codec,
-      width,
-      height,
-      framerate: fps,
-      bitrate,
-      // 'prefer-hardware' rather than 'no-preference': the latter answers "can
-      // this be encoded at all", which is true almost everywhere because of the
-      // software fallback this is trying to detect.
-      hardwareAcceleration: 'prefer-hardware',
-    });
-    return result.supported === true;
-  } catch {
-    return null;
-  }
-}
-
-export interface VideoAccelVerdict {
-  /** The container that will be recorded, or null if none is supported at all. */
-  candidate: MimeCandidate | null;
-  /**
-   * True only when a hardware encoder was positively confirmed. False covers
-   * both "software" and "could not tell", which are not worth distinguishing
-   * to the user given how unreliable the signal is.
-   */
-  hardware: boolean;
-  /** One short line, or '' when there is nothing worth saying. */
-  summary: string;
-  /** The measurements in full, for the hover. */
-  detail: string;
-  renderer: string;
-}
-
-/**
- * Pick the container to record in, and report whether hardware encoding could
- * be confirmed for it.
- *
- * The container is chosen on MediaRecorder support alone — that is the thing
- * that decides whether recording works. The hardware answer rides along.
- */
-export async function probeVideoAccel(
-  width: number,
-  height: number,
-  fps: number,
-  bitrate: number,
-): Promise<VideoAccelVerdict> {
-  const backend = probeRenderBackend();
-  const candidate = VIDEO_MIME_CANDIDATES.find((c) => recorderSupports(c.mimeType)) ?? null;
-
-  if (!candidate) {
-    return {
-      candidate: null,
-      hardware: false,
-      summary: 'This browser cannot record video.',
-      detail: `MediaRecorder supports none of: ${VIDEO_MIME_CANDIDATES.map((c) => c.label).join(', ')}.`,
-      renderer: backend.detail,
-    };
-  }
-
-  const hardware = (await hasHardwareEncoder(candidate.codec, width, height, fps, bitrate)) === true;
-
-  return {
-    candidate,
-    hardware,
-    // Nothing is said when hardware is confirmed: a line that only ever reads
-    // "everything is fine" is a line that gets skipped when it stops saying so.
-    summary: hardware
-      ? ''
-      : 'Encoding in software — this competes with the polling loop. Keep the size and rate modest.',
-    detail: hardware
-      ? `VideoEncoder: prefer-hardware accepted ${candidate.codec} at ${width}×${height}@${fps} · Renderer: ${backend.detail}`
-      : `VideoEncoder: no hardware encoder reported for ${candidate.codec} at ${width}×${height}@${fps}. ` +
-        `Note this describes WebCodecs, and MediaRecorder does not go through it — recording may well be hardware-accelerated anyway. ` +
-        `Renderer: ${backend.detail}`,
-    renderer: backend.detail,
-  };
+export function selectVideoMime(): MimeCandidate | null {
+  return VIDEO_MIME_CANDIDATES.find((c) => recorderSupports(c.mimeType)) ?? null;
 }
 
 /** First audio container the recorder can produce. */
@@ -239,15 +145,42 @@ export function selectStreamMime(): MimeCandidate | null {
   );
 }
 
-/** Encoder bitrate for a given size, shared by the recorder and the publisher. */
-export function bitrateFor(
-  width: number,
-  height: number,
-  fps: number,
-  bitsPerPixelFrame: number,
-  min: number,
-  max: number,
-): number {
-  const raw = Math.round(width * height * fps * bitsPerPixelFrame);
+/**
+ * Bitrate for a quality setting at a given size and rate.
+ *
+ * This exists because MediaRecorder takes a bitrate and nothing else. There is
+ * no CRF, no QP, no `quality` — `videoBitsPerSecond` is the entire knob, so a
+ * quality setting has to be turned into a number of bits per second here. (The
+ * one browser API that does offer constant-quantizer encoding is WebCodecs'
+ * VideoEncoder with `bitrateMode: 'quantizer'`, and using it means muxing the
+ * MP4 by hand — see the note in RecordingConfigPanel.)
+ *
+ * The model is `pixels × bitsPerPixel × fps^exponent`, and the exponent is the
+ * part that matters. A bitrate linear in fps hands every frame the same budget
+ * regardless of rate, which is backwards: at 30 fps consecutive frames are
+ * nearly identical and cost little to code, while at 1 fps each frame is
+ * effectively a still and needs close to a full intra frame's worth of bits.
+ * A sub-linear exponent moves the budget the way the content does, so dropping
+ * the rate to record longer buys sharper frames instead of the same frames.
+ */
+export function bitrateFor({
+  width,
+  height,
+  fps,
+  bitsPerPixel,
+  fpsExponent,
+  min,
+  max,
+}: {
+  width: number;
+  height: number;
+  fps: number;
+  /** Bits per pixel for a frame at 1 fps — i.e. an intra frame's budget. */
+  bitsPerPixel: number;
+  fpsExponent: number;
+  min: number;
+  max: number;
+}): number {
+  const raw = Math.round(width * height * bitsPerPixel * Math.pow(fps, fpsExponent));
   return Math.min(max, Math.max(min, raw));
 }

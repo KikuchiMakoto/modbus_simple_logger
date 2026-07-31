@@ -260,33 +260,56 @@ export const VIDEO_RECORD_FPS_OPTIONS = [
 
 export const VIDEO_DEFAULT_WIDTH = 1280;
 export const VIDEO_DEFAULT_HEIGHT = 960;
-export const VIDEO_DEFAULT_CAPTURE_FPS = 15;
-export const VIDEO_DEFAULT_RECORD_FPS = 15;
+// Deliberately low, and paired with a generous bitrate below. What this records
+// is a rig that changes slowly, where a sharp frame every tenth of a second says
+// more than a smooth blur — and the frames not taken are the encoder cycles the
+// polling loop gets to keep.
+export const VIDEO_DEFAULT_CAPTURE_FPS = 10;
+export const VIDEO_DEFAULT_RECORD_FPS = 10;
 
-/**
- * Ceiling on the recording rate when no hardware encoder could be confirmed.
- *
- * Software encoding is allowed — the capability signal is too unreliable to
- * refuse on — but it is allowed on a short leash. Every recorded frame is a
- * frame the CPU has to compress, on the machine whose polling loop must not
- * miss a deadline, so what gets limited is the rate that actually drives that
- * cost. The capture rate is left alone: it costs the camera and the bus, not
- * this CPU, and it is what keeps the preview smooth.
- */
-export const VIDEO_SOFTWARE_MAX_RECORD_FPS = 5;
 export const VIDEO_MIN_FPS = 1;
 /** The recording rate alone goes sub-1, for time-lapse use. */
 export const VIDEO_MIN_RECORD_FPS = 0.1;
 export const VIDEO_MAX_FPS = 240;
 
-// Encoder bitrate, derived rather than tabulated because the size is free-form.
-// 0.07 bit per pixel per frame is around the knee for H.264 at these sizes:
-// 1280x720@15 -> 1.0 Mbps, 1920x1080@30 -> 4.4 Mbps.
-export const VIDEO_BITS_PER_PIXEL_FRAME = 0.07;
-export const VIDEO_MIN_BITRATE = 500_000;
-// A ceiling that still looks right at 4K and stops an accidental setting from
-// filling the disk: 40 Mbps is ~18 GB/hour, which is a lot but not unbounded.
-export const VIDEO_MAX_BITRATE = 40_000_000;
+/**
+ * How the quality setting becomes a bitrate. See bitrateFor in utils/videoAccel
+ * for why it is a formula rather than a table, and why fps is not linear in it.
+ *
+ * The numbers are bits per pixel for a frame at 1 fps — an intra frame's
+ * budget, which is the honest unit here because at these rates most frames very
+ * nearly are one. As a sanity check, JPEG at a quality nobody complains about
+ * lands around 1 bit per pixel.
+ */
+export const VIDEO_FPS_EXPONENT = 0.75;
+
+export type VideoQuality = 'standard' | 'high' | 'max';
+
+export const VIDEO_QUALITY_LEVELS: {
+  value: VideoQuality;
+  label: string;
+  bitsPerPixel: number;
+}[] = [
+  { value: 'standard', label: 'Standard', bitsPerPixel: 0.43 },
+  { value: 'high', label: 'High', bitsPerPixel: 0.86 },
+  { value: 'max', label: 'Maximum', bitsPerPixel: 1.5 },
+];
+
+/**
+ * High, not Standard. What this records is evidence — a gauge face, a crack, a
+ * drip — and the failure mode of too few bits is that the small feature someone
+ * is watching for dissolves into blocking, which is not recoverable afterwards.
+ * Disk is. At the default 1280×960@10 this is about 5.9 Mbps.
+ */
+export const VIDEO_DEFAULT_QUALITY: VideoQuality = 'high';
+
+export const bitsPerPixelFor = (quality: VideoQuality): number =>
+  (VIDEO_QUALITY_LEVELS.find((q) => q.value === quality) ?? VIDEO_QUALITY_LEVELS[1]).bitsPerPixel;
+
+export const VIDEO_MIN_BITRATE = 1_500_000;
+// A ceiling that stops an accidental setting from filling the disk while still
+// letting 4K reach Maximum-adjacent rates: 60 Mbps is ~27 GB/hour.
+export const VIDEO_MAX_BITRATE = 60_000_000;
 
 // MediaRecorder chunk interval for the file. Each chunk is appended to OPFS
 // synchronously, so this is also the worst-case data loss on a crash.

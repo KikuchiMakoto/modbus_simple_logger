@@ -10,6 +10,7 @@
 import {
   VIDEO_DEFAULT_CAPTURE_FPS,
   VIDEO_DEFAULT_HEIGHT,
+  VIDEO_DEFAULT_QUALITY,
   VIDEO_DEFAULT_RECORD_FPS,
   VIDEO_DEFAULT_WIDTH,
   VIDEO_MAX_FPS,
@@ -17,6 +18,8 @@ import {
   VIDEO_MIN_HEIGHT,
   VIDEO_MIN_RECORD_FPS,
   VIDEO_MIN_WIDTH,
+  VIDEO_QUALITY_LEVELS,
+  type VideoQuality,
 } from '../constants';
 import { readJsonStorage, writeJsonStorage } from './cookies';
 
@@ -29,12 +32,7 @@ const RECORDING_CONFIG_KEY = 'recording_config_v1';
  * clock off whatever part of the rig matters in this particular setup, and the
  * four corners cover that. Anything finer would be a placement tool.
  */
-export type OverlayPosition =
-  | 'none'
-  | 'bottom-left'
-  | 'top-left'
-  | 'bottom-right'
-  | 'top-right';
+export type OverlayPosition = 'none' | 'bottom-left' | 'top-left' | 'bottom-right' | 'top-right';
 
 export const OVERLAY_POSITIONS: { value: OverlayPosition; label: string }[] = [
   { value: 'none', label: 'None' },
@@ -74,6 +72,12 @@ export interface RecordingConfig {
    * more frames than were captured is not something a recorder can do.
    */
   recordFps: number;
+  /**
+   * How many bits a frame is worth. Not a bitrate: the bitrate is derived from
+   * this together with the size and the recording rate, so that changing the
+   * size does not silently change how good the picture is.
+   */
+  quality: VideoQuality;
 }
 
 export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
@@ -87,9 +91,11 @@ export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
   height: VIDEO_DEFAULT_HEIGHT,
   captureFps: VIDEO_DEFAULT_CAPTURE_FPS,
   recordFps: VIDEO_DEFAULT_RECORD_FPS,
+  quality: VIDEO_DEFAULT_QUALITY,
 };
 
 const VALID_OVERLAY_POSITIONS = new Set<string>(OVERLAY_POSITIONS.map((p) => p.value));
+const VALID_QUALITIES = new Set<string>(VIDEO_QUALITY_LEVELS.map((q) => q.value));
 
 const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
   const n = typeof value === 'number' ? Math.round(value) : Number.NaN;
@@ -140,7 +146,12 @@ export const sanitizeRecordingConfig = (raw: unknown): RecordingConfig => {
         ? 'none'
         : DEFAULT_RECORDING_CONFIG.overlayPosition,
     width: clampInt(source.width, VIDEO_MIN_WIDTH, Number.MAX_SAFE_INTEGER, VIDEO_DEFAULT_WIDTH),
-    height: clampInt(source.height, VIDEO_MIN_HEIGHT, Number.MAX_SAFE_INTEGER, VIDEO_DEFAULT_HEIGHT),
+    height: clampInt(
+      source.height,
+      VIDEO_MIN_HEIGHT,
+      Number.MAX_SAFE_INTEGER,
+      VIDEO_DEFAULT_HEIGHT,
+    ),
     captureFps: clampInt(
       // `fps` is what a config written before capture and recording were split
       // called this; reading it keeps that setting rather than silently
@@ -158,6 +169,9 @@ export const sanitizeRecordingConfig = (raw: unknown): RecordingConfig => {
       VIDEO_MAX_FPS,
       VIDEO_DEFAULT_RECORD_FPS,
     ),
+    quality: VALID_QUALITIES.has(source.quality as string)
+      ? (source.quality as VideoQuality)
+      : VIDEO_DEFAULT_QUALITY,
   };
 };
 

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  VIDEO_BITS_PER_PIXEL_FRAME,
   VIDEO_CAPTURE_FPS_OPTIONS,
+  VIDEO_FPS_EXPONENT,
   VIDEO_MAX_BITRATE,
   VIDEO_MIN_BITRATE,
+  VIDEO_QUALITY_LEVELS,
   VIDEO_RECORD_FPS_OPTIONS,
   VIDEO_SIZES,
-  VIDEO_SOFTWARE_MAX_RECORD_FPS,
+  bitsPerPixelFor,
+  type VideoQuality,
 } from '../constants';
 import type { CameraFeed } from '../hooks/useCameraFeed';
 import {
@@ -18,7 +20,7 @@ import {
   type OverlayPosition,
   type RecordingConfig,
 } from '../utils/recordingConfig';
-import { bitrateFor, probeVideoAccel, type VideoAccelVerdict } from '../utils/videoAccel';
+import { bitrateFor, selectVideoMime } from '../utils/videoAccel';
 import { FloatingWindow } from './FloatingWindow';
 
 type RecordingConfigPanelProps = {
@@ -33,16 +35,23 @@ type RecordingConfigPanelProps = {
   /** File being written, or '' when idle. */
   activeFileName: string;
   recordingStartedAt: number | null;
+  /** Opens the save dialog before anything starts — see utils/recordingOutput. */
   onStartRecording: () => void;
   onStopRecording: () => void;
-  /** The chosen output folder, or null when none has been picked yet. */
-  outputDirName: string | null;
-  onChooseOutputDir: () => void;
 };
 
 const SELECT =
   'w-full rounded border border-slate-300 bg-white px-1.5 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
 const LABEL = 'block text-xs text-slate-600 dark:text-slate-400';
+
+/**
+ * What an hour of this bitrate costs on disk. The unit somebody actually plans
+ * against — a recording is left running for a shift, not for a second.
+ */
+function formatGbPerHour(bitsPerSecond: number): string {
+  const gb = ((bitsPerSecond / 8) * 3600) / 1_000_000_000;
+  return `≈ ${gb < 10 ? gb.toFixed(1) : Math.round(gb)} GB/h`;
+}
 
 /** `1:02:03` — the same shape as the header's save timer. */
 function formatElapsed(ms: number): string {
@@ -131,13 +140,28 @@ export function RecordingConfigPanel({
   recordingStartedAt,
   onStartRecording,
   onStopRecording,
-  outputDirName,
-  onChooseOutputDir,
 }: RecordingConfigPanelProps) {
   const [devices, setDevices] = useState<DeviceLists>(emptyDeviceLists);
   const [permissionError, setPermissionError] = useState<string | null>(null);
-  const [accel, setAccel] = useState<VideoAccelVerdict | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  /**
+   * The element Picture-in-Picture is taken from, deliberately not the preview
+   * below.
+   *
+   * The preview lives inside FloatingWindow, which unmounts its children when
+   * the window is closed — and a PiP window whose source element is gone closes
+   * with it. That would leave the button working only while the panel is open,
+   * which is the one situation where it has nothing to offer. This element is
+   * rendered outside the window instead, so the picture survives closing the
+   * panel, which is the whole point: a recording runs for an hour and the panel
+   * is in the way for fifty-nine minutes of it.
+   *
+   * It carries the stream only while PiP is up. A second <video> on the same
+   * MediaStream costs compositing on the thread that must not miss a Modbus
+   * deadline, and there is no reason to pay it for a picture nobody is seeing.
+   */
+  const pipVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [pipActive, setPipActive] = useState(false);
 
   const set = (patch: Partial<RecordingConfig>) => onConfigChange({ ...config, ...patch });
 
@@ -235,35 +259,31 @@ export function RecordingConfigPanel({
     }
   };
 
-  // The encoder is asked to keep up with the recording rate, not the capture
-  // rate: frames dropped before the encoder are frames it never has to encode.
+  // Whether a container exists at all — not whether the encode will be fast.
+  // See utils/videoAccel for why the second question is no longer asked.
+  const canRecord = useMemo(() => selectVideoMime() !== null, []) && feed.active;
+
+  /**
+   * The bitrate the quality setting comes to at the current size and rate.
+   *
+   * Shown, because a quality name on its own is not something anybody can plan
+   * disk space against — and the whole reason quality is the setting rather
+   * than the bitrate is that the bitrate moves when the size or rate does.
+   * Naming the number keeps that visible instead of hiding it behind a word.
+   */
   const bitrate = useMemo(
     () =>
-      bitrateFor(
-        config.width,
-        config.height,
-        config.recordFps,
-        VIDEO_BITS_PER_PIXEL_FRAME,
-        VIDEO_MIN_BITRATE,
-        VIDEO_MAX_BITRATE,
-      ),
-    [config.width, config.height, config.recordFps],
+      bitrateFor({
+        width: config.width,
+        height: config.height,
+        fps: config.recordFps,
+        bitsPerPixel: bitsPerPixelFor(config.quality),
+        fpsExponent: VIDEO_FPS_EXPONENT,
+        min: VIDEO_MIN_BITRATE,
+        max: VIDEO_MAX_BITRATE,
+      }),
+    [config.width, config.height, config.recordFps, config.quality],
   );
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    probeVideoAccel(config.width, config.height, config.recordFps, bitrate).then((verdict) => {
-      if (!cancelled) setAccel(verdict);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, config.width, config.height, config.recordFps, bitrate]);
-
-  // Software encoding is a warning, not a bar: the only capability signal
-  // available describes WebCodecs, which MediaRecorder does not use.
-  const canRecord = accel?.candidate != null && feed.active;
 
   const capMax = feed.capabilities;
 
@@ -296,18 +316,10 @@ export function RecordingConfigPanel({
   }, [capMax, config.captureFps]);
 
   /**
-   * Never above the capture rate — the file cannot contain frames the camera
-   * did not send — and much lower again when the encode is in software.
-   *
-   * The software ceiling is on this rate rather than on the capture rate
-   * because this is the one that drives the cost: every recorded frame is a
-   * frame the CPU compresses, on the machine whose polling loop must not miss a
-   * deadline.
+   * Never above the capture rate: the file cannot contain frames the camera did
+   * not send.
    */
-  const softwareLimited = accel !== null && !accel.hardware;
-  const recordFpsCap = softwareLimited
-    ? Math.min(config.captureFps, VIDEO_SOFTWARE_MAX_RECORD_FPS)
-    : config.captureFps;
+  const recordFpsCap = config.captureFps;
   const recordFpsOptions = useMemo(
     () => VIDEO_RECORD_FPS_OPTIONS.filter((f) => f <= recordFpsCap),
     [recordFpsCap],
@@ -329,6 +341,66 @@ export function RecordingConfigPanel({
     if (feed.stream) void el.play().catch(() => {});
   }, [feed.stream]);
 
+  /**
+   * Picture-in-Picture, which is the browser's own floating window rather than
+   * one of ours: it is the only surface that stays above *other applications*,
+   * and that is what somebody watching a rig while working in something else
+   * actually needs.
+   *
+   * Only ever entered from the click. requestPictureInPicture() requires a user
+   * gesture, and there is no way to restore a PiP window on reload.
+   */
+  const pipSupported =
+    typeof document !== 'undefined' &&
+    document.pictureInPictureEnabled === true &&
+    (feed.stream?.getVideoTracks().length ?? 0) > 0;
+
+  const togglePip = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        return;
+      }
+      const el = pipVideoRef.current;
+      if (!el || !feed.stream) return;
+      el.srcObject = feed.stream;
+      // Metadata has to have arrived before the request or Chromium rejects it,
+      // and a stream attached a line ago has none yet.
+      if (el.readyState === 0) {
+        await new Promise<void>((resolve) => {
+          el.addEventListener('loadedmetadata', () => resolve(), { once: true });
+        });
+      }
+      await el.play().catch(() => {});
+      await el.requestPictureInPicture();
+      setPipActive(true);
+    } catch {
+      // Refused, unsupported, or the gesture had expired. Nothing was claimed
+      // and nothing is broken, so there is nothing worth saying about it.
+      setPipActive(false);
+    }
+  };
+
+  // The PiP window has a close button of its own, so leaving is not always our
+  // doing. Dropping the stream here is what keeps the second video idle.
+  useEffect(() => {
+    const el = pipVideoRef.current;
+    if (!el) return;
+    const onLeave = () => {
+      setPipActive(false);
+      el.srcObject = null;
+    };
+    el.addEventListener('leavepictureinpicture', onLeave);
+    return () => el.removeEventListener('leavepictureinpicture', onLeave);
+  }, []);
+
+  // A camera unbound mid-recording leaves the PiP window showing a frozen last
+  // frame, which reads as a live picture of a rig that has stopped moving.
+  useEffect(() => {
+    if (!pipActive || feed.stream) return;
+    void document.exitPictureInPicture?.().catch(() => {});
+  }, [pipActive, feed.stream]);
+
   // A window timer, not the background one: this is a readout, and a recording
   // clock that keeps ticking in a minimised window is work nobody is reading.
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -342,48 +414,50 @@ export function RecordingConfigPanel({
     return () => window.clearInterval(id);
   }, [recordingStartedAt]);
 
+  const pipButton = (
+    <button
+      type="button"
+      onClick={() => void togglePip()}
+      disabled={!pipSupported && !pipActive}
+      title={
+        pipActive
+          ? 'Close the floating camera window'
+          : pipSupported
+            ? 'Show the camera in a window that stays above other applications'
+            : 'Picture-in-Picture needs a bound camera'
+      }
+      aria-label={pipActive ? 'Exit Picture-in-Picture' : 'Picture-in-Picture'}
+      aria-pressed={pipActive}
+      className={`rounded border p-1 disabled:opacity-40 ${
+        pipActive
+          ? 'border-emerald-400 text-emerald-500 dark:border-emerald-400 dark:text-emerald-400'
+          : 'border-slate-300 text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400'
+      }`}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none" />
+      </svg>
+    </button>
+  );
+
   return (
+    <>
+      {/* Outside FloatingWindow, so that closing the panel does not take the PiP
+          window with it. Kept out of the layout and out of the accessibility
+          tree rather than display:none, which would stop it presenting a frame
+          at all. */}
+      <video ref={pipVideoRef} muted playsInline aria-hidden tabIndex={-1} className="pointer-events-none fixed left-0 top-0 h-px w-px opacity-0" />
     <FloatingWindow
       open={open}
       onClose={onClose}
       title="Recording Config"
       subtitle={locked ? 'Recording — settings apply from the next start' : undefined}
+      headerActions={pipButton}
       defaultWidth={340}
       defaultHeight={560}
     >
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
-        {/* A warning, not a refusal. The only signal available describes
-            WebCodecs while MediaRecorder does not go through it, so this is a
-            hint about likely cost rather than a fact about capability — and it
-            was measured being wrong. The measurements are on the hover. */}
-        {accel && accel.summary !== '' && (
-          <p className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">
-            {accel.summary}{' '}
-            <span className="cursor-help underline decoration-dotted" title={accel.detail}>
-              details
-            </span>
-          </p>
-        )}
-
-        <div className="flex items-baseline gap-1.5">
-          <span className={LABEL}>Save to</span>
-          <span
-            className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 dark:text-slate-200"
-            translate="no"
-            title={outputDirName ?? undefined}
-          >
-            {outputDirName ?? '—'}
-          </span>
-          <button
-            type="button"
-            onClick={onChooseOutputDir}
-            disabled={locked}
-            className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[0.7rem] text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            Choose…
-          </button>
-        </div>
-
         {locked ? (
           <button
             type="button"
@@ -399,13 +473,13 @@ export function RecordingConfigPanel({
             disabled={!canRecord}
             className="w-full rounded bg-emerald-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-400 dark:disabled:bg-slate-700"
           >
-            Start Recording
+            Start Recording…
           </button>
         )}
         <p className="text-[0.7rem] text-slate-500 dark:text-slate-400" translate="no">
           {locked
             ? activeFileName
-            : 'Finished on Stop — a crash before that loses the recording.'}
+            : 'Asks where to save, then starts. Finished on Stop — a crash before that loses the recording.'}
         </p>
 
         {!devices.labelsVisible && (
@@ -552,17 +626,7 @@ export function RecordingConfigPanel({
             </select>
           </div>
           <div className="flex-1">
-            <label className={LABEL}>
-              Recording FPS
-              {softwareLimited && (
-                <span
-                  className="ml-1 cursor-help text-amber-600 underline decoration-dotted dark:text-amber-400"
-                  title={`Capped at ${VIDEO_SOFTWARE_MAX_RECORD_FPS} fps because the encode looks like software. Every recorded frame is compressed on the CPU that runs the polling loop.`}
-                >
-                  ≤{VIDEO_SOFTWARE_MAX_RECORD_FPS}
-                </span>
-              )}
-            </label>
+            <label className={LABEL}>Recording FPS</label>
             <select
               value={config.recordFps}
               disabled={locked}
@@ -586,7 +650,47 @@ export function RecordingConfigPanel({
           </p>
         )}
 
+        {/* Quality rather than a bitrate field, because a bitrate only means
+            something next to a size and a rate — the same 4 Mbps is generous at
+            640×480 and poor at 1080p, and the size gets changed far more often
+            than this does. What it sets is bits per pixel per frame; the figure
+            beside it is that resolved against the current settings.
+
+            Not a true CRF, which is what this would be if the platform allowed
+            it: MediaRecorder accepts videoBitsPerSecond and nothing else, so
+            constant quality has to be approximated by recomputing the bitrate
+            whenever its inputs move. Real constant-quantizer encoding would
+            mean WebCodecs and a hand-written MP4 muxer. */}
+        <div className="flex gap-1.5">
+          <div className="flex-1">
+            <label className={LABEL}>Quality</label>
+            <select
+              value={config.quality}
+              disabled={locked}
+              onChange={(e) => set({ quality: e.target.value as VideoQuality })}
+              className={SELECT}
+            >
+              {VIDEO_QUALITY_LEVELS.map((q) => (
+                <option key={q.value} value={q.value}>
+                  {q.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className={LABEL}>Bitrate</label>
+            <p className="py-0.5 text-sm font-semibold text-slate-700 dark:text-slate-200" translate="no">
+              {(bitrate / 1_000_000).toFixed(1)} Mbps
+              <span className="ml-1 text-xs font-normal text-slate-500 dark:text-slate-400">
+                {/* bits/s -> bytes/s -> bytes/hour -> GB. */}
+                {formatGbPerHour(bitrate)}
+              </span>
+            </p>
+          </div>
+        </div>
+
       </div>
     </FloatingWindow>
+    </>
   );
 }
