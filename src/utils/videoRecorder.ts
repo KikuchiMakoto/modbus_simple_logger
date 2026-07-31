@@ -1,15 +1,17 @@
 /**
- * File recording: MediaRecorder on one side, an OPFS-owning worker on the other.
+ * Camera recording: MediaRecorder on one side, a worker owning the output file
+ * on the other.
  *
- * The shape mirrors createTsvWriter (./tsvExport.ts) deliberately — build it,
- * get a handle back or an exception, and close the handle when the run ends —
- * because App drives both from the same two buttons and they should fail the
- * same way.
+ * Started from its own button in Recording Config rather than riding along with
+ * Start Save. That is what makes the destination a choice at all: a recording
+ * begun by its own click carries the user activation a folder picker needs,
+ * where one begun inside Start Save would be running after the TSV picker had
+ * already spent it — which is why the first version of this could only offer a
+ * download to the browser's own folder.
  *
- * What is different is what happens on failure. A TSV writer that will not open
- * means Start Save failed. A recorder that will not open means the video is
- * missing from a save that is otherwise working perfectly, and the caller is
- * expected to carry on: the button the user pressed was about the measurement.
+ * The split of responsibilities matches createTsvWriter: the caller keeps the
+ * picker and the permission prompt, and this owns everything after the file
+ * handle exists.
  */
 
 import {
@@ -20,7 +22,7 @@ import {
 } from '../constants';
 import { bitrateFor, probeVideoAccel, selectAudioMime } from './videoAccel';
 import { checkUsbBudget } from './usbBandwidth';
-import { VIDEO_DIR } from './opfsRecoveryShared';
+import { timestampBaseName } from './outputDirectory';
 import type { RecordingConfig } from './recordingConfig';
 import type { VideoWorkerRequest, VideoWorkerResponse } from './videoWorkerProtocol';
 
@@ -41,46 +43,26 @@ export class UsbBudgetExceededError extends Error {
 }
 
 export interface VideoRecorderHandle {
-  /** File name the finished recording is offered under, e.g. '20260730_120000.mp4'. */
+  /** File name being written, e.g. '20260731_140312.mp4'. */
   getFileName(): string;
-  /** True while MediaRecorder is running. */
   isRecording(): boolean;
-  /**
-   * Stop and finish. Resolves with the finished file, or null when nothing was
-   * captured. The caller owns handing it to the user.
-   */
-  stop(): Promise<File | null>;
-  /**
-   * Delete the OPFS copy. Call only once the file has actually been handed
-   * over: until then it is the sole copy, and it is also what the startup sweep
-   * would offer back if the app died between stop() and the download.
-   */
-  remove(): Promise<void>;
-  /** Stop and throw the recording away (device lost, or a failed start). */
-  abort(): Promise<void>;
+  /** Stop and close the file. Resolves with the bytes written. */
+  stop(): Promise<number>;
 }
-
-const stripExtension = (name: string): string => {
-  const dot = name.lastIndexOf('.');
-  return dot <= 0 ? name : name.slice(0, dot);
-};
-
-/** The base name a recording takes from the TSV file it accompanies. */
-export const recordingBaseName = (tsvFileName: string): string => stripExtension(tsvFileName);
 
 export interface CreateVideoRecorderOptions {
   /** From useCameraFeed — this function never opens a device itself. */
   stream: MediaStream;
   config: RecordingConfig;
-  /** Base name without extension; the container decides the extension. */
-  baseName: string;
+  /** The folder the user chose, with write permission already granted. */
+  directory: FileSystemDirectoryHandle;
   onError: (message: string, severity: 'error' | 'warning') => void;
 }
 
 export async function createVideoRecorder({
   stream,
   config,
-  baseName,
+  directory,
   onError,
 }: CreateVideoRecorderOptions): Promise<VideoRecorderHandle> {
   const hasVideo = stream.getVideoTracks().length > 0;
@@ -120,16 +102,16 @@ export async function createVideoRecorder({
     ext = accel.candidate.ext;
   } else {
     // Audio alone is not gated: an AAC or Opus encoder costs nothing this app
-    // needs to protect, so the rule that exists to keep the acquisition loop fed
-    // has nothing to say here.
+    // needs to protect, so the rule that exists to keep the acquisition loop
+    // fed has nothing to say here.
     const audio = selectAudioMime();
     if (!audio) throw new Error('No supported audio container for recording.');
     mimeType = audio.mimeType;
     ext = audio.ext;
   }
 
-  const fileName = `${baseName}${ext}`;
-  const startedAt = Date.now();
+  const fileName = `${timestampBaseName()}${ext}`;
+  const fileHandle = await directory.getFileHandle(fileName, { create: true });
 
   const worker = new Worker(new URL('../videoWriterWorker.ts', import.meta.url), {
     type: 'module',
@@ -140,8 +122,8 @@ export async function createVideoRecorder({
     else worker.postMessage(message);
   };
 
-  // Open the OPFS file before starting the encoder, so a storage failure is
-  // reported before any frames have been captured and thrown away.
+  // Open the file before starting the encoder, so a permission or disk failure
+  // is reported before any frames have been captured and thrown away.
   await new Promise<void>((resolve, reject) => {
     const onMessage = (event: MessageEvent<VideoWorkerResponse>) => {
       if (event.data.type === 'ready') {
@@ -160,7 +142,7 @@ export async function createVideoRecorder({
     };
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onErr, { once: true });
-    post({ type: 'init', fileName, startedAt });
+    post({ type: 'init', fileHandle });
   });
 
   worker.addEventListener('message', (event: MessageEvent<VideoWorkerResponse>) => {
@@ -174,8 +156,8 @@ export async function createVideoRecorder({
 
   recorder.ondataavailable = (event) => {
     if (event.data.size === 0) return;
-    // Transferred, so a 4 MB chunk is never copied across the worker boundary
-    // while the acquisition loop is trying to run.
+    // Transferred, so a multi-megabyte chunk is never copied across the worker
+    // boundary while the acquisition loop is trying to run.
     event.data.arrayBuffer().then(
       (buffer) => post({ type: 'chunk', data: buffer }, [buffer]),
       (err) => onError(`Recording chunk lost: ${String(err)}`, 'error'),
@@ -188,19 +170,6 @@ export async function createVideoRecorder({
   };
 
   recorder.start(VIDEO_CHUNK_INTERVAL_MS);
-
-  const closeWorker = (discard: boolean): Promise<{ opfsName: string; bytes: number }> =>
-    new Promise((resolve) => {
-      const onMessage = (event: MessageEvent<VideoWorkerResponse>) => {
-        if (event.data.type !== 'closed') return;
-        worker.removeEventListener('message', onMessage);
-        const { opfsName, bytes } = event.data;
-        worker.terminate();
-        resolve({ opfsName, bytes });
-      };
-      worker.addEventListener('message', onMessage);
-      post({ type: 'close', discard });
-    });
 
   /** Wait for the encoder to flush its tail into a final ondataavailable. */
   const stopRecorder = (): Promise<void> =>
@@ -217,47 +186,26 @@ export async function createVideoRecorder({
       }
     });
 
-  // Set by stop(); remove() needs it and only stop() learns it.
-  let finishedOpfsName = '';
-
   return {
     getFileName: () => fileName,
     isRecording: () => recorder.state === 'recording',
 
-    async stop(): Promise<File | null> {
+    async stop(): Promise<number> {
       await stopRecorder();
-      // The last chunk arrives with the 'stop' event but is written
+      // The last chunk arrives with the 'stop' event but is posted
       // asynchronously; the worker processes messages in order, so the close
-      // message queued now lands after it.
-      const { opfsName, bytes } = await closeWorker(false);
-      if (!opfsName || bytes === 0) return null;
-      finishedOpfsName = opfsName;
-
-      const root = await navigator.storage.getDirectory();
-      const dir = await root.getDirectoryHandle(VIDEO_DIR, { create: false });
-      const file = await (await dir.getFileHandle(opfsName)).getFile();
-      // Re-wrapped so the download carries the name the user should see rather
-      // than the OPFS entry's encoded one. The File stays backed by the on-disk
-      // entry, so an hour of video is never read into memory.
-      return new File([file], fileName, { type: mimeType });
-    },
-
-    async remove(): Promise<void> {
-      if (!finishedOpfsName) return;
-      try {
-        const root = await navigator.storage.getDirectory();
-        const dir = await root.getDirectoryHandle(VIDEO_DIR, { create: false });
-        await dir.removeEntry(finishedOpfsName);
-      } catch {
-        // A leftover costs one startup prompt, which is the safe direction to
-        // fail: the alternative is deleting a recording that never arrived.
-      }
-      finishedOpfsName = '';
-    },
-
-    async abort(): Promise<void> {
-      await stopRecorder();
-      await closeWorker(true);
+      // queued now lands after it.
+      return new Promise((resolve) => {
+        const onMessage = (event: MessageEvent<VideoWorkerResponse>) => {
+          if (event.data.type !== 'closed') return;
+          worker.removeEventListener('message', onMessage);
+          const { bytes } = event.data;
+          worker.terminate();
+          resolve(bytes);
+        };
+        worker.addEventListener('message', onMessage);
+        post({ type: 'close' });
+      });
     },
   };
 }

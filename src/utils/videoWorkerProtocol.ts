@@ -2,10 +2,13 @@
 
 export interface VideoInitMessage {
   type: 'init';
-  /** Name the finished file will be downloaded under, e.g. '20260730_120000.mp4'. */
-  fileName: string;
-  /** Date.now() at the start of the run, encoded into the OPFS entry name. */
-  startedAt: number;
+  /**
+   * The file to write, already created in the folder the user chose. The main
+   * thread keeps the picker and the permission prompt (both need a user
+   * gesture); the worker owns everything from createWritable() onwards, the
+   * same split createTsvWriter uses.
+   */
+  fileHandle: FileSystemFileHandle;
 }
 
 export interface VideoChunkMessage {
@@ -16,18 +19,12 @@ export interface VideoChunkMessage {
 
 export interface VideoCloseMessage {
   type: 'close';
-  /**
-   * Whether to delete the OPFS entry after closing. False for a normal stop
-   * (the main thread still has to read it out and hand it to the user); true
-   * when the recording is being abandoned.
-   */
-  discard: boolean;
 }
 
 export type VideoWorkerRequest = VideoInitMessage | VideoChunkMessage | VideoCloseMessage;
 
 export type VideoWorkerResponse =
   | { type: 'ready' }
-  /** Closed cleanly; `opfsName` is where the finished file can be read from. */
-  | { type: 'closed'; opfsName: string; bytes: number }
+  /** The stream closed and the file is on disk. */
+  | { type: 'closed'; bytes: number }
   | { type: 'error'; message: string };

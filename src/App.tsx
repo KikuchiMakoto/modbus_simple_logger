@@ -88,11 +88,13 @@ import {
   saveRecordingConfig,
   type RecordingConfig,
 } from './utils/recordingConfig';
+import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
 import {
-  createVideoRecorder,
-  recordingBaseName,
-  type VideoRecorderHandle,
-} from './utils/videoRecorder';
+  ensureWritePermission,
+  loadOutputDirectory,
+  pickOutputDirectory,
+  saveOutputDirectory,
+} from './utils/outputDirectory';
 import { useCameraFeed } from './hooks/useCameraFeed';
 import { useMediaStreamHost } from './hooks/useMediaStreamHost';
 import { useRemoteVideo } from './hooks/useRemoteVideo';
@@ -733,15 +735,8 @@ function App() {
           : '';
 
       const started = new Date(found.startedAt).toLocaleString();
-      // A video leftover is not the same kind of thing as a TSV one and the
-      // prompt says so: the TSV mirror is the better of two partial copies,
-      // while the video entry is the only copy that ever existed.
-      const headline =
-        found.kind === 'video'
-          ? 'An unsaved video recording was found.'
-          : 'An unsaved recording was found.';
       const offer =
-        `${headline}\n\n` +
+        `An unsaved recording was found.\n\n` +
         `File: ${found.originalName}\n` +
         `Started: ${started}\n` +
         `Size: ${formatRunSize(found.size)}\n\n` +
@@ -1215,6 +1210,36 @@ function App() {
     locked: activeRecordingFilename !== '',
   });
   const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+  // The folder recordings are written into. Held as a handle rather than a path
+  // because a path is not something a browser can be given — see
+  // utils/outputDirectory.
+  const [outputDir, setOutputDir] = useState<FileSystemDirectoryHandle | null>(null);
+  useEffect(() => {
+    if (isViewerMode) return;
+    loadOutputDirectory().then(setOutputDir, () => setOutputDir(null));
+  }, []);
+
+  /**
+   * The chosen folder, with write permission confirmed — prompting, and falling
+   * back to the picker, if need be. Must be called from a user gesture.
+   *
+   * Returns null when the user cancels, which is an answer rather than a fault
+   * and so is not reported as an error.
+   */
+  const ensureOutputDirectory = async (): Promise<FileSystemDirectoryHandle | null> => {
+    if (outputDir && (await ensureWritePermission(outputDir))) return outputDir;
+    // Either nothing chosen yet, or the grant lapsed and the user declined to
+    // restore it. Both end at the picker, which is the only way forward.
+    const picked = await pickOutputDirectory();
+    if (!picked) return null;
+    await saveOutputDirectory(picked).catch(() => {
+      // Not fatal: the recording can still go ahead, the folder just will not
+      // be remembered next time.
+    });
+    setOutputDir(picked);
+    return picked;
+  };
 
   // Host side of remote video. A second encoder, so it only runs when somebody
   // is actually attached — see useMediaStreamHost.
@@ -2317,34 +2342,41 @@ function App() {
   };
 
   /**
-   * Start the camera recording that accompanies a save, if one is configured.
+   * Start recording, from the button in Recording Config.
    *
-   * Never throws. Every failure path here ends in a status bar message and a
-   * return, because the save it accompanies is already running and taking it
-   * down would cost the user the measurement to protect the video of it.
+   * Deliberately not tied to Start Save any more. Recording is most often
+   * wanted for remote monitoring — watching a rig for an hour with no TSV run
+   * in progress at all — and binding it to the save made that impossible while
+   * also forcing the video into the downloads folder, because Start Save's own
+   * picker had already spent the click's user activation. A button of its own
+   * carries its own activation, which is what lets the folder be chosen.
    */
-  const startRecording = async (tsvFileName: string) => {
-    if (!recordingConfig.enabled || !hasBoundDevice(recordingConfig)) return;
+  const handleStartRecording = async () => {
+    if (videoRecorderRef.current) return;
 
     const stream = cameraFeed.stream;
     if (!stream) {
-      // The feed opens asynchronously and the picker may have resolved first.
-      // Saying so is better than a silent absence of video.
       postStatus(
         'error',
         cameraFeed.error
           ? `Recording not started: ${cameraFeed.error}`
-          : 'Recording not started: the camera is not ready yet.',
+          : 'Recording not started: no camera or microphone is bound.',
         'recording',
       );
       return;
     }
 
     try {
+      // Asked for on the click, which is the only place it can be asked for:
+      // the grant does not survive a browser restart, and an effect has no
+      // gesture to prompt from.
+      const directory = await ensureOutputDirectory();
+      if (!directory) return;
+
       const recorder = await createVideoRecorder({
         stream,
         config: recordingConfig,
-        baseName: recordingBaseName(tsvFileName),
+        directory,
         onError: (message, severity) => {
           if (severity === 'warning') {
             console.warn('Recording warning:', message);
@@ -2356,52 +2388,31 @@ function App() {
       });
       videoRecorderRef.current = recorder;
       setActiveRecordingFilename(recorder.getFileName());
+      setRecordingStartedAt(Date.now());
       clearStatusSource('recording');
     } catch (err) {
       reportError('recording', err, 'Recording failed to start');
     }
   };
 
-  /**
-   * Stop the recording and hand the file over.
-   *
-   * A download rather than a save picker: there is no transient user activation
-   * left by the time this runs, and more to the point the TSV's own picker
-   * already consumed the one the click carried. The OPFS entry is only deleted
-   * after the download has been handed to the browser — until then it is the
-   * only copy.
-   */
-  const stopRecording = async () => {
+  const handleStopRecording = async () => {
     const recorder = videoRecorderRef.current;
     if (!recorder) return;
     videoRecorderRef.current = null;
+    const fileName = recorder.getFileName();
     setActiveRecordingFilename('');
+    setRecordingStartedAt(null);
 
     try {
-      const file = await recorder.stop();
-      if (!file) {
+      const bytes = await recorder.stop();
+      if (bytes === 0) {
         postStatus('error', 'Recording produced no data.', 'recording');
         return;
       }
-
-      const url = URL.createObjectURL(file);
-      try {
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = file.name;
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      } finally {
-        // Revoking synchronously cancels the download in Chromium, so err long.
-        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      }
-
-      await recorder.remove();
+      setStatus(`Saved ${fileName}`);
       clearStatusSource('recording');
     } catch (err) {
-      reportError('recording', err, 'Failed to save the recording');
+      reportError('recording', err, 'Failed to finish the recording');
     }
   };
 
@@ -2493,12 +2504,6 @@ function App() {
         throw setupErr;
       }
 
-      // Deliberately outside the block above, which closes the writer on
-      // failure. Recording is a companion, not a condition: the button the user
-      // pressed was about the measurement and that has already succeeded, so an
-      // unplugged camera, a refused permission or a machine with no hardware
-      // encoder must not undo it. startRecording reports and returns.
-      await startRecording(writer.getFileName());
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         // The user cancelled the file picker. Not a failure.
@@ -2532,9 +2537,6 @@ function App() {
       console.warn('Error closing TSV writer:', err);
     }
 
-    // After the TSV, deliberately: the measurement is the file that must land,
-    // and the recording's encoder flush should not sit in front of it.
-    await stopRecording();
 
     pendingDataPoints.current = [];
     // Re-phase the recording deadline the same way the save start did. The poll
@@ -3153,6 +3155,14 @@ function App() {
         onConfigChange={setRecordingConfig}
         feed={cameraFeed}
         locked={activeRecordingFilename !== ''}
+        activeFileName={activeRecordingFilename}
+        recordingStartedAt={recordingStartedAt}
+        onStartRecording={handleStartRecording}
+        onStopRecording={handleStopRecording}
+        outputDirName={outputDir?.name ?? null}
+        onChooseOutputDir={() => {
+          void ensureOutputDirectory();
+        }}
       />
 
       <ScriptRunnerPanel

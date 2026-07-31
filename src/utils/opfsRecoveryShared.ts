@@ -25,18 +25,19 @@
 export const RECOVERY_DIR = 'tsv-recovery';
 
 /**
- * Directory for in-progress video recordings.
+ * Recordings deliberately do not mirror here.
  *
- * Same naming scheme, same sweep, different relationship to the data: the TSV
- * entry is a *mirror* of a file being written elsewhere, whereas this one is the
- * recording itself — there is no picked file for video, because a save picker
- * cannot be opened for a second file on the same click. It is written here as it
- * is captured and handed to the user as a download at Stop Save.
+ * They have the same weakness the TSV does — a file opened through
+ * createWritable() stays 0 bytes until close(), so a crash loses the run — but
+ * not the same arithmetic. Mirroring writes every byte twice, and an hour of
+ * 720p is gigabytes where a TSV run is megabytes. Doubling that on the machine
+ * running the acquisition loop spends exactly the disk bandwidth this app
+ * exists to protect.
  *
- * The consequence for recovery is that a leftover here is not a duplicate of
- * anything. If a run crashes, this entry is the only copy of the video.
+ * So a recording interrupted by a crash is lost, and Recording Config says so
+ * beside the button that starts one, rather than the app implying a safety net
+ * it does not have.
  */
-export const VIDEO_DIR = 'video-recording';
 
 /** Metadata recovered from a mirror's filename. */
 export interface RecoveryNameParts {

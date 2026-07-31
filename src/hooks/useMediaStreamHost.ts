@@ -56,61 +56,73 @@ export function useMediaStreamHost({
   useEffect(() => {
     if (!active || !stream) return;
 
-    const candidate = selectStreamMime();
-    if (!candidate) {
-      // Checked against MediaSource as well as MediaRecorder: choosing on the
-      // recorder alone yields a stream the host can produce and no viewer can
-      // play, which fails in the one place nobody is looking.
-      errorRef.current('No container both this browser and a viewer can handle.');
-      return;
-    }
+    let recorder: MediaRecorder | null = null;
+    let cancelled = false;
 
-    let recorder: MediaRecorder;
-    try {
-      recorder = new MediaRecorder(stream, {
-        mimeType: candidate.mimeType,
-        videoBitsPerSecond: bitrate,
-      });
-    } catch (err) {
-      // A GPU whose encoder cannot take a second session lands here. Streaming
-      // is what gives way: the recording is the thing that must not be lost.
-      errorRef.current(
-        `Remote video unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    // Async because the hardware check is: the container has to be one the
+    // recorder can write, a viewer can play, and a hardware encoder will take.
+    (async () => {
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings();
+      const candidate = await selectStreamMime(
+        settings?.width ?? 1280,
+        settings?.height ?? 720,
+        settings?.frameRate ?? 15,
+        bitrate,
       );
-      return;
-    }
+      if (cancelled) return;
 
-    // The first fragment carries ftyp+moov (or the WebM header). It is flagged
-    // so the hub can hold on to it and replay it to whoever joins next —
-    // without it, a late viewer receives fragments it cannot decode.
-    let first = true;
-    let seq = 0;
+      if (!candidate) {
+        errorRef.current(
+          'Remote video unavailable: no hardware-encodable format this browser and a viewer both support.',
+        );
+        return;
+      }
 
-    recorder.ondataavailable = (event) => {
-      if (event.data.size === 0) return;
-      const isInit = first;
-      first = false;
-      event.data.arrayBuffer().then(
-        (buffer) => {
-          publishRef.current(
-            encodeMediaFrame(MEDIA_KIND_VIDEO, isInit ? MEDIA_FLAG_INIT : 0, seq++, buffer),
-          );
-        },
-        () => {
-          // One dropped fragment; the stream recovers at the next one.
-        },
-      );
-    };
+      try {
+        recorder = new MediaRecorder(stream, {
+          mimeType: candidate.mimeType,
+          videoBitsPerSecond: bitrate,
+        });
+      } catch (err) {
+        // A GPU whose encoder cannot take a second session lands here.
+        // Streaming is what gives way: the recording must not be lost for it.
+        errorRef.current(
+          `Remote video unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
 
-    recorder.onerror = () => {
-      errorRef.current('Remote video encoder stopped.');
-    };
+      // The first fragment carries ftyp+moov (or the WebM header). It is
+      // flagged so the hub can hold on to it and replay it to whoever joins
+      // next — without it, a late viewer receives fragments it cannot decode.
+      let first = true;
+      let seq = 0;
 
-    recorder.start(STREAM_CHUNK_INTERVAL_MS);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size === 0) return;
+        const isInit = first;
+        first = false;
+        event.data.arrayBuffer().then(
+          (buffer) => {
+            publishRef.current(
+              encodeMediaFrame(MEDIA_KIND_VIDEO, isInit ? MEDIA_FLAG_INIT : 0, seq++, buffer),
+            );
+          },
+          () => {
+            // One dropped fragment; the stream recovers at the next one.
+          },
+        );
+      };
+
+      recorder.onerror = () => errorRef.current('Remote video encoder stopped.');
+      recorder.start(STREAM_CHUNK_INTERVAL_MS);
+    })();
 
     return () => {
+      cancelled = true;
       try {
-        if (recorder.state !== 'inactive') recorder.stop();
+        if (recorder && recorder.state !== 'inactive') recorder.stop();
       } catch {
         // Already gone.
       }

@@ -25,8 +25,6 @@ const RECORDING_CONFIG_KEY = 'recording_config_v1';
 export type UvcFormat = 'mjpeg' | 'yuy2' | 'h264';
 
 export interface RecordingConfig {
-  /** Master switch. Off means Start Save behaves exactly as it always has. */
-  enabled: boolean;
   /** null = no camera bound. Recording then captures audio only, or nothing. */
   videoDeviceId: string | null;
   /**
@@ -53,7 +51,6 @@ export interface RecordingConfig {
 }
 
 export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
-  enabled: false,
   videoDeviceId: null,
   videoDeviceLabel: '',
   audioDeviceId: null,
@@ -93,7 +90,6 @@ export const sanitizeRecordingConfig = (raw: unknown): RecordingConfig => {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_RECORDING_CONFIG };
   const source = raw as Partial<Record<keyof RecordingConfig, unknown>>;
   return {
-    enabled: source.enabled === true,
     videoDeviceId: readDeviceId(source.videoDeviceId),
     videoDeviceLabel: readString(source.videoDeviceLabel),
     audioDeviceId: readDeviceId(source.audioDeviceId),

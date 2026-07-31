@@ -1,23 +1,28 @@
-// Video writer Web Worker. Owns an OPFS sync access handle and appends every
-// MediaRecorder chunk to it as it arrives.
+// Video writer Web Worker. Owns the FileSystemWritableFileStream for a
+// recording and performs every write off the main thread, for the same reason
+// tsvWriterWorker does: the thread this would otherwise run on is the one that
+// must not miss a Modbus deadline, and a video chunk is a great deal larger
+// than a TSV row.
 //
-// Same machinery as the TSV worker's crash-recovery mirror (see
-// tsvWriterWorker.ts and utils/opfsRecoveryShared.ts), for the same reason:
-// createSyncAccessHandle() exists on OPFS files only, is worker-only, writes
-// without a swap file, and appends without rewriting what came before.
+// The file is one the user chose a folder for, written straight through. There
+// is deliberately no OPFS mirror here, unlike the TSV writer:
 //
-// The difference is what the file *is*. For TSV the OPFS copy is a mirror of a
-// stream the user picked; here there is no picked file at all — a second save
-// picker cannot be opened on the same click as the TSV one — so this entry is
-// the recording. It is read back and handed over as a download at Stop Save.
-import { VIDEO_DIR, buildRecoveryName } from './utils/opfsRecoveryShared';
-import type { FileSystemSyncAccessHandle } from './types';
+//   - The TSV mirror exists because a picked file stays 0 bytes until close(),
+//     so a crash loses the whole run. That is just as true of video.
+//   - But mirroring means writing every byte twice, and an hour of 720p is
+//     gigabytes rather than the megabytes a TSV run produces. Doubling that on
+//     the machine running the acquisition loop costs the measurement exactly
+//     the disk bandwidth this app spends its time protecting.
+//
+// So the trade is stated rather than hidden: a recording interrupted by a crash
+// is lost, and the panel says so next to the button that starts one.
 import type { VideoWorkerRequest, VideoWorkerResponse } from './utils/videoWorkerProtocol';
 
-let handle: FileSystemSyncAccessHandle | null = null;
-let dir: FileSystemDirectoryHandle | null = null;
-let opfsName = '';
-let offset = 0;
+let stream: FileSystemWritableFileStream | null = null;
+let bytesWritten = 0;
+// Serialises writes so chunks cannot interleave and corrupt the file. Kept
+// resolved so one failed write does not stall every later one.
+let writeChain: Promise<void> = Promise.resolve();
 
 function post(message: VideoWorkerResponse): void {
   self.postMessage(message);
@@ -27,57 +32,19 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function open(fileName: string, startedAt: number): Promise<void> {
-  const root = await navigator.storage.getDirectory();
-  dir = await root.getDirectoryHandle(VIDEO_DIR, { create: true });
-  opfsName = buildRecoveryName(fileName, startedAt);
-  const fileHandle = await dir.getFileHandle(opfsName, { create: true });
-  handle = await fileHandle.createSyncAccessHandle();
-  handle.truncate(0);
-  offset = 0;
-}
-
-/**
- * Append one chunk. Synchronous and flushed, which is what makes the bytes
- * survive a crash — the whole reason this runs in a worker at all.
- */
-function write(data: ArrayBuffer): void {
-  if (!handle) return;
-  try {
-    const bytes = new Uint8Array(data);
-    handle.write(bytes, { at: offset });
-    offset += bytes.byteLength;
-    handle.flush();
-  } catch (err) {
-    // Disable rather than retry: a handle that fails once (quota, revoked) will
-    // keep failing, and one message beats one per chunk. What is already on disk
-    // stays there and is still offered back — a truncated recording is worth
-    // more than none.
-    try {
-      handle.close();
-    } catch {
-      // Already unusable.
-    }
-    handle = null;
-    post({ type: 'error', message: `Recording write failed: ${errorMessage(err)}` });
-  }
-}
-
-async function close(discard: boolean): Promise<void> {
-  if (handle) {
-    try {
-      handle.flush();
-      handle.close();
-    } catch {
-      // The handle dies with the worker either way.
-    }
-    handle = null;
-  }
-
-  if (discard && dir && opfsName) {
-    await dir.removeEntry(opfsName).catch(() => {});
-    opfsName = '';
-  }
+function enqueue(data: ArrayBuffer): void {
+  writeChain = writeChain
+    .then(async () => {
+      if (!stream) return;
+      await stream.write(data);
+      bytesWritten += data.byteLength;
+    })
+    .catch((err) => {
+      // Reported once per failure rather than swallowed: a disk that filled up
+      // mid-recording is something the user has to know about while there is
+      // still a measurement running that they might want to stop.
+      post({ type: 'error', message: `Recording write failed: ${errorMessage(err)}` });
+    });
 }
 
 self.onmessage = async (event: MessageEvent<VideoWorkerRequest>) => {
@@ -85,21 +52,28 @@ self.onmessage = async (event: MessageEvent<VideoWorkerRequest>) => {
   try {
     switch (msg.type) {
       case 'init': {
-        await open(msg.fileName, msg.startedAt);
+        stream = await msg.fileHandle.createWritable();
         post({ type: 'ready' });
         break;
       }
       case 'chunk': {
-        write(msg.data);
+        if (stream) enqueue(msg.data);
         break;
       }
       case 'close': {
-        const bytes = offset;
-        await close(msg.discard);
-        // Always reply, even after a failed write, so the main thread's await
-        // never hangs. A zero-byte result is a valid answer: it means the run
-        // captured nothing and there is no file to offer.
-        post({ type: 'closed', opfsName: msg.discard ? '' : opfsName, bytes });
+        // Drain first, then close: close() on a stream with writes still queued
+        // truncates the tail, which for video is the last seconds of whatever
+        // the user was recording.
+        await writeChain;
+        try {
+          await stream?.close();
+        } catch (err) {
+          post({ type: 'error', message: `Could not finish the recording: ${errorMessage(err)}` });
+        }
+        stream = null;
+        // Always reply, even after a failed close, so the main thread's await
+        // never hangs.
+        post({ type: 'closed', bytes: bytesWritten });
         break;
       }
     }

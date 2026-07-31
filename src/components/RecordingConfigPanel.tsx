@@ -32,7 +32,25 @@ type RecordingConfigPanelProps = {
   feed: CameraFeed;
   /** True while a recording is running: settings are read-only until it ends. */
   locked: boolean;
+  /** File being written, or '' when idle. */
+  activeFileName: string;
+  recordingStartedAt: number | null;
+  onStartRecording: () => void;
+  onStopRecording: () => void;
+  /** The chosen output folder, or null when none has been picked yet. */
+  outputDirName: string | null;
+  onChooseOutputDir: () => void;
 };
+
+/** `1:02:03` — the same shape as the header's save timer. */
+function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
 
 const INPUT_CLASS =
   'w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
@@ -102,19 +120,23 @@ function NumberField({
  * recording would be silent too — which is the entire question this answers.
  */
 function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
-  const [level, setLevel] = useState(0);
-  const [peak, setPeak] = useState(0);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const peakRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const track = stream?.getAudioTracks()[0];
-    if (!stream || !track) {
-      setLevel(0);
-      setPeak(0);
+    const bar = barRef.current;
+    const peakMark = peakRef.current;
+    if (!bar || !peakMark) return;
+    if (!track) {
+      bar.style.width = '0%';
+      peakMark.style.left = '0%';
       return;
     }
 
     const AudioCtx =
-      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return;
 
     const ctx = new AudioCtx();
@@ -127,9 +149,15 @@ function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
     let frame = 0;
     let peakHold = 0;
 
-    // requestAnimationFrame, deliberately unlike the capture pump: this is a
-    // readout on a panel nobody is looking at when the window is hidden, and it
-    // must not add work to a minimised logger.
+    // The bar is written straight to the DOM rather than through state. A level
+    // meter updates every frame, and 60 setState calls a second here would
+    // re-render this panel — and re-run its budget and codec checks — sixty
+    // times a second, on the thread that must not miss a Modbus deadline. The
+    // one thing this component must not do is cost the measurement anything.
+    //
+    // requestAnimationFrame, deliberately unlike the capture pump in
+    // useCameraFeed: this is a readout nobody is looking at when the window is
+    // hidden, and it should stop when the window does.
     const tick = () => {
       analyser.getByteTimeDomainData(buffer);
       let sum = 0;
@@ -138,10 +166,14 @@ function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
         sum += centred * centred;
       }
       const rms = Math.sqrt(sum / buffer.length);
-      const scaled = Math.min(1, rms * 3);
-      setLevel(scaled);
-      peakHold = Math.max(scaled, peakHold * 0.98);
-      setPeak(peakHold);
+      const level = Math.min(1, rms * 3);
+      peakHold = Math.max(level, peakHold * 0.98);
+
+      bar.style.width = `${Math.round(level * 100)}%`;
+      bar.style.backgroundColor =
+        level > 0.9 ? '#f43f5e' : level > 0.6 ? '#fbbf24' : '#10b981';
+      peakMark.style.left = `${Math.round(peakHold * 100)}%`;
+
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -154,19 +186,14 @@ function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
     };
   }, [stream]);
 
-  const percent = Math.round(level * 100);
   return (
     <div className="mt-1">
       <div className="relative h-2 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
+        <div ref={barRef} className="h-full w-0 bg-emerald-500" />
         <div
-          className={`h-full transition-[width] duration-75 ${
-            level > 0.9 ? 'bg-rose-500' : level > 0.6 ? 'bg-amber-400' : 'bg-emerald-500'
-          }`}
-          style={{ width: `${percent}%` }}
-        />
-        <div
+          ref={peakRef}
           className="absolute top-0 h-full w-0.5 bg-slate-500 dark:bg-slate-300"
-          style={{ left: `${Math.round(peak * 100)}%` }}
+          style={{ left: '0%' }}
         />
       </div>
     </div>
@@ -180,6 +207,12 @@ export function RecordingConfigPanel({
   onConfigChange,
   feed,
   locked,
+  activeFileName,
+  recordingStartedAt,
+  onStartRecording,
+  onStopRecording,
+  outputDirName,
+  onChooseOutputDir,
 }: RecordingConfigPanelProps) {
   const [devices, setDevices] = useState<DeviceLists>(emptyDeviceLists);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -269,6 +302,19 @@ export function RecordingConfigPanel({
   const budget = useMemo(() => checkUsbBudget(config), [config]);
   const canEnable = accel?.ok === true && budget.ok;
 
+  // A window timer, not the background one: this is a readout, and a recording
+  // clock that keeps ticking in a minimised window is work nobody is reading.
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (recordingStartedAt === null) {
+      setElapsedMs(0);
+      return;
+    }
+    setElapsedMs(Date.now() - recordingStartedAt);
+    const id = window.setInterval(() => setElapsedMs(Date.now() - recordingStartedAt), 1000);
+    return () => window.clearInterval(id);
+  }, [recordingStartedAt]);
+
   // Keep the preview attached to whatever the feed is currently producing.
   useEffect(() => {
     const el = videoRef.current;
@@ -314,16 +360,72 @@ export function RecordingConfigPanel({
           </div>
         )}
 
-        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-          <input
-            type="checkbox"
-            checked={config.enabled}
-            disabled={locked || !canEnable}
-            onChange={(e) => set({ enabled: e.target.checked })}
-            className="h-4 w-4"
-          />
-          <span>Record video with Start Save</span>
-        </label>
+        {/* The recording control, and the destination it needs. Both live at
+            the top because this window is now where a recording is started —
+            it is no longer a side effect of Start Save, so the button that does
+            it should be the first thing in the window that owns it. */}
+        <div className="space-y-1.5 rounded border border-slate-200 p-2 dark:border-slate-700">
+          <div className="flex items-baseline gap-1.5">
+            <span className={LABEL_CLASS}>Save to</span>
+            <span
+              className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 dark:text-slate-200"
+              translate="no"
+              title={outputDirName ?? undefined}
+            >
+              {outputDirName ?? 'no folder chosen'}
+            </span>
+            <button
+              type="button"
+              onClick={onChooseOutputDir}
+              disabled={locked}
+              className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[0.7rem] text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Choose…
+            </button>
+          </div>
+
+          {locked ? (
+            <button
+              type="button"
+              onClick={onStopRecording}
+              className="w-full rounded bg-rose-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-rose-500"
+            >
+              Stop Recording
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onStartRecording}
+              disabled={!canEnable || !feed.active}
+              className="w-full rounded bg-emerald-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-400 dark:disabled:bg-slate-700"
+            >
+              Start Recording
+            </button>
+          )}
+
+          {locked ? (
+            <p className="text-[0.7rem] text-slate-600 dark:text-slate-300" translate="no">
+              ● {activeFileName} · {formatElapsed(elapsedMs)}
+            </p>
+          ) : (
+            <p className="text-[0.7rem] text-slate-500 dark:text-slate-400">
+              {!feed.active
+                ? 'Bind a camera or microphone below first.'
+                : outputDirName
+                  ? 'Files are named by the time they start, like the TSV.'
+                  : 'You will be asked for a folder when you press this.'}
+            </p>
+          )}
+
+          {/* Said where it matters rather than buried in a manual. The file is
+              written through a handle that only commits on close, so this is
+              the same caveat Start Save carries — and unlike the TSV there is
+              no crash-recovery mirror, because mirroring gigabytes of video
+              would cost the acquisition loop the disk bandwidth it needs. */}
+          <p className="text-[0.7rem] text-amber-600 dark:text-amber-400">
+            The file is finished when you press Stop. A crash before that loses the recording.
+          </p>
+        </div>
 
         {!devices.labelsVisible && (
           <button
