@@ -24,6 +24,8 @@ export interface RemoteVideoHandle {
   onMedia: (frame: ArrayBuffer) => void;
   /** Hand to useViewerClient as onMediaEnd. */
   onMediaEnd: () => void;
+  /** Hand to useViewerClient as onMediaStart. */
+  onMediaStart: (mimeType: string) => void;
 }
 
 const emptyFeed: CameraFeed = {
@@ -38,17 +40,19 @@ const emptyFeed: CameraFeed = {
 };
 
 /**
- * The container the host will have chosen, in the same order videoAccel offers
- * them. Asked of MediaSource rather than announced in a frame: a codec string on
- * the wire would be a second thing to keep in step with the encoder, and this
- * arrives at the same answer without it.
+ * Fallback for a host that never announced its codec (an older build).
+ *
+ * Guessing is what this used to do always, and it was wrong: Chromium answers a
+ * request for avc1.42E01E by encoding avc1.42001f, so a SourceBuffer built from
+ * the requested string rejects the stream and the card stays black. The host now
+ * sends recorder.mimeType and this is only the last resort.
  */
 function preferredMime(): string | null {
   const candidates = [
     'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
     'video/mp4;codecs="avc1.42E01E"',
-    'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9,opus',
   ];
   return candidates.find((c) => MediaSource.isTypeSupported(c)) ?? null;
 }
@@ -64,6 +68,8 @@ export function useRemoteVideo(): RemoteVideoHandle {
   // wait is milliseconds, and losing one mid-group costs the rest of the group.
   const queueRef = useRef<Uint8Array[]>([]);
   const startedRef = useRef(false);
+  // What the host said its encoder is producing. Believed over any guess.
+  const mimeRef = useRef<string | null>(null);
 
   const teardown = useCallback(() => {
     startedRef.current = false;
@@ -122,9 +128,14 @@ export function useRemoteVideo(): RemoteVideoHandle {
           setFeed({ ...emptyFeed, error: 'This browser cannot play the remote video.' });
           return;
         }
-        const mime = preferredMime();
-        if (!mime) {
-          setFeed({ ...emptyFeed, error: 'This browser supports none of the streamed formats.' });
+        const mime = mimeRef.current ?? preferredMime();
+        if (!mime || !MediaSource.isTypeSupported(mime)) {
+          setFeed({
+            ...emptyFeed,
+            error: mime
+              ? `This browser cannot play the host's format (${mime}).`
+              : 'This browser supports none of the streamed formats.',
+          });
           return;
         }
 
@@ -172,8 +183,22 @@ export function useRemoteVideo(): RemoteVideoHandle {
   );
 
   const onMediaEnd = useCallback(() => {
+    mimeRef.current = null;
     teardown();
   }, [teardown]);
 
-  return { feed, onMedia, onMediaEnd };
+  /**
+   * A new encoder on the host. The codec may differ from the last one, so the
+   * current MediaSource is dropped rather than fed a stream it was not built
+   * for — the init segment that follows rebuilds it.
+   */
+  const onMediaStart = useCallback(
+    (mimeType: string) => {
+      mimeRef.current = mimeType;
+      if (startedRef.current) teardown();
+    },
+    [teardown],
+  );
+
+  return { feed, onMedia, onMediaEnd, onMediaStart };
 }

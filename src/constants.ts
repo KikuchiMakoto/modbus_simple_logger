@@ -296,8 +296,10 @@ export const VIDEO_CHUNK_INTERVAL_MS = 1_000;
 
 // Separate from the file's bitrate: the recording must not lose quality because
 // somebody is watching over a phone.
-export const STREAM_DEFAULT_BITRATE = 1_500_000;
-export const STREAM_BITRATE_OPTIONS = [500_000, 1_500_000, 3_000_000] as const;
+// Fixed rather than a setting. A megabit is enough to see a rig over a phone
+// link and cheap enough not to be worth a decision — and the recording keeps its
+// own quality regardless, so there is nothing here to trade off against.
+export const STREAM_DEFAULT_BITRATE = 1_000_000;
 // Short chunks are what makes this feel live; this is most of the end-to-end
 // latency budget.
 export const STREAM_CHUNK_INTERVAL_MS = 200;

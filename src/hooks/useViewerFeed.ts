@@ -119,6 +119,8 @@ export type ViewerHostHandle = {
   publishMedia: (frame: ArrayBuffer) => void;
   /** The host stopped streaming; viewers should tear their MediaSource down. */
   publishMediaEnd: () => void;
+  /** The encoder's actual mimeType, which is not always the one requested. */
+  publishMediaStart: (mimeType: string) => void;
   /** How many viewers are attached, or 0. Streaming is skipped when nobody is watching. */
   viewerCount: number;
 };
@@ -244,6 +246,14 @@ export const useViewerHost = (): ViewerHostHandle => {
     send({ type: 'media-end' });
   }, [send]);
 
+  const publishMediaStart = useCallback(
+    (mimeType: string) => {
+      if (!runningRef.current) return;
+      send({ type: 'media-start', mimeType });
+    },
+    [send],
+  );
+
   return {
     status,
     setEnabled,
@@ -253,6 +263,7 @@ export const useViewerHost = (): ViewerHostHandle => {
     publishReset,
     publishMedia,
     publishMediaEnd,
+    publishMediaStart,
     viewerCount: status?.viewers ?? 0,
   };
 };
@@ -263,6 +274,8 @@ export type ViewerClientCallbacks = {
   onReset: () => void;
   /** One media fragment, still wrapped in its header (see utils/mediaFrame.ts). */
   onMedia?: (frame: ArrayBuffer) => void;
+  /** The codec the host is producing, before any fragment of it arrives. */
+  onMediaStart?: (mimeType: string) => void;
   /** The host stopped streaming, or went away. */
   onMediaEnd?: () => void;
 };
@@ -310,7 +323,12 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
           callbacksRef.current.onMedia?.(event.data as ArrayBuffer);
           return;
         }
-        let frame: { type?: string; state?: ViewerStatePayload; samples?: ViewerSample[] };
+        let frame: {
+          type?: string;
+          state?: ViewerStatePayload;
+          samples?: ViewerSample[];
+          mimeType?: string;
+        };
         try {
           frame = JSON.parse(event.data);
         } catch {
@@ -325,6 +343,9 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
             break;
           case 'reset':
             callbacksRef.current.onReset();
+            break;
+          case 'media-start':
+            if (frame.mimeType) callbacksRef.current.onMediaStart?.(frame.mimeType);
             break;
           case 'media-end':
             callbacksRef.current.onMediaEnd?.();

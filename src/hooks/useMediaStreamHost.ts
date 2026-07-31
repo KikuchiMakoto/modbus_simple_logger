@@ -29,6 +29,7 @@ export interface UseMediaStreamHostOptions {
   bitrate: number;
   publishMedia: (frame: ArrayBuffer) => void;
   publishMediaEnd: () => void;
+  publishMediaStart: (mimeType: string) => void;
   onError: (message: string) => void;
 }
 
@@ -39,6 +40,7 @@ export function useMediaStreamHost({
   bitrate,
   publishMedia,
   publishMediaEnd,
+  publishMediaStart,
   onError,
 }: UseMediaStreamHostOptions): void {
   // Held in refs so a re-render never restarts the encoder: App re-renders on
@@ -48,6 +50,8 @@ export function useMediaStreamHost({
   publishRef.current = publishMedia;
   const endRef = useRef(publishMediaEnd);
   endRef.current = publishMediaEnd;
+  const startRef = useRef(publishMediaStart);
+  startRef.current = publishMediaStart;
   const errorRef = useRef(onError);
   errorRef.current = onError;
 
@@ -110,6 +114,11 @@ export function useMediaStreamHost({
 
       recorder.onerror = () => errorRef.current('Remote video encoder stopped.');
       recorder.start(STREAM_CHUNK_INTERVAL_MS);
+      // recorder.mimeType, not candidate.mimeType. Chromium answers a request
+      // for avc1.42E01E by encoding avc1.42001f, and a viewer that hands the
+      // requested string to addSourceBuffer gets a decode error and a black
+      // box. Only the encoder knows what it actually made.
+      startRef.current(recorder.mimeType || candidate.mimeType);
     })();
 
     return () => {

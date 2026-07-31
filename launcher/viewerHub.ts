@@ -77,6 +77,15 @@ class ViewerHub {
    * all, and it is why this lives beside `state` rather than in the host page.
    */
   private mediaInit: ArrayBuffer | null = null;
+  /**
+   * The exact mimeType the host's encoder reported.
+   *
+   * Kept because it is not the one that was asked for: Chromium answers a
+   * request for avc1.42E01E by encoding avc1.42001f, and a viewer that declares
+   * the requested string to addSourceBuffer gets a decode error and a black
+   * box. Only the encoder knows what it actually produced, so it says so.
+   */
+  private mediaMime: string | null = null;
   /** Sockets whose last media send hit backpressure; skipped until they drain. */
   private congested = new Set<ViewerSocket>();
 
@@ -112,10 +121,20 @@ class ViewerHub {
     // value is drawn), then the backlog.
     if (this.state) this.send(socket, { type: 'state', state: this.state });
     if (this.ring.length > 0) this.send(socket, { type: 'append', samples: this.ring });
-    // The init segment last, because it is the only one whose absence is fatal
-    // rather than cosmetic — sending it after the JSON keeps it adjacent to the
-    // live fragments that follow it.
+    // The codec, then the init segment — in that order, because the viewer
+    // cannot build its SourceBuffer without the first and cannot decode
+    // anything without the second.
+    if (this.mediaMime) this.send(socket, { type: 'media-start', mimeType: this.mediaMime });
     if (this.mediaInit) this.sendBinary(socket, this.mediaInit);
+  }
+
+  /** The host started encoding, and this is what it is actually producing. */
+  publishMediaStart(mimeType: string): void {
+    this.mediaMime = mimeType;
+    // A new encoder invalidates the old init segment; keeping it would hand the
+    // next viewer a header describing a stream that no longer exists.
+    this.mediaInit = null;
+    this.broadcast({ type: 'media-start', mimeType });
   }
 
   detach(socket: ViewerSocket): void {
@@ -183,6 +202,7 @@ class ViewerHub {
   /** The host stopped streaming: forget the init segment, tell the viewers. */
   publishMediaEnd(): void {
     this.mediaInit = null;
+    this.mediaMime = null;
     this.broadcast({ type: 'media-end' });
   }
 
@@ -192,6 +212,7 @@ class ViewerHub {
     this.state = null;
     this.ring = [];
     this.mediaInit = null;
+    this.mediaMime = null;
     this.broadcast({ type: 'host-gone' });
   }
 
@@ -208,6 +229,7 @@ class ViewerHub {
     this.ring = [];
     this.state = null;
     this.mediaInit = null;
+    this.mediaMime = null;
   }
 }
 

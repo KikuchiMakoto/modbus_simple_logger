@@ -105,6 +105,7 @@ class HostFeed {
       samples?: ViewerSample[];
       mode?: ViewerMode;
       active?: boolean;
+      mimeType?: string;
     };
     try {
       frame = JSON.parse(raw);
@@ -126,6 +127,11 @@ class HostFeed {
       // "the host turned the camera off" and "the link went quiet".
       case 'media-end':
         viewerHub.publishMediaEnd();
+        break;
+      // What the host's encoder actually produced, which is not always what it
+      // was asked for — see viewerHub.mediaMime.
+      case 'media-start':
+        if (typeof frame.mimeType === 'string') viewerHub.publishMediaStart(frame.mimeType);
         break;
       case 'enable':
         void this.runControl({ type: 'enable', mode: frame.mode === 'tunnel' ? 'tunnel' : 'lan' });

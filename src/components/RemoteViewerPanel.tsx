@@ -1,4 +1,3 @@
-import { STREAM_BITRATE_OPTIONS } from '../constants';
 import { FloatingWindow } from './FloatingWindow';
 import { QrCode } from './QrCode';
 import type { ViewerMode, ViewerServerStatus } from '../hooks/useViewerFeed';
@@ -12,8 +11,6 @@ type RemoteViewerPanelProps = {
   /** Whether the camera is being streamed to viewers. Reset whenever sharing stops. */
   videoEnabled: boolean;
   onVideoEnabledChange: (enabled: boolean) => void;
-  videoBitrate: number;
-  onVideoBitrateChange: (bitrate: number) => void;
   /** False when no camera is bound, which is the only reason the toggle is dead. */
   cameraAvailable: boolean;
 };
@@ -38,8 +35,6 @@ export function RemoteViewerPanel({
   onEnabledChange,
   videoEnabled,
   onVideoEnabledChange,
-  videoBitrate,
-  onVideoBitrateChange,
   cameraAvailable,
 }: RemoteViewerPanelProps) {
   const running = status?.running ?? false;
@@ -112,11 +107,10 @@ export function RemoteViewerPanel({
           )}
         </div>
 
-        {/* Video is opt-in every time sharing is turned on, and never sticky.
-            A camera pointed at a rig is a different kind of thing to share than
-            a chart of numbers, and on the tunnel it leaves the building — that
-            is a decision worth taking deliberately rather than inheriting from
-            a checkbox ticked last week. */}
+        {/* On by default: someone sharing a measurement with a camera bound
+            wants the rig visible, and a second switch to find only ever
+            produced a black box on the viewer. It stays a switch because the
+            tunnel sends it out of the building. */}
         {running && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
             <label className="flex items-center gap-2 font-semibold">
@@ -134,27 +128,11 @@ export function RemoteViewerPanel({
                 ? 'Live picture and sound from the bound camera, with about a second of delay.'
                 : 'Bind a camera in Recording Config first.'}
             </p>
-            {videoEnabled && (
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-xs text-slate-500 dark:text-slate-400">Quality</span>
-                <select
-                  value={videoBitrate}
-                  onChange={(e) => onVideoBitrateChange(Number(e.target.value))}
-                  className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                >
-                  {STREAM_BITRATE_OPTIONS.map((bps) => (
-                    <option key={bps} value={bps}>
-                      {(bps / 1_000_000).toFixed(1)} Mbps
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
             {/* Said plainly rather than hidden behind the toggle: the encoder is
                 a second one, and it is skipped entirely while the count is 0. */}
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Encoding only runs while someone is watching. The saved recording keeps its own
-              quality regardless of this setting.
+              Encoding only runs while someone is watching, at a fixed 1 Mbps. The saved recording
+              keeps its own quality regardless.
             </p>
           </div>
         )}

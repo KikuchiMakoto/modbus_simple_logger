@@ -1250,23 +1250,20 @@ function App() {
 
   // Host side of remote video. A second encoder, so it only runs when somebody
   // is actually attached — see useMediaStreamHost.
-  const [streamVideoEnabled, setStreamVideoEnabled] = useState(false);
-  const [streamBitrate, setStreamBitrate] = useState<number>(STREAM_DEFAULT_BITRATE);
+  // On by default: someone who turns on remote monitoring with a camera bound
+  // wants to see the rig, and having to find a second switch to get it was a
+  // step that only ever produced a black box on the viewer.
+  const [streamVideoEnabled, setStreamVideoEnabled] = useState(true);
   useMediaStreamHost({
     stream: cameraFeed.stream,
     enabled: streamVideoEnabled,
     viewerCount: viewerHost.status?.viewers ?? 0,
-    bitrate: streamBitrate,
+    bitrate: STREAM_DEFAULT_BITRATE,
     publishMedia: viewerHost.publishMedia,
     publishMediaEnd: viewerHost.publishMediaEnd,
+    publishMediaStart: viewerHost.publishMediaStart,
     onError: (message) => postStatus('error', message, 'recording'),
   });
-
-  // Turned off whenever sharing itself is off, so re-enabling sharing does not
-  // silently resume publishing video the user last enabled days ago.
-  useEffect(() => {
-    if (viewerHost.status?.running === false) setStreamVideoEnabled(false);
-  }, [viewerHost.status?.running]);
 
   // What the Script Log window puts in its subtitle, shared with slot 3 and
   // with the snapshot sent to viewers so all three say the same thing.
@@ -1435,6 +1432,7 @@ function App() {
     onReset: ingestRemoteReset,
     onMedia: remoteVideo.onMedia,
     onMediaEnd: remoteVideo.onMediaEnd,
+    onMediaStart: remoteVideo.onMediaStart,
   });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
@@ -3218,8 +3216,6 @@ function App() {
         onEnabledChange={viewerHost.setEnabled}
         videoEnabled={streamVideoEnabled}
         onVideoEnabledChange={setStreamVideoEnabled}
-        videoBitrate={streamBitrate}
-        onVideoBitrateChange={setStreamBitrate}
         cameraAvailable={cameraFeed.hasVideo}
       />
 
