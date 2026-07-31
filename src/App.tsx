@@ -89,7 +89,6 @@ import {
   type RecordingConfig,
 } from './utils/recordingConfig';
 import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
-import { checkUsbBudget } from './utils/usbBandwidth';
 import {
   ensureWritePermission,
   loadOutputDirectory,
@@ -144,6 +143,7 @@ import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
+import type { ScriptLogEntry } from './hooks/useScriptRunner';
 import { useNotifications } from './hooks/useNotifications';
 import {
   useViewerHost,
@@ -151,6 +151,7 @@ import {
   type ViewerHostHandle,
   type ViewerSample,
   type ViewerStatePayload,
+  VIEWER_SCRIPT_LOG_TAIL,
 } from './hooks/useViewerFeed';
 import { RemoteViewerPanel } from './components/RemoteViewerPanel';
 import { isLauncherMode, isLauncherServed, isViewerMode } from './utils/appMode';
@@ -655,6 +656,11 @@ function App() {
   // A viewer renders the host's serial line; it has no port of its own to
   // describe, and the local DEFAULT_SERIAL_SETTINGS would be a fiction.
   const [remoteSerialLabel, setRemoteSerialLabel] = useState('');
+  // The host's script log, mirrored for chart slot 3. A viewer runs no script
+  // of its own, so this is the only thing that box could ever show.
+  const [remoteScriptLog, setRemoteScriptLog] = useState<ScriptLogEntry[]>([]);
+  const [remoteScriptStatus, setRemoteScriptStatus] = useState('');
+  const [remoteScriptRunning, setRemoteScriptRunning] = useState(false);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -1201,19 +1207,9 @@ function App() {
   // device is opened only while one of them is actually looking, so a bound
   // camera costs nothing until it is used — and it is frozen while recording,
   // because re-opening it mid-run would cut the recording in half.
-  // The budget gates *opening* the camera, not starting a recording.
-  //
-  // This is the whole point of the check and it is easy to put in the wrong
-  // place: a UVC camera reserves its isochronous bandwidth at getUserMedia, not
-  // at MediaRecorder.start(). Gating only the recording would leave a bound
-  // 1080p60 camera holding the bus for the entire session — starving the Modbus
-  // adapter exactly as the budget describes — while the guard sat quiet because
-  // nobody had pressed Start Recording.
-  const cameraBudget = useMemo(() => checkUsbBudget(recordingConfig), [recordingConfig]);
   const cameraWanted =
     !isViewerMode &&
     hasBoundDevice(recordingConfig) &&
-    cameraBudget.ok &&
     (recordingConfigPanelOpen || isLauncherMode || activeRecordingFilename !== '');
   const cameraFeed = useCameraFeed({
     config: recordingConfig,
@@ -1272,6 +1268,14 @@ function App() {
     if (viewerHost.status?.running === false) setStreamVideoEnabled(false);
   }, [viewerHost.status?.running]);
 
+  // What the Script Log window puts in its subtitle, shared with slot 3 and
+  // with the snapshot sent to viewers so all three say the same thing.
+  const hostScriptStatus = scriptRunner.runningTab
+    ? `${scriptRunner.runningTab.name} — ${scriptRunner.scriptRunning ? 'Running' : scriptRunner.scriptRun.outcome}`
+    : scriptRunner.scriptRunning
+      ? 'Running'
+      : scriptRunner.scriptRun.outcome;
+
   // Rebuilt every render (see viewerStateRef below) so the timer below always reads
   // current values without owning them as dependencies.
   const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
@@ -1293,6 +1297,12 @@ function App() {
     actualPollIntervalMs,
     precision: resolvedPrecision,
     serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
+    // The tail only. A viewer's chart slot shows about a screenful, and sending
+    // the whole log every second would put a run's entire output on the wire
+    // once a second to redraw the same last few lines.
+    scriptLog: scriptRunner.scriptLog.slice(-VIEWER_SCRIPT_LOG_TAIL),
+    scriptStatus: hostScriptStatus,
+    scriptRunning: scriptRunner.scriptRunning,
   });
 
   useEffect(() => {
@@ -1382,6 +1392,11 @@ function App() {
     setSavePointCount(state.savePointCount);
     setActualPollIntervalMs(state.actualPollIntervalMs ?? 0);
     setRemoteSerialLabel(state.serial);
+    // Absent from a host running an older build, which is why it defaults
+    // rather than being read straight through.
+    setRemoteScriptLog(state.scriptLog ?? []);
+    setRemoteScriptStatus(state.scriptStatus ?? '');
+    setRemoteScriptRunning(state.scriptRunning === true);
     // Mirror the host's resolved register map. Without this the viewer's
     // resolvedPrecision stays at its 'normal' default and a host in Extended
     // mode prints its Raw without toFixed(3), dropping the decimal part that
@@ -3022,17 +3037,21 @@ function App() {
             — they are simply unused here, so switching between the two builds
             does not cost the user their chart setup.
 
-            Slot 3 is the Script Log on the host and a plot on a viewer: a viewer
-            never runs a script, so its log is structurally empty and a card
-            promising output that can never arrive is worth less than the fourth
-            trace it displaced.
+            Slot 3 is the Script Log in both. A viewer runs no script of its own,
+            so the entries come over the feed from the host — which is the point:
+            when a script is what is driving the run, its output is the other
+            half of what the charts are showing, and that is as true for someone
+            watching remotely as for the person at the machine.
 
             Slot 4 is the camera in both, from different sources — the local
-            device on the host, the host's stream on a viewer. That is the one
-            slot where a viewer gets more than the host, and deliberately: seeing
-            the rig is most of the reason to watch remotely at all. */}
-        {isLauncherMode ? (
-          <ScriptLogCard scriptRunner={scriptRunner} />
+            device on the host, the host's stream on a viewer. */}
+        {isLauncherServed ? (
+          <ScriptLogCard
+            scriptLog={isViewerMode ? remoteScriptLog : scriptRunner.scriptLog}
+            subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
+            running={isViewerMode ? remoteScriptRunning : scriptRunner.scriptRunning}
+            onClear={isViewerMode ? undefined : scriptRunner.clearScriptLog}
+          />
         ) : (
           <ChartPanel
             color="#f472b6"

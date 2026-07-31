@@ -1,6 +1,6 @@
 /**
  * Persisted settings for Recording Config: which camera and microphone are
- * bound, how the capture is sized, and what the USB budget check should assume.
+ * bound, how the capture is sized, and where the timestamp is burned in.
  *
  * Stored through the same chokepoint as every other setting (readJsonStorage /
  * writeJsonStorage in ./cookies), so the viewer guard and the cookie lifeboat
@@ -113,9 +113,8 @@ const readDeviceId = (value: unknown): string | null =>
  * hand-edited value, or a partially written object all have to come out as a
  * config the rest of the app can use without checking anything again.
  *
- * There is no upper clamp on width/height on purpose: the ceiling is whatever
- * the camera can do, and the USB budget check is what decides whether a given
- * size is allowed to run.
+ * There is no upper clamp on width/height: the ceiling is whatever the camera
+ * reports it can do, and the panel trims the list to that.
  */
 export const sanitizeRecordingConfig = (raw: unknown): RecordingConfig => {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_RECORDING_CONFIG };

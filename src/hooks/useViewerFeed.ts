@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isLauncherMode, isViewerMode, viewerToken } from '../utils/appMode';
 import { STREAM_MAX_BUFFERED_BYTES } from '../constants';
+import type { ScriptLogEntry } from './useScriptRunner';
 import type { ModbusPrecision } from '../types';
 
 // Page side of read-only remote monitoring (desktop exe only).
@@ -56,7 +57,23 @@ export type ViewerStatePayload = {
   // Sent on the same wholesale snapshot as everything else.
   precision: ModbusPrecision;
   serial: string;
+  /**
+   * Tail of the host's script log, so a viewer's chart slot 3 shows the run's
+   * output rather than a permanently empty box (a viewer runs no script itself).
+   *
+   * Capped and sent wholesale on the same 1 Hz snapshot as everything else,
+   * rather than as an incremental stream: the log is small, and a viewer that
+   * joins mid-run gets the recent history in one frame instead of only what
+   * happened after it arrived.
+   */
+  scriptLog: ScriptLogEntry[];
+  /** What the host's Script Log window puts in its subtitle. */
+  scriptStatus: string;
+  scriptRunning: boolean;
 };
+
+/** How much of the host's log travels. Roughly a screenful in the chart slot. */
+export const VIEWER_SCRIPT_LOG_TAIL = 100;
 
 /** How remote monitoring is published. Mirrors ViewerMode in launcher/viewerServer.ts. */
 export type ViewerMode = 'lan' | 'tunnel';

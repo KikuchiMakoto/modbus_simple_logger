@@ -252,9 +252,9 @@ export function useCameraFeed({ config, active, locked }: UseCameraFeedOptions):
           const captured = canvas.captureStream(0);
           const canvasTrack = captured.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
 
-          // The recording rate, not the capture rate. The camera keeps streaming
-          // at whatever it negotiated — that is what the USB reservation paid
-          // for — and this decides how much of it is kept.
+          // The recording rate, not the capture rate. The camera keeps
+          // streaming at whatever it negotiated, and this decides how much of
+          // it is kept.
           //
           // Not clamped to 1: the recording rate goes to 0.1 fps for a
           // time-lapse, which is a ten-second interval, and flooring it here

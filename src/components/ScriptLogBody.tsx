@@ -10,7 +10,6 @@
 // column) lives in ScriptLogPanel.tsx, which is still where this is read from
 // most of the time.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { useScriptRunner } from '../hooks/useScriptRunner';
 import type { ScriptLogEntry, ScriptOutcome } from '../hooks/useScriptRunner';
 
 export const OUTCOME_LABEL: Record<ScriptOutcome, string> = {
@@ -50,25 +49,25 @@ const foldNewlines = (text: string): string => text.replace(/\r?\n/g, ' ⏎ ');
 // left alone.
 const TAIL_SLACK_PX = 36;
 
-type ScriptRunner = ReturnType<typeof useScriptRunner>;
-
 /**
  * Rows are keyed by `seq`, and the expanded set is local to each mount. Two
  * copies of this on screen keep their own expansion state on purpose: they are
  * different sizes, and a row opened out in a 240 px chart slot has no business
  * opening in the window somebody is reading a traceback in.
+ *
+ * Takes entries rather than the runner, so the same rows render for a viewer —
+ * which has no runner of its own and is shown the host's log over the feed.
  */
 export function ScriptLogBody({
-  scriptRunner,
+  scriptLog,
   className = '',
   style,
 }: {
-  scriptRunner: ScriptRunner;
+  scriptLog: ScriptLogEntry[];
   className?: string;
   /** The chart-slot copy pins a height here; the window lets flex do it. */
   style?: React.CSSProperties;
 }) {
-  const { scriptLog } = scriptRunner;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
 
@@ -162,9 +161,20 @@ export function ScriptLogBody({
   );
 }
 
-/** Copy and Clear, shared by the window's header and the chart slot's. */
-export function ScriptLogActions({ scriptRunner }: { scriptRunner: ScriptRunner }) {
-  const { scriptLog } = scriptRunner;
+/**
+ * Copy and Clear, shared by the window's header and the chart slot's.
+ *
+ * `onClear` is optional: a viewer is shown the host's log and has nothing of
+ * its own to clear, and a Clear button there would either do nothing or imply a
+ * way to reach back into the host that the feed deliberately does not have.
+ */
+export function ScriptLogActions({
+  scriptLog,
+  onClear,
+}: {
+  scriptLog: ScriptLogEntry[];
+  onClear?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   // The full text, unfolded and untruncated — what is on screen is a view of it,
@@ -196,15 +206,17 @@ export function ScriptLogActions({ scriptRunner }: { scriptRunner: ScriptRunner 
       </button>
       {/* No confirmation: unlike the editor's Clear this destroys a record, not
           work — and the next run clears it anyway. */}
-      <button
-        type="button"
-        className="button-secondary py-1 text-xs disabled:opacity-50"
-        onClick={scriptRunner.clearScriptLog}
-        disabled={scriptLog.length === 0}
-        title="Clear the log"
-      >
-        Clear
-      </button>
+      {onClear && (
+        <button
+          type="button"
+          className="button-secondary py-1 text-xs disabled:opacity-50"
+          onClick={onClear}
+          disabled={scriptLog.length === 0}
+          title="Clear the log"
+        >
+          Clear
+        </button>
+      )}
     </>
   );
 }

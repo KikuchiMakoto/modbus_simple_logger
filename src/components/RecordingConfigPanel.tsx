@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  USB_BLOCK_MBPS,
-  USB_HS_MBPS,
-  USB_WARN_MBPS,
   VIDEO_BITS_PER_PIXEL_FRAME,
   VIDEO_CAPTURE_FPS_OPTIONS,
   VIDEO_MAX_BITRATE,
   VIDEO_MIN_BITRATE,
   VIDEO_RECORD_FPS_OPTIONS,
   VIDEO_SIZES,
+  VIDEO_SOFTWARE_MAX_RECORD_FPS,
 } from '../constants';
 import type { CameraFeed } from '../hooks/useCameraFeed';
 import {
@@ -20,7 +18,6 @@ import {
   type OverlayPosition,
   type RecordingConfig,
 } from '../utils/recordingConfig';
-import { checkUsbBudget, largestFittingFps } from '../utils/usbBandwidth';
 import { bitrateFor, probeVideoAccel, type VideoAccelVerdict } from '../utils/videoAccel';
 import { FloatingWindow } from './FloatingWindow';
 
@@ -62,8 +59,8 @@ function formatElapsed(ms: number): string {
  *
  * Written straight to the DOM rather than through state: a level meter updates
  * every frame, and 60 setState calls a second here would re-render this panel —
- * and re-run its budget and codec checks — sixty times a second, on the thread
- * that must not miss a Modbus deadline.
+ * and re-run its codec probe — sixty times a second, on the thread that must
+ * not miss a Modbus deadline.
  */
 function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -162,6 +159,23 @@ export function RecordingConfigPanel({
   }, [open]);
 
   /**
+   * Re-enumerate once the capture is actually open.
+   *
+   * Chromium hides video inputs from enumerateDevices until camera permission
+   * has been granted in this page — audio inputs it lists regardless, since
+   * there is always a default. So a panel opened before the first grant showed
+   * a populated microphone list next to "No camera found" while the preview
+   * beside it was running, which reads as a bug in the app rather than as a
+   * permission that had not been asked for yet. Once the feed is live the grant
+   * exists, and the list can be believed.
+   */
+  useEffect(() => {
+    if (!open || !feed.active) return;
+    void refreshDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, feed.active]);
+
+  /**
    * Re-point a binding whose deviceId changed under it. Windows hands out a new
    * id when a camera comes back on a different USB port, and treating that as
    * "the camera was removed" would look like the setting had been lost.
@@ -247,8 +261,9 @@ export function RecordingConfigPanel({
     };
   }, [open, config.width, config.height, config.recordFps, bitrate]);
 
-  const budget = useMemo(() => checkUsbBudget(config), [config]);
-  const canRecord = accel?.ok === true && budget.ok && feed.active;
+  // Software encoding is a warning, not a bar: the only capability signal
+  // available describes WebCodecs, which MediaRecorder does not use.
+  const canRecord = accel?.candidate != null && feed.active;
 
   const capMax = feed.capabilities;
 
@@ -264,11 +279,11 @@ export function RecordingConfigPanel({
   const sizeOptions = useMemo(() => {
     const maxW = capMax?.width?.max ?? Number.POSITIVE_INFINITY;
     const maxH = capMax?.height?.max ?? Number.POSITIVE_INFINITY;
-    const list: { width: number; height: number }[] = VIDEO_SIZES.filter(
+    const list: { width: number; height: number; ratio: string }[] = VIDEO_SIZES.filter(
       (s) => s.width <= maxW && s.height <= maxH,
     );
     if (list.some((s) => s.width === config.width && s.height === config.height)) return list;
-    return [...list, { width: config.width, height: config.height }].sort(
+    return [...list, { width: config.width, height: config.height, ratio: '' }].sort(
       (a, b) => a.width * a.height - b.width * b.height,
     );
   }, [capMax, config.width, config.height]);
@@ -280,12 +295,31 @@ export function RecordingConfigPanel({
     return list.sort((a, b) => a - b);
   }, [capMax, config.captureFps]);
 
-  // Never above the capture rate: the file cannot contain frames the camera did
-  // not send.
+  /**
+   * Never above the capture rate — the file cannot contain frames the camera
+   * did not send — and much lower again when the encode is in software.
+   *
+   * The software ceiling is on this rate rather than on the capture rate
+   * because this is the one that drives the cost: every recorded frame is a
+   * frame the CPU compresses, on the machine whose polling loop must not miss a
+   * deadline.
+   */
+  const softwareLimited = accel !== null && !accel.hardware;
+  const recordFpsCap = softwareLimited
+    ? Math.min(config.captureFps, VIDEO_SOFTWARE_MAX_RECORD_FPS)
+    : config.captureFps;
   const recordFpsOptions = useMemo(
-    () => VIDEO_RECORD_FPS_OPTIONS.filter((f) => f <= config.captureFps),
-    [config.captureFps],
+    () => VIDEO_RECORD_FPS_OPTIONS.filter((f) => f <= recordFpsCap),
+    [recordFpsCap],
   );
+
+  // Bring an out-of-range selection down rather than showing a value the list
+  // does not contain — which a <select> renders as whatever happens to be first.
+  useEffect(() => {
+    if (locked || config.recordFps <= recordFpsCap) return;
+    set({ recordFps: recordFpsCap });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked, recordFpsCap, config.recordFps]);
 
   // Keep the preview attached to whatever the feed is currently producing.
   useEffect(() => {
@@ -308,8 +342,6 @@ export function RecordingConfigPanel({
     return () => window.clearInterval(id);
   }, [recordingStartedAt]);
 
-  const fitFps = largestFittingFps(config.width, config.height);
-
   return (
     <FloatingWindow
       open={open}
@@ -320,21 +352,16 @@ export function RecordingConfigPanel({
       defaultHeight={560}
     >
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
-        {/* One line. The measurements that back it are on the hover, not on the
-            page: four codec strings and a D3D11 renderer line beside a disabled
-            button is a paragraph nobody reads, but it still has to be reachable
-            because this verdict can be wrong (see utils/videoAccel). */}
-        {accel && !accel.ok && (
-          <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-            Recording disabled — {accel.summary}{' '}
+        {/* A warning, not a refusal. The only signal available describes
+            WebCodecs while MediaRecorder does not go through it, so this is a
+            hint about likely cost rather than a fact about capability — and it
+            was measured being wrong. The measurements are on the hover. */}
+        {accel && accel.summary !== '' && (
+          <p className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            {accel.summary}{' '}
             <span className="cursor-help underline decoration-dotted" title={accel.detail}>
-              why
+              details
             </span>
-          </p>
-        )}
-        {!budget.ok && (
-          <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-            Recording disabled — over the USB budget. The camera is not opened while it is.
           </p>
         )}
 
@@ -494,6 +521,7 @@ export function RecordingConfigPanel({
             {sizeOptions.map((s) => (
               <option key={`${s.width}x${s.height}`} value={`${s.width}x${s.height}`}>
                 {s.width}×{s.height}
+                {s.ratio && ` · ${s.ratio}`}
               </option>
             ))}
           </select>
@@ -501,8 +529,7 @@ export function RecordingConfigPanel({
 
         {/* Two rates, because they answer different questions — the same split
             the app already makes between Polling Rate and Save Rate. Capture is
-            what the camera streams, and is what the USB budget below is spent
-            on. Recording is how much of it is written. */}
+            what the camera streams; recording is how much of it is written. */}
         <div className="flex gap-1.5">
           <div className="flex-1">
             <label className={LABEL}>Capture FPS</label>
@@ -525,7 +552,17 @@ export function RecordingConfigPanel({
             </select>
           </div>
           <div className="flex-1">
-            <label className={LABEL}>Recording FPS</label>
+            <label className={LABEL}>
+              Recording FPS
+              {softwareLimited && (
+                <span
+                  className="ml-1 cursor-help text-amber-600 underline decoration-dotted dark:text-amber-400"
+                  title={`Capped at ${VIDEO_SOFTWARE_MAX_RECORD_FPS} fps because the encode looks like software. Every recorded frame is compressed on the CPU that runs the polling loop.`}
+                >
+                  ≤{VIDEO_SOFTWARE_MAX_RECORD_FPS}
+                </span>
+              )}
+            </label>
             <select
               value={config.recordFps}
               disabled={locked}
@@ -545,54 +582,10 @@ export function RecordingConfigPanel({
             {config.recordFps < 1
               ? `One frame every ${(1 / config.recordFps).toFixed(0)} s.`
               : `Keeping 1 frame in ${Math.round(config.captureFps / config.recordFps)}.`}{' '}
-            The camera still streams at {config.captureFps} fps, so the USB load is unchanged.
+            The camera still streams at {config.captureFps} fps.
           </p>
         )}
 
-        {/* USB load. The camera reserves isochronous bandwidth up front; the
-            Modbus adapter's serial link is bulk and gets what is left.
-            An MJPEG estimate — the browser will not say which payload format it
-            negotiated, so this is approximate by construction. */}
-        <div className="space-y-1 border-t border-slate-200 pt-1.5 dark:border-slate-700">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-xs text-slate-600 dark:text-slate-400">USB</span>
-            <span
-              className={`flex-1 text-[0.7rem] ${
-                budget.level === 'block'
-                  ? 'text-rose-600 dark:text-rose-400'
-                  : budget.level === 'warn'
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-slate-600 dark:text-slate-400'
-              }`}
-              translate="no"
-            >
-              ≈{budget.mbps.toFixed(0)} of {USB_HS_MBPS} Mbps
-              {budget.level === 'block' && fitFps >= 1 && ` · ${fitFps} fps would fit`}
-            </span>
-          </div>
-          <div className="relative h-1.5 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
-            <div
-              className={`h-full ${
-                budget.level === 'block'
-                  ? 'bg-rose-500'
-                  : budget.level === 'warn'
-                    ? 'bg-amber-400'
-                    : 'bg-emerald-500'
-              }`}
-              style={{ width: `${Math.round(budget.usedFraction * 100)}%` }}
-            />
-            {/* The two thresholds, drawn on the bar. Without them the colour
-                change is the only clue where the limits are, and that only
-                helps once you have already crossed one. */}
-            {[USB_WARN_MBPS, USB_BLOCK_MBPS].map((mark) => (
-              <div
-                key={mark}
-                className="absolute top-0 h-full w-px bg-slate-400 dark:bg-slate-500"
-                style={{ left: `${(mark / USB_HS_MBPS) * 100}%` }}
-              />
-            ))}
-          </div>
-        </div>
       </div>
     </FloatingWindow>
   );

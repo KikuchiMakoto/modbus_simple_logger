@@ -57,7 +57,18 @@ self.onmessage = async (event: MessageEvent<VideoWorkerRequest>) => {
         break;
       }
       case 'chunk': {
-        if (stream) enqueue(msg.data);
+        if (stream) {
+          enqueue(msg.data);
+        } else {
+          // Reported rather than dropped quietly. A chunk arriving after close
+          // means the stop path let the file be closed while data was still on
+          // its way, which is exactly the fault that produces a 0-byte
+          // recording — it must not be able to happen without saying so.
+          post({
+            type: 'error',
+            message: `Recording lost ${msg.data.byteLength} bytes that arrived after the file was closed.`,
+          });
+        }
         break;
       }
       case 'close': {

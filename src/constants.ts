@@ -210,21 +210,27 @@ export const TSV_MIRROR_FLUSH_MAX_ROWS = 100;
 // range "succeeds" because Chromium will crop-and-scale to it — so a free-form
 // field could only ever produce a number that looks accepted whether or not the
 // camera has anything like it.
-// 4:3 only, which is what the industrial and inspection cameras this is pointed
-// at actually are. Offering 16:9 alongside doubled the list to serve a case that
-// has not come up, and a longer list of sizes is not the same thing as more
-// choice — the camera's own maximum trims this at runtime anyway.
+// The sizes UVC cameras actually offer, both aspect ratios, ordered by pixel
+// count so the list reads as "bigger" downwards rather than as two lists. The
+// ratio is labelled because at a glance 1280×960 and 1280×720 are the same
+// number, and picking the wrong one crops the part of the rig that mattered.
+// The camera's reported maximum trims this at runtime.
 export const VIDEO_SIZES = [
-  { width: 640, height: 480 },
-  { width: 800, height: 600 },
-  { width: 1024, height: 768 },
-  { width: 1280, height: 960 },
-  { width: 1600, height: 1200 },
-  { width: 2048, height: 1536 },
-  { width: 2592, height: 1944 },
-  { width: 3264, height: 2448 },
-  { width: 4096, height: 3072 },
-  { width: 5184, height: 3888 },
+  { width: 640, height: 480, ratio: '4:3' },
+  { width: 800, height: 600, ratio: '4:3' },
+  { width: 1024, height: 768, ratio: '4:3' },
+  { width: 1280, height: 720, ratio: '16:9' },
+  { width: 1280, height: 960, ratio: '4:3' },
+  { width: 1600, height: 1200, ratio: '4:3' },
+  { width: 1920, height: 1080, ratio: '16:9' },
+  { width: 2048, height: 1536, ratio: '4:3' },
+  { width: 2560, height: 1440, ratio: '16:9' },
+  { width: 2592, height: 1944, ratio: '4:3' },
+  { width: 3264, height: 2448, ratio: '4:3' },
+  { width: 3840, height: 2160, ratio: '16:9' },
+  { width: 4096, height: 3072, ratio: '4:3' },
+  { width: 5120, height: 2880, ratio: '16:9' },
+  { width: 5184, height: 3888, ratio: '4:3' },
 ] as const;
 
 export const VIDEO_MIN_WIDTH = 640;
@@ -256,6 +262,18 @@ export const VIDEO_DEFAULT_WIDTH = 1280;
 export const VIDEO_DEFAULT_HEIGHT = 960;
 export const VIDEO_DEFAULT_CAPTURE_FPS = 15;
 export const VIDEO_DEFAULT_RECORD_FPS = 15;
+
+/**
+ * Ceiling on the recording rate when no hardware encoder could be confirmed.
+ *
+ * Software encoding is allowed — the capability signal is too unreliable to
+ * refuse on — but it is allowed on a short leash. Every recorded frame is a
+ * frame the CPU has to compress, on the machine whose polling loop must not
+ * miss a deadline, so what gets limited is the rate that actually drives that
+ * cost. The capture rate is left alone: it costs the camera and the bus, not
+ * this CPU, and it is what keeps the preview smooth.
+ */
+export const VIDEO_SOFTWARE_MAX_RECORD_FPS = 5;
 export const VIDEO_MIN_FPS = 1;
 /** The recording rate alone goes sub-1, for time-lapse use. */
 export const VIDEO_MIN_RECORD_FPS = 0.1;
@@ -273,36 +291,6 @@ export const VIDEO_MAX_BITRATE = 40_000_000;
 // MediaRecorder chunk interval for the file. Each chunk is appended to OPFS
 // synchronously, so this is also the worst-case data loss on a crash.
 export const VIDEO_CHUNK_INTERVAL_MS = 1_000;
-
-// --- USB bandwidth budget ---------------------------------------------------
-//
-// A UVC camera reserves isochronous bandwidth up front, every microframe. The
-// Modbus adapter's USB serial (CDC-ACM / FTDI) is *bulk*, which is served from
-// what is left over. So an over-configured camera does not make the serial link
-// slow — it makes the reservation win and the serial link starve. Capping the
-// camera is the only lever that works, which is why this is a hard gate.
-// The bus, at its nominal rate. The meter is scaled to this so the reading is
-// against the thing itself rather than against a budget the user has to hold in
-// their head.
-export const USB_HS_MBPS = 480;
-export const MODBUS_RESERVE_MBPS = 12; // the full-speed device's own line rate
-
-// Bytes per pixel on the wire, assuming MJPEG at roughly 10:1 against
-// uncompressed 4:2:2.
-//
-// A rough estimate rather than a guarantee, and deliberately so: MJPEG is what
-// UVC cameras actually negotiate above VGA, so this is the number that matches
-// everyday use. The uncompressed worst case is around ten times higher, which
-// is why the thresholds below sit well under the bus rate — the headroom is
-// what absorbs a camera that turns out not to compress.
-export const UVC_BYTES_PER_PIXEL = 0.2;
-
-// Amber, then red. These are about the bulk endpoints the Modbus adapter uses:
-// past ~100 Mbps of isochronous reservation the serial link starts competing
-// for what is left, and past ~200 it is being squeezed hard enough that poll
-// timing suffers. Red refuses.
-export const USB_WARN_MBPS = 100;
-export const USB_BLOCK_MBPS = 200;
 
 // --- Remote streaming -------------------------------------------------------
 

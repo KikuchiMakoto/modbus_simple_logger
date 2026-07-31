@@ -65,11 +65,13 @@ export function ScriptLogPanel({ open, onClose, scriptRunner }: ScriptLogPanelPr
       // colour read as a different kind of thing.
       defaultWidth={600}
       defaultHeight={380}
-      headerActions={<ScriptLogActions scriptRunner={scriptRunner} />}
+      headerActions={
+        <ScriptLogActions scriptLog={scriptLog} onClear={scriptRunner.clearScriptLog} />
+      }
     >
       {/* min-h-0 flex-1 is what makes the scroll box fill the window and stop
           there; the chart-slot copy gives it a fixed height instead. */}
-      <ScriptLogBody scriptRunner={scriptRunner} className="min-h-0 flex-1" />
+      <ScriptLogBody scriptLog={scriptLog} className="min-h-0 flex-1" />
     </FloatingWindow>
   );
 }

@@ -21,26 +21,9 @@ import {
   VIDEO_MIN_BITRATE,
 } from '../constants';
 import { bitrateFor, probeVideoAccel, selectAudioMime } from './videoAccel';
-import { checkUsbBudget } from './usbBandwidth';
 import { timestampBaseName } from './outputDirectory';
 import type { RecordingConfig } from './recordingConfig';
 import type { VideoWorkerRequest, VideoWorkerResponse } from './videoWorkerProtocol';
-
-/** Thrown when no hardware encoder could be confirmed. Recording must not run. */
-export class HardwareEncodeUnavailableError extends Error {
-  constructor(detail: string) {
-    super(detail);
-    this.name = 'HardwareEncodeUnavailableError';
-  }
-}
-
-/** Thrown when the requested capture would not leave room for the Modbus link. */
-export class UsbBudgetExceededError extends Error {
-  constructor(detail: string) {
-    super(detail);
-    this.name = 'UsbBudgetExceededError';
-  }
-}
 
 export interface VideoRecorderHandle {
   /** File name being written, e.g. '20260731_140312.mp4'. */
@@ -74,12 +57,6 @@ export async function createVideoRecorder({
   let bitrate = 0;
 
   if (hasVideo) {
-    // Re-checked here rather than trusted from the panel: the stored config
-    // travels between machines, and a setting that was fine on the desktop it
-    // was saved on must not quietly start a software encode on a laptop.
-    const budget = checkUsbBudget(config);
-    if (!budget.ok) throw new UsbBudgetExceededError(budget.reason);
-
     const settings = stream.getVideoTracks()[0]?.getSettings();
     const width = settings?.width ?? config.width;
     const height = settings?.height ?? config.height;
@@ -97,9 +74,12 @@ export async function createVideoRecorder({
     );
 
     const accel = await probeVideoAccel(width, height, fps, bitrate);
-    if (!accel.ok || !accel.candidate) {
-      throw new HardwareEncodeUnavailableError(`${accel.reason} ${accel.detail}`);
-    }
+    if (!accel.candidate) throw new Error('This browser cannot record video.');
+    // Software encoding is allowed. It is reported rather than refused: the
+    // only signal available describes WebCodecs, MediaRecorder does not go
+    // through WebCodecs, and refusing on it was measured turning away machines
+    // that record H.264 at full rate.
+    if (!accel.hardware) onError(accel.summary, 'warning');
     mimeType = accel.candidate.mimeType;
     ext = accel.candidate.ext;
   } else {
@@ -156,14 +136,30 @@ export async function createVideoRecorder({
     ...(bitrate > 0 ? { videoBitsPerSecond: bitrate } : {}),
   });
 
+  /**
+   * Chunks whose bytes are still being read out of their Blob.
+   *
+   * This has to be tracked, because Blob.arrayBuffer() is asynchronous and
+   * MediaRecorder's last ondataavailable fires *before* its 'stop' event.
+   * Without waiting for these, stop() posts 'close' while the final chunk is
+   * still being read, the worker closes the stream, and that chunk is dropped —
+   * which for a recording shorter than one timeslice is the entire file, and
+   * shows up as a 0-byte MP4.
+   */
+  const pendingChunks = new Set<Promise<void>>();
+
   recorder.ondataavailable = (event) => {
     if (event.data.size === 0) return;
     // Transferred, so a multi-megabyte chunk is never copied across the worker
     // boundary while the acquisition loop is trying to run.
-    event.data.arrayBuffer().then(
-      (buffer) => post({ type: 'chunk', data: buffer }, [buffer]),
+    const pending = event.data.arrayBuffer().then(
+      (buffer) => {
+        post({ type: 'chunk', data: buffer }, [buffer]);
+      },
       (err) => onError(`Recording chunk lost: ${String(err)}`, 'error'),
     );
+    pendingChunks.add(pending);
+    void pending.finally(() => pendingChunks.delete(pending));
   };
 
   recorder.onerror = (event) => {
@@ -194,9 +190,11 @@ export async function createVideoRecorder({
 
     async stop(): Promise<number> {
       await stopRecorder();
-      // The last chunk arrives with the 'stop' event but is posted
-      // asynchronously; the worker processes messages in order, so the close
-      // queued now lands after it.
+      // Only once every chunk's bytes have actually been posted. The worker
+      // processes messages in order, so a 'close' queued after them lands last
+      // — but a 'close' queued while a Blob is still being read would overtake
+      // it entirely.
+      await Promise.allSettled([...pendingChunks]);
       return new Promise((resolve) => {
         const onMessage = (event: MessageEvent<VideoWorkerResponse>) => {
           if (event.data.type !== 'closed') return;

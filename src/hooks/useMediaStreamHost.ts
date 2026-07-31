@@ -62,19 +62,12 @@ export function useMediaStreamHost({
     // Async because the hardware check is: the container has to be one the
     // recorder can write, a viewer can play, and a hardware encoder will take.
     (async () => {
-      const track = stream.getVideoTracks()[0];
-      const settings = track?.getSettings();
-      const candidate = await selectStreamMime(
-        settings?.width ?? 1280,
-        settings?.height ?? 720,
-        settings?.frameRate ?? 15,
-        bitrate,
-      );
+      const candidate = selectStreamMime();
       if (cancelled) return;
 
       if (!candidate) {
         errorRef.current(
-          'Remote video unavailable: no hardware-encodable format this browser and a viewer both support.',
+          'Remote video unavailable: no format this browser and a viewer both support.',
         );
         return;
       }
