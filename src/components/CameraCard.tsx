@@ -72,7 +72,8 @@ export function CameraCard({
             className="ml-auto shrink-0 rounded bg-rose-100 px-1 py-0.5 text-[0.6rem] font-semibold leading-none text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
             translate="no"
           >
-            ● REC
+            {/* Only the lamp blinks, not the word — see .rec-blink. */}
+            <span className="rec-blink">●</span> REC
           </span>
         )}
       </div>

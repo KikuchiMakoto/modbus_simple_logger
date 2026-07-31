@@ -2642,7 +2642,10 @@ function App() {
                     translate="no"
                     title={activeRecordingFilename}
                   >
-                    ● REC
+                    {/* Only the lamp blinks, not the word: a flashing label is
+                        harder to read, and it is the light that carries the
+                        state. */}
+                    <span className="rec-blink">●</span> REC
                   </span>
                 )}
                 <span className="tabular-nums">
