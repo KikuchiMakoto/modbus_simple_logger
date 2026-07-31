@@ -4,14 +4,18 @@ import { createHash } from 'crypto';
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { relative, resolve, sep } from 'path';
 
-const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
+// `import.meta.dirname` rather than `__dirname`: Vite's upcoming native config
+// loader evaluates this file as a real ES module, where `__dirname` is undefined.
+const rootDir = import.meta.dirname;
+
+const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'));
 
 // Pyodide runtime files self-hosted out of the npm package (pinned to an exact
 // version in package.json — that pin is the single source of truth for the
 // Pyodide version). Serving them from our own origin puts them under the
 // Service Worker precache, so ScriptRunner works fully offline and never
 // depends on a CDN at runtime.
-const PYODIDE_DIR = resolve(__dirname, 'node_modules/pyodide');
+const PYODIDE_DIR = resolve(rootDir, 'node_modules/pyodide');
 const PYODIDE_FILES = [
   'pyodide.mjs',
   'pyodide.asm.mjs',
@@ -31,7 +35,7 @@ const DEP_VERSIONS: Record<string, string> = Object.fromEntries(
     .map((name) => {
       try {
         const dep = JSON.parse(
-          readFileSync(resolve(__dirname, 'node_modules', name, 'package.json'), 'utf-8'),
+          readFileSync(resolve(rootDir, 'node_modules', name, 'package.json'), 'utf-8'),
         );
         return [name, dep.version as string] as const;
       } catch {
@@ -54,7 +58,7 @@ function pyodideAssets(): Plugin {
     // every closeBundle, so the files are on disk when `precache-manifest`
     // walks dist and they land in PRECACHE_MANIFEST automatically.
     writeBundle() {
-      const dest = resolve(__dirname, outDir, 'pyodide');
+      const dest = resolve(rootDir, outDir, 'pyodide');
       mkdirSync(dest, { recursive: true });
       for (const file of PYODIDE_FILES) {
         copyFileSync(resolve(PYODIDE_DIR, file), resolve(dest, file));
@@ -97,7 +101,7 @@ function precacheManifest(): Plugin {
     // closeBundle runs after every output (including the copied public/ dir, so
     // dist/sw.js exists) has been written to disk.
     closeBundle() {
-      const dist = resolve(__dirname, outDir);
+      const dist = resolve(rootDir, outDir);
       const swPath = resolve(dist, 'sw.js');
 
       const files: string[] = [];
