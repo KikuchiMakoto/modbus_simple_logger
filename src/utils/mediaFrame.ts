@@ -8,34 +8,38 @@
  * text and binary are told apart by `typeof event.data` before anything is
  * parsed.
  *
- * Why fragments over a socket rather than HLS or DASH: those need a segmenter
- * and a manifest the viewer polls, and buy 2-6 seconds of latency for it. What
- * MediaRecorder emits is already a fragmented MP4 (or WebM) stream, and
- * MediaSource will append it as it arrives. The result is under a second, with
- * no format machinery in between.
- *
- * Why not WebRTC, which would be lower still: a LAN viewer is served over plain
- * http on a private address, which is not a secure context, so RTCPeerConnection
- * is unavailable there — and signalling needs a viewer-to-host path, which
- * viewerServer.ts deliberately does not have. MediaSource needs neither.
+ * Why stills rather than a video stream: see MEDIA_KIND_JPEG below. Neither
+ * HLS/DASH nor WebRTC was ever a candidate — the first needs a segmenter and a
+ * manifest and costs seconds of latency, and the second cannot exist on a LAN
+ * viewer, which is served over plain http on a private address and so is not a
+ * secure context. What remained was a stream into MediaSource, and that turned
+ * out to be more machinery than the job needed.
  */
 
 /** Bytes of header in front of every media frame. */
 export const MEDIA_HEADER_BYTES = 8;
 
-export const MEDIA_KIND_VIDEO = 1;
-
 /**
- * First fragment of a stream: the initialisation segment (ftyp+moov, or the
- * WebM header). A viewer cannot decode anything without it, so the hub holds on
- * to the last one and replays it to whoever joins next.
+ * One JPEG still. The remote picture is a slideshow, not a video stream.
+ *
+ * This started as fMP4 into a MediaSource and every hard problem the feature
+ * had came from that: the codec string Chromium reports is not the one it was
+ * asked for, a viewer joining mid-stream needs an init segment replayed, and
+ * playback drifts further behind the live edge the longer it runs. None of that
+ * exists for a still image — the newest one is simply the one on screen, and a
+ * frame that never arrives costs nothing because the next one replaces it
+ * whole.
+ *
+ * It is also the only kind. Remote monitoring sends no audio: sound is a real
+ * stream or it is nothing, and a real stream brings back the accumulating
+ * buffer this design exists to avoid.
  */
-export const MEDIA_FLAG_INIT = 1;
+export const MEDIA_KIND_JPEG = 2;
 
 export interface MediaFrame {
   kind: number;
   flags: number;
-  /** Monotonic per stream; a gap means fragments were dropped for a slow viewer. */
+  /** Monotonic; a gap means stills were dropped for a slow viewer. */
   seq: number;
   payload: Uint8Array;
 }
@@ -77,5 +81,3 @@ export function decodeMediaFrame(data: ArrayBuffer | Uint8Array): MediaFrame | n
   };
 }
 
-export const isInitFrame = (frame: MediaFrame): boolean =>
-  (frame.flags & MEDIA_FLAG_INIT) !== 0;

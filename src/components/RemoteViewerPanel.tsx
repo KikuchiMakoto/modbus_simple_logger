@@ -8,8 +8,6 @@ type RemoteViewerPanelProps = {
   /** Null until the launcher has answered — "unknown", not "off". */
   status: ViewerServerStatus | null;
   onEnabledChange: (enabled: boolean, mode?: ViewerMode) => void;
-  /** Whether a camera is bound, which is all that decides if video is sent. */
-  cameraAvailable: boolean;
 };
 
 const MODES: { key: ViewerMode; label: string; blurb: string }[] = [
@@ -30,7 +28,6 @@ export function RemoteViewerPanel({
   onClose,
   status,
   onEnabledChange,
-  cameraAvailable,
 }: RemoteViewerPanelProps) {
   const running = status?.running ?? false;
   const starting = status?.starting ?? false;
@@ -53,7 +50,8 @@ export function RemoteViewerPanel({
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
           <p className="font-semibold">Let others watch this screen</p>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            They see the channels and charts live. They cannot connect, save, or change anything.
+            They see the channels, charts and — if one is bound — the camera. They cannot
+            connect, save, or change anything.
           </p>
 
           <div className="mt-3 space-y-1.5">
@@ -101,26 +99,6 @@ export function RemoteViewerPanel({
             </p>
           )}
         </div>
-
-        {/* Not a switch. Sharing a measurement and showing the rig it came from
-            are the same intent, and the toggle only ever stood between the user
-            and the thing they had already asked for. Binding a camera in
-            Recording Config is the control; this is the readout.
-
-            Worth knowing rather than hidden: over SmartPhone Link the picture
-            leaves the building along with the numbers. */}
-        {running && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <p className="font-semibold">
-              {cameraAvailable ? 'Camera is being sent' : 'No camera bound'}
-            </p>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-              {cameraAvailable
-                ? 'Live picture and sound, about a second behind, at a fixed 1 Mbps. Encoding only runs while someone is watching, and the saved recording keeps its own quality regardless.'
-                : 'Bind one in Recording Config and viewers will see it too.'}
-            </p>
-          </div>
-        )}
 
         {running && urls.length > 0 && (
           <div>

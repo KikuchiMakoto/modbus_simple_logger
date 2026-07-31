@@ -53,7 +53,6 @@ import {
   PROMISE_CHAIN_RESET_INTERVAL,
   TSV_FLUSH_INTERVAL_MS,
   TSV_FLUSH_MAX_ROWS,
-  STREAM_DEFAULT_BITRATE,
 } from './constants';
 import {
   aiToPhysical,
@@ -1252,15 +1251,9 @@ function App() {
   // is actually attached — see useMediaStreamHost.
   useMediaStreamHost({
     stream: cameraFeed.stream,
-    // Unconditional. Binding a camera is the decision; sharing a measurement
-    // and showing the rig it came from are the same intent.
-    enabled: true,
     viewerCount: viewerHost.status?.viewers ?? 0,
-    bitrate: STREAM_DEFAULT_BITRATE,
     publishMedia: viewerHost.publishMedia,
     publishMediaEnd: viewerHost.publishMediaEnd,
-    publishMediaStart: viewerHost.publishMediaStart,
-    onError: (message) => postStatus('error', message, 'recording'),
   });
 
   // What the Script Log window puts in its subtitle, shared with slot 3 and
@@ -1421,8 +1414,6 @@ function App() {
   // Viewer side of the host's camera. Inert on the host itself, where onMedia
   // is never called.
   const remoteVideo = useRemoteVideo();
-  const [remoteMuted, setRemoteMuted] = useState(true);
-  const remoteCameraFeed = remoteVideo.feed;
 
   const viewerClient = useViewerClient({
     onState: ingestRemoteState,
@@ -1430,7 +1421,6 @@ function App() {
     onReset: ingestRemoteReset,
     onMedia: remoteVideo.onMedia,
     onMediaEnd: remoteVideo.onMediaEnd,
-    onMediaStart: remoteVideo.onMediaStart,
   });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
@@ -3065,11 +3055,11 @@ function App() {
         )}
         {isLauncherServed ? (
           <CameraCard
-            feed={isViewerMode ? remoteCameraFeed : cameraFeed}
+            feed={cameraFeed}
             recording={activeRecordingFilename !== ''}
             remote={isViewerMode}
-            muted={isViewerMode ? remoteMuted : undefined}
-            onToggleMuted={isViewerMode ? () => setRemoteMuted((v) => !v) : undefined}
+            snapshotUrl={remoteVideo.snapshotUrl}
+            lastFrameAt={remoteVideo.lastFrameAt}
           />
         ) : (
           <ChartPanel
@@ -3212,7 +3202,6 @@ function App() {
         onClose={() => setRemoteViewerPanelOpen(false)}
         status={viewerHost.status}
         onEnabledChange={viewerHost.setEnabled}
-        cameraAvailable={cameraFeed.hasVideo}
       />
 
       {/* Not on a viewer: it has no menu, so Script Runner is unreachable

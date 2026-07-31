@@ -1,83 +1,53 @@
-// The camera, in chart slot 4 on the launcher.
+// The camera, in chart slot 4.
 //
 // The point of recording video alongside the measurement is being able to see
 // what the rig was doing; a preview that only exists inside a settings window is
 // a preview you look at once, while setting it up. Here it is next to the traces
 // it explains, and a camera that has come unplugged mid-run is visible as a
-// blank card rather than as a surprise at Stop Save.
+// blank card rather than as a surprise at Stop.
 //
-// It shows the same stream the recorder is encoding — the composited one when
-// the timestamp overlay is on — so what is on screen is what is in the file,
-// including the burned-in clock.
+// Two sources, two elements. On the host it is the live MediaStream — the same
+// one the recorder is encoding, composited, so what is on screen is what is in
+// the file including the burned-in clock. On a viewer it is a JPEG still that
+// arrives about once a second, which is why there is an <img> here and not a
+// second <video>.
 import { useEffect, useRef } from 'react';
 import type { CameraFeed } from '../hooks/useCameraFeed';
 import { PLOT_HEIGHT } from './ChartPanel';
 
-/** How far behind the newest fragment playback may drift before it is pulled up. */
-const MAX_LAG_S = 1.5;
-/** Where it is pulled to — not zero, or the next hiccup stalls the picture. */
-const TARGET_LAG_S = 0.3;
+/**
+ * How long a still may go unrefreshed before the card stops implying it is
+ * current. Several times the send interval, so an ordinary dropped frame passes
+ * unremarked and a stalled host does not.
+ */
+const STALE_AFTER_MS = 5000;
 
 export function CameraCard({
   feed,
   recording,
-  /** Set on a viewer: the picture is arriving from the host, not from a local device. */
+  /** Set on a viewer: the picture is arriving from the host, not from a device. */
   remote = false,
-  /** Viewer-side: browsers will not start audio without a click. */
-  muted,
-  onToggleMuted,
+  snapshotUrl,
+  lastFrameAt,
 }: {
   feed: CameraFeed;
   recording: boolean;
   remote?: boolean;
-  muted?: boolean;
-  onToggleMuted?: () => void;
+  snapshotUrl?: string | null;
+  lastFrameAt?: number | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Two source shapes, one element: a local camera is a MediaStream on
-  // srcObject, a remote one is a MediaSource behind an object URL on src.
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (feed.srcUrl) {
-      el.srcObject = null;
-      if (el.src !== feed.srcUrl) el.src = feed.srcUrl;
-    } else {
-      el.removeAttribute('src');
-      if (el.srcObject !== feed.stream) el.srcObject = feed.stream;
-    }
-    if (feed.stream || feed.srcUrl) void el.play().catch(() => {});
-  }, [feed.stream, feed.srcUrl]);
-
-  /**
-   * Hold the picture at the live edge.
-   *
-   * Without this the delay grows without bound and never recovers. A
-   * MediaSource plays from wherever its buffer starts, so every pause, dropped
-   * fragment or slow append pushes playback further behind the fragments still
-   * arriving — and nothing pulls it forward again. What starts as a second ends
-   * up minutes behind, which for watching a rig is the same as being broken.
-   *
-   * Seeking rather than nudging playbackRate: a jump is honest about having
-   * skipped time, where playing fast quietly distorts how quickly things moved,
-   * which is the one thing this video is evidence of.
-   */
-  useEffect(() => {
-    if (!remote || !feed.srcUrl) return;
-    const el = videoRef.current;
-    if (!el) return;
-    const id = window.setInterval(() => {
-      const buffered = el.buffered;
-      if (buffered.length === 0) return;
-      const live = buffered.end(buffered.length - 1);
-      if (live - el.currentTime > MAX_LAG_S) el.currentTime = live - TARGET_LAG_S;
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [remote, feed.srcUrl]);
+    if (el.srcObject !== feed.stream) el.srcObject = feed.stream;
+    if (feed.stream) void el.play().catch(() => {});
+  }, [feed.stream]);
 
   const settings = feed.settings;
-  const hasPicture = feed.stream !== null || feed.srcUrl !== null;
+  const stale = lastFrameAt !== null && lastFrameAt !== undefined && Date.now() - lastFrameAt > STALE_AFTER_MS;
+  const hasPicture = remote ? Boolean(snapshotUrl) : feed.stream !== null;
 
   return (
     <section className="card card-tight space-y-0.5">
@@ -85,20 +55,17 @@ export function CameraCard({
         <span className="text-[0.7rem] font-semibold leading-none text-slate-600 dark:text-slate-300">
           {remote ? 'Camera (host)' : 'Camera'}
         </span>
-        {settings && (
+        {!remote && settings && (
           <span className="truncate text-[0.7rem] leading-none text-slate-400" translate="no">
             {settings.width}×{settings.height} @ {Math.round(settings.frameRate ?? 0)}
           </span>
         )}
-        {onToggleMuted && hasPicture && (
-          <button
-            type="button"
-            onClick={onToggleMuted}
-            className="rounded border border-slate-300 px-1 py-0 text-[0.6rem] leading-none text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            title={muted ? 'Turn the sound on' : 'Mute'}
+        {remote && hasPicture && (
+          <span
+            className={`truncate text-[0.7rem] leading-none ${stale ? 'text-amber-500' : 'text-slate-400'}`}
           >
-            {muted ? '🔇 Unmute' : '🔊 Sound'}
-          </button>
+            {stale ? 'no new frames' : 'live · ~1 fps'}
+          </span>
         )}
         {recording && (
           <span
@@ -110,17 +77,26 @@ export function CameraCard({
         )}
       </div>
 
-      {/* The empty state matches the plots' exactly — same height, same
-          centred grey line — so the row does not step when a camera is bound. */}
+      {/* The empty state matches the plots' exactly — same height, same centred
+          grey line — so the row does not step when a camera is bound. */}
       {hasPicture ? (
-        <video
-          ref={videoRef}
-          muted={muted ?? true}
-          playsInline
-          autoPlay
-          className="block w-full bg-black object-contain"
-          style={{ height: PLOT_HEIGHT }}
-        />
+        remote ? (
+          <img
+            src={snapshotUrl ?? undefined}
+            alt="Host camera"
+            className="block w-full bg-black object-contain"
+            style={{ height: PLOT_HEIGHT }}
+          />
+        ) : (
+          <video
+            ref={videoRef}
+            muted
+            playsInline
+            autoPlay
+            className="block w-full bg-black object-contain"
+            style={{ height: PLOT_HEIGHT }}
+          />
+        )
       ) : (
         <div
           className="flex items-center justify-center px-2 text-center text-sm text-slate-400"
@@ -129,7 +105,7 @@ export function CameraCard({
           {feed.error
             ? feed.error
             : remote
-              ? 'No video from the host'
+              ? 'No picture from the host'
               : 'No camera — bind one in Recording Config'}
         </div>
       )}

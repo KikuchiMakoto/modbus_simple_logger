@@ -1,139 +1,128 @@
 /**
- * Host side of remote video: a second MediaRecorder on the same capture,
- * encoding at a lower bitrate and pushing fragments up the launcher socket.
+ * Host side of remote monitoring's camera: a JPEG still, about once a second.
  *
- * Separate from the file recorder rather than tapping its chunks, because the
- * two want different things. The file wants the quality the user configured and
- * a chunk interval tuned for crash durability; the stream wants small fragments
- * and a bitrate that survives someone's phone. Sharing one encoder would mean
- * the recording's quality was decided by whoever happened to be watching.
+ * This was an fMP4 stream into a MediaSource, and every hard bug the feature
+ * had came from that — the codec Chromium reports is not the one it was asked
+ * for, a viewer joining mid-stream needs the init segment replayed, and
+ * playback drifts further behind the live edge the longer it runs, with nothing
+ * to pull it back.
  *
- * It costs a second hardware encode, so it runs only when it is actually being
- * watched: sharing on, video enabled, and at least one viewer attached. Nobody
- * watching means no encoder at all — the same rule publishSamples follows, for
- * the same reason.
+ * A still has none of those failure modes. There is no codec to agree on, no
+ * header a late viewer must have been present for, and no timeline to fall
+ * behind: the newest picture is the one on screen. A frame that never arrives
+ * costs nothing, because the next one replaces it whole rather than continuing
+ * from it.
+ *
+ * What it gives up is smoothness, which remote monitoring never needed. The
+ * question being answered is whether the rig is still turning.
+ *
+ * It runs only while somebody is attached — the same rule publishSamples
+ * follows, for the same reason.
  */
 
 import { useEffect, useRef } from 'react';
-import { STREAM_CHUNK_INTERVAL_MS } from '../constants';
-import { MEDIA_FLAG_INIT, MEDIA_KIND_VIDEO, encodeMediaFrame } from '../utils/mediaFrame';
-import { selectStreamMime } from '../utils/videoAccel';
+import {
+  STREAM_JPEG_QUALITY,
+  STREAM_SNAPSHOT_FPS,
+  STREAM_SNAPSHOT_MAX_WIDTH,
+} from '../constants';
+import { clearBackgroundTimer, setBackgroundInterval } from '../utils/backgroundTimer';
+import { MEDIA_KIND_JPEG, encodeMediaFrame } from '../utils/mediaFrame';
 
 export interface UseMediaStreamHostOptions {
   /** The shared capture from useCameraFeed, or null. */
   stream: MediaStream | null;
-  /** Master switch from the Remote Monitoring panel. */
-  enabled: boolean;
   /** Sharing is running and somebody is attached. */
   viewerCount: number;
-  bitrate: number;
   publishMedia: (frame: ArrayBuffer) => void;
   publishMediaEnd: () => void;
-  publishMediaStart: (mimeType: string) => void;
-  onError: (message: string) => void;
 }
 
 export function useMediaStreamHost({
   stream,
-  enabled,
   viewerCount,
-  bitrate,
   publishMedia,
   publishMediaEnd,
-  publishMediaStart,
-  onError,
 }: UseMediaStreamHostOptions): void {
-  // Held in refs so a re-render never restarts the encoder: App re-renders on
-  // every chart update, and an encoder that restarted with it would emit an
-  // init segment several times a second.
+  // Held in refs so a re-render never restarts the pump: App re-renders on
+  // every chart update.
   const publishRef = useRef(publishMedia);
   publishRef.current = publishMedia;
   const endRef = useRef(publishMediaEnd);
   endRef.current = publishMediaEnd;
-  const startRef = useRef(publishMediaStart);
-  startRef.current = publishMediaStart;
-  const errorRef = useRef(onError);
-  errorRef.current = onError;
 
-  const active = enabled && viewerCount > 0 && stream !== null;
+  const active = viewerCount > 0 && stream !== null;
 
   useEffect(() => {
     if (!active || !stream) return;
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
 
-    let recorder: MediaRecorder | null = null;
-    let cancelled = false;
+    // A video element of its own rather than reading the capture canvas
+    // directly: useCameraFeed only builds a canvas when the overlay or frame
+    // decimation needs one, so there is not always one to read. At one frame a
+    // second the extra draw is free.
+    //
+    // Only the video track is attached. No audio is sent at all — see the note
+    // in RemoteViewerPanel.
+    const video = document.createElement('video');
+    video.srcObject = new MediaStream([track]);
+    video.muted = true;
+    video.playsInline = true;
+    void video.play().catch(() => {});
 
-    // Async because the hardware check is: the container has to be one the
-    // recorder can write, a viewer can play, and a hardware encoder will take.
-    (async () => {
-      const candidate = selectStreamMime();
-      if (cancelled) return;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    let seq = 0;
+    let inFlight = false;
 
-      if (!candidate) {
-        errorRef.current(
-          'Remote video unavailable: no format this browser and a viewer both support.',
-        );
-        return;
-      }
+    // The background timer, not rAF: a minimised host window must keep sending,
+    // since watching it from somewhere else is the entire point.
+    const timer = setBackgroundInterval(
+      () => {
+        if (!ctx || video.readyState < 2 || inFlight) return;
+        const w = video.videoWidth;
+        const h = video.videoHeight;
+        if (w === 0 || h === 0) return;
 
-      try {
-        recorder = new MediaRecorder(stream, {
-          mimeType: candidate.mimeType,
-          videoBitsPerSecond: bitrate,
-        });
-      } catch (err) {
-        // A GPU whose encoder cannot take a second session lands here.
-        // Streaming is what gives way: the recording must not be lost for it.
-        errorRef.current(
-          `Remote video unavailable: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return;
-      }
+        const scale = Math.min(1, STREAM_SNAPSHOT_MAX_WIDTH / w);
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // The first fragment carries ftyp+moov (or the WebM header). It is
-      // flagged so the hub can hold on to it and replay it to whoever joins
-      // next — without it, a late viewer receives fragments it cannot decode.
-      let first = true;
-      let seq = 0;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size === 0) return;
-        const isInit = first;
-        first = false;
-        event.data.arrayBuffer().then(
-          (buffer) => {
-            publishRef.current(
-              encodeMediaFrame(MEDIA_KIND_VIDEO, isInit ? MEDIA_FLAG_INIT : 0, seq++, buffer),
+        // A tick is skipped while the previous still is still encoding, rather
+        // than queued. What arrives has to be current; a backlog of stale
+        // pictures is the one thing worth less than no picture.
+        inFlight = true;
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              inFlight = false;
+              return;
+            }
+            blob.arrayBuffer().then(
+              (buffer) => {
+                publishRef.current(encodeMediaFrame(MEDIA_KIND_JPEG, 0, seq++, buffer));
+                inFlight = false;
+              },
+              () => {
+                inFlight = false;
+              },
             );
           },
-          () => {
-            // One dropped fragment; the stream recovers at the next one.
-          },
+          'image/jpeg',
+          STREAM_JPEG_QUALITY,
         );
-      };
-
-      recorder.onerror = () => errorRef.current('Remote video encoder stopped.');
-      recorder.start(STREAM_CHUNK_INTERVAL_MS);
-      // recorder.mimeType, not candidate.mimeType. Chromium answers a request
-      // for avc1.42E01E by encoding avc1.42001f, and a viewer that hands the
-      // requested string to addSourceBuffer gets a decode error and a black
-      // box. Only the encoder knows what it actually made.
-      startRef.current(recorder.mimeType || candidate.mimeType);
-    })();
+      },
+      Math.max(1, Math.round(1000 / STREAM_SNAPSHOT_FPS)),
+    );
 
     return () => {
-      cancelled = true;
-      try {
-        if (recorder && recorder.state !== 'inactive') recorder.stop();
-      } catch {
-        // Already gone.
-      }
-      // Said explicitly rather than left to be inferred from the fragments
-      // drying up, so a viewer can tell "the host turned the camera off" from
-      // "the link went quiet".
+      clearBackgroundTimer(timer);
+      video.srcObject = null;
+      // Said explicitly rather than left to be inferred from the stills drying
+      // up, so a viewer can tell "the host stopped" from "the link went quiet".
       endRef.current();
     };
-    // `active` collapses the three conditions; bitrate and the stream identity
-    // are the only other things worth a restart.
-  }, [active, stream, bitrate]);
+  }, [active, stream]);
 }

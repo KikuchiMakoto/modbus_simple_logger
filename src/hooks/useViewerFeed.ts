@@ -112,15 +112,13 @@ export type ViewerHostHandle = {
   /** The host cleared its chart; viewers must drop their backlog too. */
   publishReset: () => void;
   /**
-   * Push one encoded media fragment. Binary, so it is told apart from every
-   * frame above by its type rather than by a field — which is what let video
-   * join this socket without changing the JSON protocol at all.
+   * Push one camera still. Binary, so it is told apart from every frame above
+   * by its type rather than by a field — which is what let the camera join this
+   * socket without changing the JSON protocol at all.
    */
   publishMedia: (frame: ArrayBuffer) => void;
-  /** The host stopped streaming; viewers should tear their MediaSource down. */
+  /** The host stopped sending stills. */
   publishMediaEnd: () => void;
-  /** The encoder's actual mimeType, which is not always the one requested. */
-  publishMediaStart: (mimeType: string) => void;
   /** How many viewers are attached, or 0. Streaming is skipped when nobody is watching. */
   viewerCount: number;
 };
@@ -246,14 +244,6 @@ export const useViewerHost = (): ViewerHostHandle => {
     send({ type: 'media-end' });
   }, [send]);
 
-  const publishMediaStart = useCallback(
-    (mimeType: string) => {
-      if (!runningRef.current) return;
-      send({ type: 'media-start', mimeType });
-    },
-    [send],
-  );
-
   return {
     status,
     setEnabled,
@@ -263,7 +253,6 @@ export const useViewerHost = (): ViewerHostHandle => {
     publishReset,
     publishMedia,
     publishMediaEnd,
-    publishMediaStart,
     viewerCount: status?.viewers ?? 0,
   };
 };
@@ -272,11 +261,9 @@ export type ViewerClientCallbacks = {
   onState: (state: ViewerStatePayload) => void;
   onSamples: (samples: ViewerSample[]) => void;
   onReset: () => void;
-  /** One media fragment, still wrapped in its header (see utils/mediaFrame.ts). */
+  /** One camera still, still wrapped in its header (see utils/mediaFrame.ts). */
   onMedia?: (frame: ArrayBuffer) => void;
-  /** The codec the host is producing, before any fragment of it arrives. */
-  onMediaStart?: (mimeType: string) => void;
-  /** The host stopped streaming, or went away. */
+  /** The host stopped sending, or went away. */
   onMediaEnd?: () => void;
 };
 
@@ -317,7 +304,7 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
         setHostGone(false);
       };
       socket.onmessage = (event) => {
-        // Media is the only binary frame on this socket, so the split is by
+        // A still is the only binary frame on this socket, so the split is by
         // type and the JSON path below is untouched by its existence.
         if (typeof event.data !== 'string') {
           callbacksRef.current.onMedia?.(event.data as ArrayBuffer);
@@ -327,7 +314,6 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
           type?: string;
           state?: ViewerStatePayload;
           samples?: ViewerSample[];
-          mimeType?: string;
         };
         try {
           frame = JSON.parse(event.data);
@@ -344,9 +330,6 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
           case 'reset':
             callbacksRef.current.onReset();
             break;
-          case 'media-start':
-            if (frame.mimeType) callbacksRef.current.onMediaStart?.(frame.mimeType);
-            break;
           case 'media-end':
             callbacksRef.current.onMediaEnd?.();
             break;
@@ -354,9 +337,9 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
             // Keep what is on screen — the last minute of a measurement is
             // still worth reading — but stop implying it is live.
             setHostGone(true);
-            // The video is the exception: a frozen last frame of the rig is not
-            // "the last minute still worth reading", it is a picture that looks
-            // live and is not.
+            // The picture is the exception: a frozen last still of the rig is
+            // not "the last minute still worth reading", it is an image that
+            // looks live and is not.
             callbacksRef.current.onMediaEnd?.();
             break;
           default:

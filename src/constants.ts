@@ -296,13 +296,21 @@ export const VIDEO_CHUNK_INTERVAL_MS = 1_000;
 
 // Separate from the file's bitrate: the recording must not lose quality because
 // somebody is watching over a phone.
-// Fixed rather than a setting. A megabit is enough to see a rig over a phone
-// link and cheap enough not to be worth a decision — and the recording keeps its
-// own quality regardless, so there is nothing here to trade off against.
-export const STREAM_DEFAULT_BITRATE = 1_000_000;
-// Short chunks are what makes this feel live; this is most of the end-to-end
-// latency budget.
-export const STREAM_CHUNK_INTERVAL_MS = 200;
-// Past this much queued on a viewer's socket, that viewer's fragments are
-// dropped rather than buffered. A slow viewer must cost the host nothing.
+// The remote picture is a JPEG slideshow rather than a video stream, so what
+// matters is how often a still arrives and how big it is.
+//
+// About one a second. Enough to see whether a rig is still turning, whether
+// something has moved, whether smoke is coming off it — which is what remote
+// monitoring is for. A video stream bought smoothness nobody asked for at the
+// cost of every hard bug this feature had.
+export const STREAM_SNAPSHOT_FPS = 1;
+// Stills are scaled down to this before encoding. A 640-wide JPEG at moderate
+// quality is 30-60 kB, so a frame a second is well under half a megabit even
+// over a phone link.
+export const STREAM_SNAPSHOT_MAX_WIDTH = 640;
+export const STREAM_JPEG_QUALITY = 0.6;
+
+// Past this much queued on the host's socket, stills are dropped rather than
+// buffered. A slow link must cost the measurement nothing, and for a slideshow
+// dropping is free: the next picture to get through is the current one anyway.
 export const STREAM_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;

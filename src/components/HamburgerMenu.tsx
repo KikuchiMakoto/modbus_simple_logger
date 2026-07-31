@@ -27,15 +27,15 @@ const MENU_ITEMS = [
   // range, and a lightning bolt read as "power" next to Connection Config.
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
-  // Last of the hardware group and first of the recording one, which is where
-  // it belongs: it binds a camera and microphone like the entries above bind
-  // channels, but what it configures is what Start Save writes.
-  { key: 'recordingConfig', label: 'Recording Config', icon: '🎥', wip: false },
   { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
   // Directly under the runner, because it is the runner's other half: the
   // window where a script is written, and the window where what it said is
   // read. It was a pane inside that window until the editor needed the height.
   { key: 'scriptLog', label: 'Script Log', icon: '🧾', wip: false },
+  // Between the script windows and Remote Monitoring, because that is the order
+  // it is reached in: the camera it binds is what the remote viewer shows, so
+  // whoever is about to share a screen passes through here on the way.
+  { key: 'recordingConfig', label: 'Recording Config', icon: '🎥', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },

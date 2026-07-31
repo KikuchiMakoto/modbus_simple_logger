@@ -89,10 +89,8 @@ class HostFeed {
   }
 
   /**
-   * A media fragment from the page, relayed verbatim.
-   *
-   * The launcher does not parse it beyond the flag byte the hub reads: this is
-   * a relay, and understanding the container would be work it has no use for.
+   * One still from the page, relayed verbatim. The launcher never looks inside
+   * it: this is a relay, and a JPEG has nothing it needs to know.
    */
   handleBinaryMessage(data: ArrayBuffer): void {
     viewerHub.publishMedia(data);
@@ -105,7 +103,6 @@ class HostFeed {
       samples?: ViewerSample[];
       mode?: ViewerMode;
       active?: boolean;
-      mimeType?: string;
     };
     try {
       frame = JSON.parse(raw);
@@ -122,16 +119,11 @@ class HostFeed {
       case 'reset':
         viewerHub.publishReset();
         break;
-      // The page stopped publishing video. Sent explicitly rather than inferred
-      // from the fragments drying up, so a viewer is told the difference between
-      // "the host turned the camera off" and "the link went quiet".
+      // The page stopped sending stills. Said explicitly rather than inferred
+      // from them drying up, so a viewer is told the difference between "the
+      // host turned the camera off" and "the link went quiet".
       case 'media-end':
         viewerHub.publishMediaEnd();
-        break;
-      // What the host's encoder actually produced, which is not always what it
-      // was asked for — see viewerHub.mediaMime.
-      case 'media-start':
-        if (typeof frame.mimeType === 'string') viewerHub.publishMediaStart(frame.mimeType);
         break;
       case 'enable':
         void this.runControl({ type: 'enable', mode: frame.mode === 'tunnel' ? 'tunnel' : 'lan' });
