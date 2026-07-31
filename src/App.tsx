@@ -1227,16 +1227,19 @@ function App() {
   }, []);
 
   /**
-   * The chosen folder, with write permission confirmed — prompting, and falling
-   * back to the picker, if need be. Must be called from a user gesture.
+   * Open the folder picker, unconditionally. This is what the Choose button
+   * does, and it has to be separate from ensureOutputDirectory below.
+   *
+   * They were the same function, and it made the button dead: once a folder was
+   * set and still permitted, "ensure" was satisfied and returned early without
+   * ever opening a picker — so a folder could be chosen once and never changed.
+   * Reusing what is already there is right when a recording is starting, and
+   * exactly wrong when the user has asked to pick.
    *
    * Returns null when the user cancels, which is an answer rather than a fault
    * and so is not reported as an error.
    */
-  const ensureOutputDirectory = async (): Promise<FileSystemDirectoryHandle | null> => {
-    if (outputDir && (await ensureWritePermission(outputDir))) return outputDir;
-    // Either nothing chosen yet, or the grant lapsed and the user declined to
-    // restore it. Both end at the picker, which is the only way forward.
+  const chooseOutputDirectory = async (): Promise<FileSystemDirectoryHandle | null> => {
     const picked = await pickOutputDirectory();
     if (!picked) return null;
     await saveOutputDirectory(picked).catch(() => {
@@ -1245,6 +1248,19 @@ function App() {
     });
     setOutputDir(picked);
     return picked;
+  };
+
+  /**
+   * The folder to record into, with write permission confirmed. Reuses the
+   * chosen one when it is still usable, and only falls back to the picker when
+   * there is nothing to reuse. Must be called from a user gesture — the grant
+   * does not survive a browser restart.
+   */
+  const ensureOutputDirectory = async (): Promise<FileSystemDirectoryHandle | null> => {
+    if (outputDir && (await ensureWritePermission(outputDir))) return outputDir;
+    // Either nothing chosen yet, or the grant lapsed and the user declined to
+    // restore it. Both end at the picker, which is the only way forward.
+    return chooseOutputDirectory();
   };
 
   // Host side of remote video. A second encoder, so it only runs when somebody
@@ -3177,7 +3193,7 @@ function App() {
         onStopRecording={handleStopRecording}
         outputDirName={outputDir?.name ?? null}
         onChooseOutputDir={() => {
-          void ensureOutputDirectory();
+          void chooseOutputDirectory();
         }}
       />
 
