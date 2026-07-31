@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  USB_BUDGET_OPTIONS,
+  USB_BLOCK_MBPS,
+  USB_HS_MBPS,
+  USB_WARN_MBPS,
   VIDEO_BITS_PER_PIXEL_FRAME,
+  VIDEO_CAPTURE_FPS_OPTIONS,
   VIDEO_MAX_BITRATE,
-  VIDEO_MAX_FPS,
   VIDEO_MIN_BITRATE,
-  VIDEO_MIN_FPS,
-  VIDEO_MIN_HEIGHT,
-  VIDEO_MIN_WIDTH,
-  VIDEO_PRESETS,
+  VIDEO_RECORD_FPS_OPTIONS,
+  VIDEO_SIZES,
 } from '../constants';
 import type { CameraFeed } from '../hooks/useCameraFeed';
 import {
+  OVERLAY_POSITIONS,
   emptyDeviceLists,
   enumerateMediaDevices,
   resolveBoundDevice,
   type DeviceLists,
+  type OverlayPosition,
   type RecordingConfig,
-  type UvcFormat,
 } from '../utils/recordingConfig';
 import { checkUsbBudget, largestFittingFps } from '../utils/usbBandwidth';
 import { bitrateFor, probeVideoAccel, type VideoAccelVerdict } from '../utils/videoAccel';
@@ -42,6 +43,10 @@ type RecordingConfigPanelProps = {
   onChooseOutputDir: () => void;
 };
 
+const SELECT =
+  'w-full rounded border border-slate-300 bg-white px-1.5 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+const LABEL = 'block text-xs text-slate-600 dark:text-slate-400';
+
 /** `1:02:03` — the same shape as the header's save timer. */
 function formatElapsed(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -52,85 +57,23 @@ function formatElapsed(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-const INPUT_CLASS =
-  'w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
-const LABEL_CLASS = 'block text-xs text-slate-600 dark:text-slate-400';
-
-const UVC_FORMAT_OPTIONS: { value: UvcFormat; label: string }[] = [
-  { value: 'mjpeg', label: 'MJPEG (compressed)' },
-  { value: 'yuy2', label: 'YUY2 (uncompressed)' },
-  { value: 'h264', label: 'H.264 (camera encodes)' },
-];
-
-/** A number field that only commits on blur or Enter, like the Slave ID field. */
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  disabled,
-  onCommit,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  disabled: boolean;
-  onCommit: (value: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const commit = () => {
-    const parsed = parseInt(draft.trim(), 10);
-    if (!Number.isFinite(parsed)) {
-      setDraft(String(value));
-      return;
-    }
-    const clamped = Math.min(max, Math.max(min, parsed));
-    setDraft(String(clamped));
-    if (clamped !== value) onCommit(clamped);
-  };
-
-  return (
-    <div className="flex-1">
-      <label className={LABEL_CLASS}>{label}</label>
-      <input
-        type="number"
-        value={draft}
-        min={min}
-        disabled={disabled}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-        }}
-        className={INPUT_CLASS}
-      />
-    </div>
-  );
-}
-
 /**
  * Live input level for the bound microphone.
  *
- * Reads the same stream the recorder will use, so a flat bar here means the
- * recording would be silent too — which is the entire question this answers.
+ * Written straight to the DOM rather than through state: a level meter updates
+ * every frame, and 60 setState calls a second here would re-render this panel —
+ * and re-run its budget and codec checks — sixty times a second, on the thread
+ * that must not miss a Modbus deadline.
  */
 function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
   const barRef = useRef<HTMLDivElement | null>(null);
-  const peakRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const track = stream?.getAudioTracks()[0];
     const bar = barRef.current;
-    const peakMark = peakRef.current;
-    if (!bar || !peakMark) return;
+    if (!bar) return;
     if (!track) {
       bar.style.width = '0%';
-      peakMark.style.left = '0%';
       return;
     }
 
@@ -147,14 +90,7 @@ function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
 
     const buffer = new Uint8Array(analyser.fftSize);
     let frame = 0;
-    let peakHold = 0;
 
-    // The bar is written straight to the DOM rather than through state. A level
-    // meter updates every frame, and 60 setState calls a second here would
-    // re-render this panel — and re-run its budget and codec checks — sixty
-    // times a second, on the thread that must not miss a Modbus deadline. The
-    // one thing this component must not do is cost the measurement anything.
-    //
     // requestAnimationFrame, deliberately unlike the capture pump in
     // useCameraFeed: this is a readout nobody is looking at when the window is
     // hidden, and it should stop when the window does.
@@ -165,15 +101,9 @@ function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
         const centred = (buffer[i] - 128) / 128;
         sum += centred * centred;
       }
-      const rms = Math.sqrt(sum / buffer.length);
-      const level = Math.min(1, rms * 3);
-      peakHold = Math.max(level, peakHold * 0.98);
-
+      const level = Math.min(1, Math.sqrt(sum / buffer.length) * 3);
       bar.style.width = `${Math.round(level * 100)}%`;
-      bar.style.backgroundColor =
-        level > 0.9 ? '#f43f5e' : level > 0.6 ? '#fbbf24' : '#10b981';
-      peakMark.style.left = `${Math.round(peakHold * 100)}%`;
-
+      bar.style.backgroundColor = level > 0.9 ? '#f43f5e' : level > 0.6 ? '#fbbf24' : '#10b981';
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -187,15 +117,8 @@ function MicLevelMeter({ stream }: { stream: MediaStream | null }) {
   }, [stream]);
 
   return (
-    <div className="mt-1">
-      <div className="relative h-2 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
-        <div ref={barRef} className="h-full w-0 bg-emerald-500" />
-        <div
-          ref={peakRef}
-          className="absolute top-0 h-full w-0.5 bg-slate-500 dark:bg-slate-300"
-          style={{ left: '0%' }}
-        />
-      </div>
+    <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
+      <div ref={barRef} className="h-full w-0 bg-emerald-500" />
     </div>
   );
 }
@@ -262,6 +185,29 @@ export function RecordingConfigPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, locked, devices]);
 
+  /**
+   * Bind the first device when nothing has been chosen.
+   *
+   * The camera has no None: a Recording Config window whose camera is unset
+   * shows a black preview and a dead button, which reads as broken rather than
+   * as unconfigured. The microphone does have None, so it is only defaulted
+   * until the user has said something about it — see `audioChosen`.
+   */
+  useEffect(() => {
+    if (!open || locked || !devices.labelsVisible) return;
+    const patch: Partial<RecordingConfig> = {};
+    if (config.videoDeviceId === null && devices.cameras.length > 0) {
+      patch.videoDeviceId = devices.cameras[0].deviceId;
+      patch.videoDeviceLabel = devices.cameras[0].label;
+    }
+    if (!config.audioChosen && config.audioDeviceId === null && devices.microphones.length > 0) {
+      patch.audioDeviceId = devices.microphones[0].deviceId;
+      patch.audioDeviceLabel = devices.microphones[0].label;
+    }
+    if (Object.keys(patch).length > 0) set(patch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, locked, devices, config.videoDeviceId, config.audioDeviceId, config.audioChosen]);
+
   const requestPermission = async () => {
     setPermissionError(null);
     try {
@@ -275,32 +221,79 @@ export function RecordingConfigPanel({
     }
   };
 
+  // The encoder is asked to keep up with the recording rate, not the capture
+  // rate: frames dropped before the encoder are frames it never has to encode.
   const bitrate = useMemo(
     () =>
       bitrateFor(
         config.width,
         config.height,
-        config.fps,
+        config.recordFps,
         VIDEO_BITS_PER_PIXEL_FRAME,
         VIDEO_MIN_BITRATE,
         VIDEO_MAX_BITRATE,
       ),
-    [config.width, config.height, config.fps],
+    [config.width, config.height, config.recordFps],
   );
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    probeVideoAccel(config.width, config.height, config.fps, bitrate).then((verdict) => {
+    probeVideoAccel(config.width, config.height, config.recordFps, bitrate).then((verdict) => {
       if (!cancelled) setAccel(verdict);
     });
     return () => {
       cancelled = true;
     };
-  }, [open, config.width, config.height, config.fps, bitrate]);
+  }, [open, config.width, config.height, config.recordFps, bitrate]);
 
   const budget = useMemo(() => checkUsbBudget(config), [config]);
-  const canEnable = accel?.ok === true && budget.ok;
+  const canRecord = accel?.ok === true && budget.ok && feed.active;
+
+  const capMax = feed.capabilities;
+
+  /**
+   * `getCapabilities()` answers with a *range* — width 1..3840, frameRate 0..30
+   * — not the list of modes the camera natively has, and every size inside that
+   * range is accepted because Chromium will crop-and-scale to it. So only the
+   * maximum is worth trusting, and it is used to hide options rather than to
+   * validate anything. The current selection is kept even when it is over, so a
+   * config saved against another camera stays visible instead of being silently
+   * swapped.
+   */
+  const sizeOptions = useMemo(() => {
+    const maxW = capMax?.width?.max ?? Number.POSITIVE_INFINITY;
+    const maxH = capMax?.height?.max ?? Number.POSITIVE_INFINITY;
+    const list: { width: number; height: number }[] = VIDEO_SIZES.filter(
+      (s) => s.width <= maxW && s.height <= maxH,
+    );
+    if (list.some((s) => s.width === config.width && s.height === config.height)) return list;
+    return [...list, { width: config.width, height: config.height }].sort(
+      (a, b) => a.width * a.height - b.width * b.height,
+    );
+  }, [capMax, config.width, config.height]);
+
+  const captureFpsOptions = useMemo(() => {
+    const max = capMax?.frameRate?.max ?? Number.POSITIVE_INFINITY;
+    const list: number[] = VIDEO_CAPTURE_FPS_OPTIONS.filter((f) => f <= max);
+    if (!list.includes(config.captureFps)) list.push(config.captureFps);
+    return list.sort((a, b) => a - b);
+  }, [capMax, config.captureFps]);
+
+  // Never above the capture rate: the file cannot contain frames the camera did
+  // not send.
+  const recordFpsOptions = useMemo(
+    () => VIDEO_RECORD_FPS_OPTIONS.filter((f) => f <= config.captureFps),
+    [config.captureFps],
+  );
+
+  // Keep the preview attached to whatever the feed is currently producing.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.srcObject = feed.stream;
+    if (feed.stream) void el.play().catch(() => {});
+  }, [feed.stream]);
 
   // A window timer, not the background one: this is a readout, and a recording
   // clock that keeps ticking in a minimised window is work nobody is reading.
@@ -315,125 +308,78 @@ export function RecordingConfigPanel({
     return () => window.clearInterval(id);
   }, [recordingStartedAt]);
 
-  // Keep the preview attached to whatever the feed is currently producing.
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    el.srcObject = feed.stream;
-    if (feed.stream) void el.play().catch(() => {});
-  }, [feed.stream]);
-
-  const fitFps = largestFittingFps(
-    config.width,
-    config.height,
-    config.uvcFormat,
-    config.usbBudgetMbps,
-  );
-
-  const capMax = feed.capabilities;
+  const fitFps = largestFittingFps(config.width, config.height);
 
   return (
     <FloatingWindow
       open={open}
       onClose={onClose}
       title="Recording Config"
-      subtitle={locked ? 'Recording — settings apply from the next Start Save' : undefined}
-      defaultWidth={380}
-      defaultHeight={620}
+      subtitle={locked ? 'Recording — settings apply from the next start' : undefined}
+      defaultWidth={340}
+      defaultHeight={560}
     >
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
-        {/* The gate, first and unmissable. Everything below it is pointless if
-            this is red, and a user who cannot record deserves to know why before
-            they spend time on the settings. */}
-        {accel && (
-          <div
-            className={`rounded border px-2 py-1 text-xs ${
-              accel.ok
-                ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200'
-                : 'border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200'
-            }`}
-          >
-            <p className="font-semibold">{accel.reason}</p>
-            <p className="mt-0.5 break-words opacity-80" translate="no">
-              {accel.detail}
-            </p>
-          </div>
+        {/* One line. The measurements that back it are on the hover, not on the
+            page: four codec strings and a D3D11 renderer line beside a disabled
+            button is a paragraph nobody reads, but it still has to be reachable
+            because this verdict can be wrong (see utils/videoAccel). */}
+        {accel && !accel.ok && (
+          <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+            Recording disabled — {accel.summary}{' '}
+            <span className="cursor-help underline decoration-dotted" title={accel.detail}>
+              why
+            </span>
+          </p>
+        )}
+        {!budget.ok && (
+          <p className="rounded bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+            Recording disabled — over the USB budget. The camera is not opened while it is.
+          </p>
         )}
 
-        {/* The recording control, and the destination it needs. Both live at
-            the top because this window is now where a recording is started —
-            it is no longer a side effect of Start Save, so the button that does
-            it should be the first thing in the window that owns it. */}
-        <div className="space-y-1.5 rounded border border-slate-200 p-2 dark:border-slate-700">
-          <div className="flex items-baseline gap-1.5">
-            <span className={LABEL_CLASS}>Save to</span>
-            <span
-              className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 dark:text-slate-200"
-              translate="no"
-              title={outputDirName ?? undefined}
-            >
-              {outputDirName ?? 'no folder chosen'}
-            </span>
-            <button
-              type="button"
-              onClick={onChooseOutputDir}
-              disabled={locked}
-              className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[0.7rem] text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              Choose…
-            </button>
-          </div>
-
-          {locked ? (
-            <button
-              type="button"
-              onClick={onStopRecording}
-              className="w-full rounded bg-rose-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-rose-500"
-            >
-              Stop Recording
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onStartRecording}
-              disabled={!canEnable || !feed.active}
-              className="w-full rounded bg-emerald-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-400 dark:disabled:bg-slate-700"
-            >
-              Start Recording
-            </button>
-          )}
-
-          {locked ? (
-            <p className="text-[0.7rem] text-slate-600 dark:text-slate-300" translate="no">
-              ● {activeFileName} · {formatElapsed(elapsedMs)}
-            </p>
-          ) : (
-            <p className="text-[0.7rem] text-slate-500 dark:text-slate-400">
-              {/* The over-budget case is called out separately from "no camera".
-                  The camera is not opened at all while the setting is over
-                  budget — a UVC camera reserves its bandwidth the moment it
-                  opens — so the preview below goes black, and without this line
-                  that reads as a broken camera rather than as a refused
-                  setting. */}
-              {!budget.ok
-                ? 'The camera is not opened while this size is over the USB budget — see below.'
-                : !feed.active
-                  ? 'Bind a camera or microphone below first.'
-                  : outputDirName
-                    ? 'Files are named by the time they start, like the TSV.'
-                    : 'You will be asked for a folder when you press this.'}
-            </p>
-          )}
-
-          {/* Said where it matters rather than buried in a manual. The file is
-              written through a handle that only commits on close, so this is
-              the same caveat Start Save carries — and unlike the TSV there is
-              no crash-recovery mirror, because mirroring gigabytes of video
-              would cost the acquisition loop the disk bandwidth it needs. */}
-          <p className="text-[0.7rem] text-amber-600 dark:text-amber-400">
-            The file is finished when you press Stop. A crash before that loses the recording.
-          </p>
+        <div className="flex items-baseline gap-1.5">
+          <span className={LABEL}>Save to</span>
+          <span
+            className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-700 dark:text-slate-200"
+            translate="no"
+            title={outputDirName ?? undefined}
+          >
+            {outputDirName ?? '—'}
+          </span>
+          <button
+            type="button"
+            onClick={onChooseOutputDir}
+            disabled={locked}
+            className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[0.7rem] text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Choose…
+          </button>
         </div>
+
+        {locked ? (
+          <button
+            type="button"
+            onClick={onStopRecording}
+            className="w-full rounded bg-rose-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-rose-500"
+          >
+            Stop Recording · {formatElapsed(elapsedMs)}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onStartRecording}
+            disabled={!canRecord}
+            className="w-full rounded bg-emerald-600 px-2 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-400 dark:disabled:bg-slate-700"
+          >
+            Start Recording
+          </button>
+        )}
+        <p className="text-[0.7rem] text-slate-500 dark:text-slate-400" translate="no">
+          {locked
+            ? activeFileName
+            : 'Finished on Stop — a crash before that loses the recording.'}
+        </p>
 
         {!devices.labelsVisible && (
           <button
@@ -449,8 +395,11 @@ export function RecordingConfigPanel({
         )}
         {feed.error && <p className="text-xs text-rose-600 dark:text-rose-400">{feed.error}</p>}
 
+        {/* The two bindings together, camera first: they are one decision about
+            what this recording is of, and separating them with a preview made
+            the microphone read as an afterthought. */}
         <div>
-          <label className={LABEL_CLASS}>Camera</label>
+          <label className={LABEL}>Camera</label>
           <select
             value={config.videoDeviceId ?? ''}
             disabled={locked}
@@ -459,9 +408,12 @@ export function RecordingConfigPanel({
               const found = devices.cameras.find((d) => d.deviceId === id);
               set({ videoDeviceId: id, videoDeviceLabel: found?.label ?? '' });
             }}
-            className={INPUT_CLASS}
+            className={SELECT}
           >
-            <option value="">None</option>
+            {/* No None. A recording with no camera is an audio file, and if that
+                is what is wanted it is reached by unbinding the microphone's
+                counterpart, not by turning the video off here. */}
+            {devices.cameras.length === 0 && <option value="">No camera found</option>}
             {devices.cameras.map((d, i) => (
               <option key={d.deviceId} value={d.deviceId}>
                 {d.label || `Camera ${i + 1}`}
@@ -470,38 +422,19 @@ export function RecordingConfigPanel({
           </select>
         </div>
 
-        <div className="overflow-hidden rounded border border-slate-200 bg-black dark:border-slate-700">
-          <video
-            ref={videoRef}
-            muted
-            playsInline
-            autoPlay
-            className="block h-[150px] w-full object-contain"
-          />
-        </div>
-        {feed.settings && (
-          <p className="text-[0.7rem] text-slate-500 dark:text-slate-400" translate="no">
-            Actual: {feed.settings.width}×{feed.settings.height} @{' '}
-            {Math.round(feed.settings.frameRate ?? 0)} fps
-            {(feed.settings.width !== config.width || feed.settings.height !== config.height) && (
-              <span className="ml-1 text-amber-600 dark:text-amber-400">
-                — the camera chose the nearest mode it has
-              </span>
-            )}
-          </p>
-        )}
-
         <div>
-          <label className={LABEL_CLASS}>Microphone</label>
+          <label className={LABEL}>Microphone</label>
           <select
             value={config.audioDeviceId ?? ''}
             disabled={locked}
             onChange={(e) => {
               const id = e.target.value || null;
               const found = devices.microphones.find((d) => d.deviceId === id);
-              set({ audioDeviceId: id, audioDeviceLabel: found?.label ?? '' });
+              // audioChosen from here on, so picking None sticks instead of
+              // being defaulted back to the first microphone next time.
+              set({ audioDeviceId: id, audioDeviceLabel: found?.label ?? '', audioChosen: true });
             }}
-            className={INPUT_CLASS}
+            className={SELECT}
           >
             <option value="">None</option>
             {devices.microphones.map((d, i) => (
@@ -513,145 +446,153 @@ export function RecordingConfigPanel({
           <MicLevelMeter stream={feed.stream} />
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-          <input
-            type="checkbox"
-            checked={config.overlayTimestamp}
-            disabled={locked}
-            onChange={(e) => set({ overlayTimestamp: e.target.checked })}
-            className="h-4 w-4"
+        <div className="overflow-hidden rounded bg-black">
+          <video
+            ref={videoRef}
+            muted
+            playsInline
+            autoPlay
+            className="block h-[140px] w-full object-contain"
           />
-          <span>Burn local time into the video</span>
-        </label>
+        </div>
+        {feed.settings && (
+          <p className="text-[0.7rem] text-slate-500 dark:text-slate-400" translate="no">
+            {feed.settings.width}×{feed.settings.height} @ {Math.round(feed.settings.frameRate ?? 0)}{' '}
+            fps
+            {(feed.settings.width !== config.width || feed.settings.height !== config.height) &&
+              ' — nearest mode the camera has'}
+          </p>
+        )}
 
+        <div>
+          <label className={LABEL}>Burn timestamp</label>
+          <select
+            value={config.overlayPosition}
+            disabled={locked}
+            onChange={(e) => set({ overlayPosition: e.target.value as OverlayPosition })}
+            className={SELECT}
+          >
+            {OVERLAY_POSITIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className={LABEL}>Resolution</label>
+          <select
+            value={`${config.width}x${config.height}`}
+            disabled={locked}
+            onChange={(e) => {
+              const [w, h] = e.target.value.split('x').map(Number);
+              set({ width: w, height: h });
+            }}
+            className={SELECT}
+          >
+            {sizeOptions.map((s) => (
+              <option key={`${s.width}x${s.height}`} value={`${s.width}x${s.height}`}>
+                {s.width}×{s.height}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Two rates, because they answer different questions — the same split
+            the app already makes between Polling Rate and Save Rate. Capture is
+            what the camera streams, and is what the USB budget below is spent
+            on. Recording is how much of it is written. */}
         <div className="flex gap-1.5">
-          <NumberField
-            label="Width"
-            value={config.width}
-            min={VIDEO_MIN_WIDTH}
-            max={Number.MAX_SAFE_INTEGER}
-            disabled={locked}
-            onCommit={(width) => set({ width })}
-          />
-          <NumberField
-            label="Height"
-            value={config.height}
-            min={VIDEO_MIN_HEIGHT}
-            max={Number.MAX_SAFE_INTEGER}
-            disabled={locked}
-            onCommit={(height) => set({ height })}
-          />
-          <NumberField
-            label="FPS"
-            value={config.fps}
-            min={VIDEO_MIN_FPS}
-            max={VIDEO_MAX_FPS}
-            disabled={locked}
-            onCommit={(fps) => set({ fps })}
-          />
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {VIDEO_PRESETS.map((p) => (
-            <button
-              key={p.label}
-              type="button"
-              disabled={locked}
-              onClick={() => set({ width: p.width, height: p.height, fps: p.fps })}
-              className="rounded border border-slate-300 px-1.5 py-0.5 text-[0.7rem] text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {/* Reported, never enforced: plenty of cameras understate or omit their
-            capabilities, and refusing a size on the strength of that would block
-            a mode the camera can actually do. */}
-        {capMax?.width?.max !== undefined &&
-          (config.width > (capMax.width.max ?? 0) ||
-            config.height > (capMax.height?.max ?? 0)) && (
-            <p className="text-[0.7rem] text-amber-600 dark:text-amber-400" translate="no">
-              This camera reports a maximum of {capMax.width.max}×{capMax.height?.max} @{' '}
-              {capMax.frameRate?.max ?? '?'} fps.
-            </p>
-          )}
-
-        {/* USB budget. The camera reserves isochronous bandwidth up front; the
-            Modbus adapter's serial link is bulk and gets what is left. */}
-        <div className="space-y-1 rounded border border-slate-200 p-1.5 dark:border-slate-700">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-              USB bandwidth
-            </span>
+          <div className="flex-1">
+            <label className={LABEL}>Capture FPS</label>
             <select
-              value={config.uvcFormat}
+              value={config.captureFps}
               disabled={locked}
-              onChange={(e) => set({ uvcFormat: e.target.value as UvcFormat })}
-              className="ml-auto rounded border border-slate-300 bg-white px-1 py-0 text-[0.7rem] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              onChange={(e) => {
+                const captureFps = Number(e.target.value);
+                // Writing more frames than were captured is not a thing a
+                // recorder can do, so the record rate follows it down.
+                set({ captureFps, recordFps: Math.min(config.recordFps, captureFps) });
+              }}
+              className={SELECT}
             >
-              {UVC_FORMAT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={config.usbBudgetMbps}
-              disabled={locked}
-              onChange={(e) => set({ usbBudgetMbps: Number(e.target.value) })}
-              className="rounded border border-slate-300 bg-white px-1 py-0 text-[0.7rem] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            >
-              {USB_BUDGET_OPTIONS.map((mbps) => (
-                <option key={mbps} value={mbps}>
-                  {mbps} Mbps
+              {captureFpsOptions.map((f) => (
+                <option key={f} value={f}>
+                  {f}
                 </option>
               ))}
             </select>
           </div>
-
-          {!budget.skipped && (
-            <>
-              <div className="h-2 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
-                <div
-                  className={`h-full ${budget.ok ? 'bg-emerald-500' : 'bg-rose-500'}`}
-                  style={{ width: `${Math.min(100, Math.round(budget.usedFraction * 100))}%` }}
-                />
-              </div>
-              <p
-                className={`text-[0.7rem] ${budget.ok ? 'text-slate-600 dark:text-slate-400' : 'text-rose-600 dark:text-rose-400'}`}
-                translate="no"
-              >
-                {budget.estimateMbps.toFixed(0)} Mbps of {budget.budgetMbps} Mbps
-                {!budget.ok && fitFps >= 1 && ` — ${fitFps} fps would fit at this size`}
-              </p>
-              {/* Always shown, pass or fail. The browser never says which UVC
-                  format it negotiated, so a green bar based on the declared one
-                  is a claim that could be wrong — and hiding that would be the
-                  dishonest part, not the estimate itself. */}
-              {config.uvcFormat !== 'yuy2' && budget.worstCaseOverBudget && (
-                <p className="text-[0.7rem] text-amber-600 dark:text-amber-400" translate="no">
-                  If the camera falls back to YUY2 this needs{' '}
-                  {budget.worstCaseMbps.toFixed(0)} Mbps — over budget.
-                </p>
-              )}
-            </>
-          )}
-
-          <label className="flex items-center gap-1.5 text-[0.7rem] text-slate-600 dark:text-slate-400">
-            <input
-              type="checkbox"
-              checked={config.separateUsbBus}
+          <div className="flex-1">
+            <label className={LABEL}>Recording FPS</label>
+            <select
+              value={config.recordFps}
               disabled={locked}
-              onChange={(e) => set({ separateUsbBus: e.target.checked })}
-              className="h-3 w-3"
-            />
-            <span>Camera is on a separate USB bus / USB3 port (skip this check)</span>
-          </label>
+              onChange={(e) => set({ recordFps: Number(e.target.value) })}
+              className={SELECT}
+            >
+              {recordFpsOptions.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+        {config.recordFps < config.captureFps && (
+          <p className="text-[0.7rem] text-slate-500 dark:text-slate-400">
+            {config.recordFps < 1
+              ? `One frame every ${(1 / config.recordFps).toFixed(0)} s.`
+              : `Keeping 1 frame in ${Math.round(config.captureFps / config.recordFps)}.`}{' '}
+            The camera still streams at {config.captureFps} fps, so the USB load is unchanged.
+          </p>
+        )}
 
-        <p className="text-[0.7rem] text-slate-500 dark:text-slate-400">
-          Recording starts with Start Save and is saved to your downloads folder at Stop Save, under
-          the same name as the TSV.
-        </p>
+        {/* USB load. The camera reserves isochronous bandwidth up front; the
+            Modbus adapter's serial link is bulk and gets what is left.
+            An MJPEG estimate — the browser will not say which payload format it
+            negotiated, so this is approximate by construction. */}
+        <div className="space-y-1 border-t border-slate-200 pt-1.5 dark:border-slate-700">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-xs text-slate-600 dark:text-slate-400">USB</span>
+            <span
+              className={`flex-1 text-[0.7rem] ${
+                budget.level === 'block'
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : budget.level === 'warn'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-slate-600 dark:text-slate-400'
+              }`}
+              translate="no"
+            >
+              ≈{budget.mbps.toFixed(0)} of {USB_HS_MBPS} Mbps
+              {budget.level === 'block' && fitFps >= 1 && ` · ${fitFps} fps would fit`}
+            </span>
+          </div>
+          <div className="relative h-1.5 w-full overflow-hidden rounded bg-slate-200 dark:bg-slate-700">
+            <div
+              className={`h-full ${
+                budget.level === 'block'
+                  ? 'bg-rose-500'
+                  : budget.level === 'warn'
+                    ? 'bg-amber-400'
+                    : 'bg-emerald-500'
+              }`}
+              style={{ width: `${Math.round(budget.usedFraction * 100)}%` }}
+            />
+            {/* The two thresholds, drawn on the bar. Without them the colour
+                change is the only clue where the limits are, and that only
+                helps once you have already crossed one. */}
+            {[USB_WARN_MBPS, USB_BLOCK_MBPS].map((mark) => (
+              <div
+                key={mark}
+                className="absolute top-0 h-full w-px bg-slate-400 dark:bg-slate-500"
+                style={{ left: `${(mark / USB_HS_MBPS) * 100}%` }}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </FloatingWindow>
   );

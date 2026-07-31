@@ -164,9 +164,16 @@ export interface VideoAccelVerdict {
   ok: boolean;
   /** The candidate that passed, or null. */
   candidate: MimeCandidate | null;
-  /** Headline for the panel. */
+  /** Headline for the panel. One line. */
   reason: string;
-  /** The measurements behind the verdict, shown verbatim so it can be argued with. */
+  /** One short line under it — the shape of the answer, not the evidence. */
+  summary: string;
+  /**
+   * The measurements in full, kept for the case where the verdict is disputed
+   * (it can be, see the note at the top of this file). Folded away in the panel:
+   * four codec strings and a D3D11 renderer line is a paragraph, and a paragraph
+   * next to a disabled button is not read, it is skipped.
+   */
   detail: string;
   /** Renderer string from the WebGL probe. */
   renderer: string;
@@ -192,6 +199,7 @@ export async function probeVideoAccel(
       ok: false,
       candidate: null,
       reason: 'Hardware video encoding unavailable — recording disabled.',
+      summary: 'The GPU is running in software.',
       detail: `Renderer: ${backend.detail} (${backend.api}, software). A GPU process running in software has no hardware video encoder behind it.`,
       renderer: backend.detail,
       softwareRenderer: true,
@@ -203,6 +211,7 @@ export async function probeVideoAccel(
       ok: false,
       candidate: null,
       reason: 'Hardware video encoding could not be confirmed — recording disabled.',
+      summary: 'WebCodecs is unavailable, so the question cannot be asked.',
       detail: `WebCodecs (VideoEncoder) is unavailable here${
         typeof window !== 'undefined' && !window.isSecureContext
           ? ', because this page is not a secure context'
@@ -225,6 +234,7 @@ export async function probeVideoAccel(
         ok: true,
         candidate,
         reason: `Hardware encoding available — ${candidate.label}.`,
+        summary: `${candidate.codec} at ${width}×${height}@${fps}.`,
         detail: `VideoEncoder: prefer-hardware accepted ${candidate.codec} at ${width}×${height}@${fps} · Renderer: ${backend.detail}`,
         renderer: backend.detail,
         softwareRenderer: false,
@@ -239,6 +249,9 @@ export async function probeVideoAccel(
     ok: false,
     candidate: null,
     reason: 'Hardware video encoding unavailable — recording disabled.',
+    // Names the codecs rather than repeating the container labels: four lines
+    // that all say "no hardware encoder" is one fact, not four.
+    summary: `No hardware encoder for H.264, VP9 or VP8 at ${width}×${height}@${fps}.`,
     // The measurements, verbatim, so the refusal can be checked against
     // chrome://gpu ("Video Encode") rather than taken on faith. Note that
     // MediaRecorder does not go through VideoEncoder and the two can disagree,

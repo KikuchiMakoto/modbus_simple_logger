@@ -83,7 +83,9 @@ export async function createVideoRecorder({
     const settings = stream.getVideoTracks()[0]?.getSettings();
     const width = settings?.width ?? config.width;
     const height = settings?.height ?? config.height;
-    const fps = settings?.frameRate ?? config.fps;
+    // The recording rate, not what getSettings reports: the stream reaching the
+    // encoder has already been decimated to it by useCameraFeed's frame pump.
+    const fps = config.recordFps;
 
     bitrate = bitrateFor(
       width,

@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clearBackgroundTimer, setBackgroundInterval } from '../utils/backgroundTimer';
 import { formatTimestamp } from '../utils/tsvFormat';
-import type { RecordingConfig } from '../utils/recordingConfig';
+import type { OverlayPosition, RecordingConfig } from '../utils/recordingConfig';
 
 export interface CameraFeed {
   /** What recorders and the preview should consume: composited if the overlay is on. */
@@ -56,8 +56,9 @@ const captureKey = (config: RecordingConfig): string =>
     config.audioDeviceId ?? '',
     config.width,
     config.height,
-    config.fps,
-    config.overlayTimestamp ? 'ts' : 'raw',
+    config.captureFps,
+    config.recordFps,
+    config.overlayPosition,
   ].join('|');
 
 /**
@@ -77,23 +78,37 @@ function drawFrame(
   video: HTMLVideoElement,
   width: number,
   height: number,
+  position: OverlayPosition,
 ): void {
   ctx.drawImage(video, 0, 0, width, height);
+  // The canvas is also used purely to drop frames, with no text wanted.
+  if (position === 'none') return;
 
   const text = formatTimestamp(Date.now());
   const fontSize = Math.max(12, Math.round(height / 24));
   const margin = Math.round(height / 45);
 
   ctx.font = `bold ${fontSize}px "Iosevka", ui-monospace, monospace`;
-  ctx.textBaseline = 'alphabetic';
-  ctx.textAlign = 'left';
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
   ctx.lineWidth = Math.max(2, height / 300);
+
+  const right = position === 'top-right' || position === 'bottom-right';
+  const top = position === 'top-left' || position === 'top-right';
+  ctx.textAlign = right ? 'right' : 'left';
+  // 'top' rather than arithmetic on the font size: the baseline of a clipped
+  // ascender is not where the eye reads the top edge of the text to be.
+  ctx.textBaseline = top ? 'top' : 'alphabetic';
+  const x = right ? width - margin : margin;
+  const y = top ? margin : height - margin;
+
+  // Stroked before filled, so the black outline sits behind the white glyphs
+  // rather than eating into them — which is what keeps it readable over both a
+  // dark rig and a bright window behind it.
   ctx.strokeStyle = '#000000';
-  ctx.strokeText(text, margin, height - margin);
+  ctx.strokeText(text, x, y);
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(text, margin, height - margin);
+  ctx.fillText(text, x, y);
 }
 
 export interface UseCameraFeedOptions {
@@ -170,7 +185,7 @@ export function useCameraFeed({ config, active, locked }: UseCameraFeedOptions):
                 deviceId: { exact: snapshot.videoDeviceId as string },
                 width: { ideal: snapshot.width },
                 height: { ideal: snapshot.height },
-                frameRate: { ideal: snapshot.fps },
+                frameRate: { ideal: snapshot.captureFps },
               }
             : false,
           // The processing chain is off on purpose. This records what a rig
@@ -198,7 +213,17 @@ export function useCameraFeed({ config, active, locked }: UseCameraFeedOptions):
 
         let outputStream = rawStream;
 
-        if (videoTrack && snapshot.overlayTimestamp) {
+        // The canvas path is needed for two independent reasons, and either one
+        // is enough: drawing the timestamp, and emitting fewer frames than the
+        // camera produces. Frame decimation cannot be done on a raw track — the
+        // only place frames can be dropped is the pump that feeds
+        // captureStream(0).
+        const needsCanvas =
+          videoTrack !== null &&
+          (snapshot.overlayPosition !== 'none' ||
+            snapshot.recordFps < (settings?.frameRate ?? snapshot.captureFps));
+
+        if (videoTrack && needsCanvas) {
           const width = settings?.width ?? snapshot.width;
           const height = settings?.height ?? snapshot.height;
 
@@ -227,12 +252,22 @@ export function useCameraFeed({ config, active, locked }: UseCameraFeedOptions):
           const captured = canvas.captureStream(0);
           const canvasTrack = captured.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
 
-          const fps = settings?.frameRate ?? snapshot.fps;
-          frameTimer = setBackgroundInterval(() => {
-            if (!video || video.readyState < 2) return;
-            drawFrame(ctx, video, width, height);
-            canvasTrack.requestFrame();
-          }, Math.max(1, Math.round(1000 / Math.max(1, fps))));
+          // The recording rate, not the capture rate. The camera keeps streaming
+          // at whatever it negotiated — that is what the USB reservation paid
+          // for — and this decides how much of it is kept.
+          //
+          // Not clamped to 1: the recording rate goes to 0.1 fps for a
+          // time-lapse, which is a ten-second interval, and flooring it here
+          // would silently turn every time-lapse back into 1 fps.
+          const fps = Math.max(0.01, snapshot.recordFps);
+          frameTimer = setBackgroundInterval(
+            () => {
+              if (!video || video.readyState < 2) return;
+              drawFrame(ctx, video, width, height, snapshot.overlayPosition);
+              canvasTrack.requestFrame();
+            },
+            Math.max(1, Math.round(1000 / fps)),
+          );
 
           compositeStream = new MediaStream([canvasTrack, ...audioTracks]);
           outputStream = compositeStream;

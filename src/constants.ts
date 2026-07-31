@@ -204,26 +204,62 @@ export const TSV_MIRROR_FLUSH_MAX_ROWS = 100;
 // Video recording (Recording Config)
 // ---------------------------------------------------------------------------
 
-// Floor on the capture size. Below this the timestamp overlay stops being
-// legible at the size it is drawn, which is the one thing the video is for.
-// There is deliberately no ceiling: what a camera can actually deliver is the
-// camera's business, and the USB budget below is what keeps it honest.
+// Sizes offered in the panel, filtered at runtime by what the camera reports it
+// can do (see VideoTrack.getCapabilities). Typed entry was removed: a camera
+// answers with a *range* rather than a list of modes, and every size inside that
+// range "succeeds" because Chromium will crop-and-scale to it — so a free-form
+// field could only ever produce a number that looks accepted whether or not the
+// camera has anything like it.
+// 4:3 only, which is what the industrial and inspection cameras this is pointed
+// at actually are. Offering 16:9 alongside doubled the list to serve a case that
+// has not come up, and a longer list of sizes is not the same thing as more
+// choice — the camera's own maximum trims this at runtime anyway.
+export const VIDEO_SIZES = [
+  { width: 640, height: 480 },
+  { width: 800, height: 600 },
+  { width: 1024, height: 768 },
+  { width: 1280, height: 960 },
+  { width: 1600, height: 1200 },
+  { width: 2048, height: 1536 },
+  { width: 2592, height: 1944 },
+  { width: 3264, height: 2448 },
+  { width: 4096, height: 3072 },
+  { width: 5184, height: 3888 },
+] as const;
+
 export const VIDEO_MIN_WIDTH = 640;
 export const VIDEO_MIN_HEIGHT = 480;
-export const VIDEO_MIN_FPS = 1;
-export const VIDEO_MAX_FPS = 240;
+
+/**
+ * Capture rate — what the camera is asked to stream, and therefore what it
+ * reserves USB bandwidth for.
+ */
+export const VIDEO_CAPTURE_FPS_OPTIONS = [5, 10, 15, 20, 24, 30, 60] as const;
+
+/**
+ * Recording rate — how many of those frames are written to the file.
+ *
+ * Separate from the capture rate for the same reason Save Rate is separate from
+ * Polling Rate: they answer different questions. The capture rate is what the
+ * link can carry; the recording rate is what the record needs to be useful. A
+ * rig watched overnight is perfectly served by 1 fps, and writing 30 would
+ * multiply the file thirtyfold to say the same thing.
+ */
+// Down to one frame every ten seconds. A rig watched overnight for a slow leak
+// or a creeping deflection is a time-lapse, not a video, and 0.1 fps turns eight
+// hours into under three thousand frames.
+export const VIDEO_RECORD_FPS_OPTIONS = [
+  0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 20, 24, 30, 60,
+] as const;
 
 export const VIDEO_DEFAULT_WIDTH = 1280;
-export const VIDEO_DEFAULT_HEIGHT = 720;
-export const VIDEO_DEFAULT_FPS = 15;
-
-// One-touch sizes for the panel. Not a closed set — the fields take any value.
-export const VIDEO_PRESETS = [
-  { label: '640×480 · 10', width: 640, height: 480, fps: 10 },
-  { label: '1280×720 · 15', width: 1280, height: 720, fps: 15 },
-  { label: '1280×720 · 30', width: 1280, height: 720, fps: 30 },
-  { label: '1920×1080 · 30', width: 1920, height: 1080, fps: 30 },
-] as const;
+export const VIDEO_DEFAULT_HEIGHT = 960;
+export const VIDEO_DEFAULT_CAPTURE_FPS = 15;
+export const VIDEO_DEFAULT_RECORD_FPS = 15;
+export const VIDEO_MIN_FPS = 1;
+/** The recording rate alone goes sub-1, for time-lapse use. */
+export const VIDEO_MIN_RECORD_FPS = 0.1;
+export const VIDEO_MAX_FPS = 240;
 
 // Encoder bitrate, derived rather than tabulated because the size is free-form.
 // 0.07 bit per pixel per frame is around the knee for H.264 at these sizes:
@@ -245,29 +281,28 @@ export const VIDEO_CHUNK_INTERVAL_MS = 1_000;
 // what is left over. So an over-configured camera does not make the serial link
 // slow — it makes the reservation win and the serial link starve. Capping the
 // camera is the only lever that works, which is why this is a hard gate.
-export const USB_HS_EFFECTIVE_MBPS = 400; // typical real throughput of 480 Mbps HS
+// The bus, at its nominal rate. The meter is scaled to this so the reading is
+// against the thing itself rather than against a budget the user has to hold in
+// their head.
+export const USB_HS_MBPS = 480;
 export const MODBUS_RESERVE_MBPS = 12; // the full-speed device's own line rate
-// 75% of the effective bus, not `effective - 12`. Subtracting only what Modbus
-// asks for leaves the bulk endpoints with nothing but scraps once the isochronous
-// reservation is granted; what has to be true is that 12 Mbps *gets through*, not
-// that exactly 12 Mbps is unclaimed. This leaves ~100 Mbps for bulk.
-export const USB_CAMERA_BUDGET_MBPS = 300;
-export const USB_BUDGET_OPTIONS = [200, 300, 400] as const;
 
-// Bytes per pixel for each UVC payload format, used to estimate what the camera
-// will actually pull off the bus. The browser never reveals which format was
-// negotiated, so the panel makes the user declare it and always shows the YUY2
-// worst case alongside.
-export const UVC_BYTES_PER_PIXEL = {
-  // Uncompressed 4:2:2 — 16 bits per pixel, the worst case and the reason
-  // webcams cap their uncompressed modes at low frame rates.
-  yuy2: 2,
-  // Conservative 10:1 against YUY2. Real UVC MJPEG runs 8-15:1.
-  mjpeg: 0.2,
-} as const;
-// UVC cameras with an on-board H.264 encoder send a near-constant rate that
-// barely moves with resolution.
-export const UVC_H264_BITRATE = 20_000_000;
+// Bytes per pixel on the wire, assuming MJPEG at roughly 10:1 against
+// uncompressed 4:2:2.
+//
+// A rough estimate rather than a guarantee, and deliberately so: MJPEG is what
+// UVC cameras actually negotiate above VGA, so this is the number that matches
+// everyday use. The uncompressed worst case is around ten times higher, which
+// is why the thresholds below sit well under the bus rate — the headroom is
+// what absorbs a camera that turns out not to compress.
+export const UVC_BYTES_PER_PIXEL = 0.2;
+
+// Amber, then red. These are about the bulk endpoints the Modbus adapter uses:
+// past ~100 Mbps of isochronous reservation the serial link starts competing
+// for what is left, and past ~200 it is being squeezed hard enough that poll
+// timing suffers. Red refuses.
+export const USB_WARN_MBPS = 100;
+export const USB_BLOCK_MBPS = 200;
 
 // --- Remote streaming -------------------------------------------------------
 

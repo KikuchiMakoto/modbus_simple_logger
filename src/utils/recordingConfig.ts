@@ -8,21 +8,41 @@
  */
 
 import {
-  USB_CAMERA_BUDGET_MBPS,
-  VIDEO_DEFAULT_FPS,
+  VIDEO_DEFAULT_CAPTURE_FPS,
   VIDEO_DEFAULT_HEIGHT,
+  VIDEO_DEFAULT_RECORD_FPS,
   VIDEO_DEFAULT_WIDTH,
   VIDEO_MAX_FPS,
   VIDEO_MIN_FPS,
   VIDEO_MIN_HEIGHT,
+  VIDEO_MIN_RECORD_FPS,
   VIDEO_MIN_WIDTH,
 } from '../constants';
 import { readJsonStorage, writeJsonStorage } from './cookies';
 
 const RECORDING_CONFIG_KEY = 'recording_config_v1';
 
-/** What the USB budget check should assume the camera puts on the wire. */
-export type UvcFormat = 'mjpeg' | 'yuy2' | 'h264';
+/**
+ * Where the burned-in clock sits, or that there is none.
+ *
+ * A corner rather than a free position: the point of the choice is to move the
+ * clock off whatever part of the rig matters in this particular setup, and the
+ * four corners cover that. Anything finer would be a placement tool.
+ */
+export type OverlayPosition =
+  | 'none'
+  | 'bottom-left'
+  | 'top-left'
+  | 'bottom-right'
+  | 'top-right';
+
+export const OVERLAY_POSITIONS: { value: OverlayPosition; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'bottom-left', label: 'Bottom left' },
+  { value: 'top-left', label: 'Top left' },
+  { value: 'bottom-right', label: 'Bottom right' },
+  { value: 'top-right', label: 'Top right' },
+];
 
 export interface RecordingConfig {
   /** null = no camera bound. Recording then captures audio only, or nothing. */
@@ -34,20 +54,26 @@ export interface RecordingConfig {
   videoDeviceLabel: string;
   audioDeviceId: string | null;
   audioDeviceLabel: string;
-  /** Burn the local wall clock (to milliseconds) into every frame. */
-  overlayTimestamp: boolean;
+  /**
+   * Whether the microphone selection is the user's own.
+   *
+   * Needed because null means two different things for audio: "not picked yet",
+   * which should become the first microphone, and "None", which the user chose
+   * and must survive. The camera needs no equivalent — it has no None, so null
+   * there can only ever mean the first case.
+   */
+  audioChosen: boolean;
+  /** Where the local wall clock (to milliseconds) is burned in, or 'none'. */
+  overlayPosition: OverlayPosition;
   width: number;
   height: number;
-  fps: number;
-  /** Declared, not detected: the browser never says which format it negotiated. */
-  uvcFormat: UvcFormat;
-  usbBudgetMbps: number;
+  /** What the camera is asked to stream. This is what costs USB bandwidth. */
+  captureFps: number;
   /**
-   * The one escape hatch on the bandwidth gate. If the camera really is on its
-   * own host controller there is no contention to protect against, and blocking
-   * that setup would just be wrong.
+   * How many of those frames reach the file. Never above captureFps — writing
+   * more frames than were captured is not something a recorder can do.
    */
-  separateUsbBus: boolean;
+  recordFps: number;
 }
 
 export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
@@ -55,19 +81,24 @@ export const DEFAULT_RECORDING_CONFIG: RecordingConfig = {
   videoDeviceLabel: '',
   audioDeviceId: null,
   audioDeviceLabel: '',
-  overlayTimestamp: true,
+  audioChosen: false,
+  overlayPosition: 'bottom-left',
   width: VIDEO_DEFAULT_WIDTH,
   height: VIDEO_DEFAULT_HEIGHT,
-  fps: VIDEO_DEFAULT_FPS,
-  uvcFormat: 'mjpeg',
-  usbBudgetMbps: USB_CAMERA_BUDGET_MBPS,
-  separateUsbBus: false,
+  captureFps: VIDEO_DEFAULT_CAPTURE_FPS,
+  recordFps: VIDEO_DEFAULT_RECORD_FPS,
 };
 
-const VALID_FORMATS = new Set<string>(['mjpeg', 'yuy2', 'h264']);
+const VALID_OVERLAY_POSITIONS = new Set<string>(OVERLAY_POSITIONS.map((p) => p.value));
 
 const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
   const n = typeof value === 'number' ? Math.round(value) : Number.NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+};
+
+const clampFloat = (value: unknown, min: number, max: number, fallback: number): number => {
+  const n = typeof value === 'number' ? value : Number.NaN;
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
 };
@@ -88,23 +119,46 @@ const readDeviceId = (value: unknown): string | null =>
  */
 export const sanitizeRecordingConfig = (raw: unknown): RecordingConfig => {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_RECORDING_CONFIG };
-  const source = raw as Partial<Record<keyof RecordingConfig, unknown>>;
+  // `fps` and `overlayTimestamp` are not fields any more but may be in a stored
+  // config, so the type here is the current shape plus the names older versions
+  // wrote — they are read below so an existing setting is carried over rather
+  // than silently reset.
+  const source = raw as Partial<
+    Record<keyof RecordingConfig | 'fps' | 'overlayTimestamp', unknown>
+  >;
   return {
     videoDeviceId: readDeviceId(source.videoDeviceId),
     videoDeviceLabel: readString(source.videoDeviceLabel),
     audioDeviceId: readDeviceId(source.audioDeviceId),
     audioDeviceLabel: readString(source.audioDeviceLabel),
-    // Defaults to on when absent, matching DEFAULT_RECORDING_CONFIG.
-    overlayTimestamp: source.overlayTimestamp !== false,
+    audioChosen: source.audioChosen === true,
+    // `overlayTimestamp` is what a config written before the position was
+    // selectable called this, so a stored `true` becomes the default corner
+    // rather than resetting to no overlay at all.
+    overlayPosition: VALID_OVERLAY_POSITIONS.has(source.overlayPosition as string)
+      ? (source.overlayPosition as OverlayPosition)
+      : source.overlayTimestamp === false
+        ? 'none'
+        : DEFAULT_RECORDING_CONFIG.overlayPosition,
     width: clampInt(source.width, VIDEO_MIN_WIDTH, Number.MAX_SAFE_INTEGER, VIDEO_DEFAULT_WIDTH),
     height: clampInt(source.height, VIDEO_MIN_HEIGHT, Number.MAX_SAFE_INTEGER, VIDEO_DEFAULT_HEIGHT),
-    fps: clampInt(source.fps, VIDEO_MIN_FPS, VIDEO_MAX_FPS, VIDEO_DEFAULT_FPS),
-    uvcFormat:
-      typeof source.uvcFormat === 'string' && VALID_FORMATS.has(source.uvcFormat)
-        ? (source.uvcFormat as UvcFormat)
-        : DEFAULT_RECORDING_CONFIG.uvcFormat,
-    usbBudgetMbps: clampInt(source.usbBudgetMbps, 1, 10_000, USB_CAMERA_BUDGET_MBPS),
-    separateUsbBus: source.separateUsbBus === true,
+    captureFps: clampInt(
+      // `fps` is what a config written before capture and recording were split
+      // called this; reading it keeps that setting rather than silently
+      // resetting a machine that already had one.
+      source.captureFps ?? source.fps,
+      VIDEO_MIN_FPS,
+      VIDEO_MAX_FPS,
+      VIDEO_DEFAULT_CAPTURE_FPS,
+    ),
+    // Not clampInt: the recording rate goes down to 0.1 fps for a time-lapse,
+    // and rounding it would land on zero.
+    recordFps: clampFloat(
+      source.recordFps ?? source.fps,
+      VIDEO_MIN_RECORD_FPS,
+      VIDEO_MAX_FPS,
+      VIDEO_DEFAULT_RECORD_FPS,
+    ),
   };
 };
 
