@@ -89,6 +89,7 @@ import {
   type RecordingConfig,
 } from './utils/recordingConfig';
 import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
+import { checkUsbBudget } from './utils/usbBandwidth';
 import {
   ensureWritePermission,
   loadOutputDirectory,
@@ -1200,9 +1201,19 @@ function App() {
   // device is opened only while one of them is actually looking, so a bound
   // camera costs nothing until it is used — and it is frozen while recording,
   // because re-opening it mid-run would cut the recording in half.
+  // The budget gates *opening* the camera, not starting a recording.
+  //
+  // This is the whole point of the check and it is easy to put in the wrong
+  // place: a UVC camera reserves its isochronous bandwidth at getUserMedia, not
+  // at MediaRecorder.start(). Gating only the recording would leave a bound
+  // 1080p60 camera holding the bus for the entire session — starving the Modbus
+  // adapter exactly as the budget describes — while the guard sat quiet because
+  // nobody had pressed Start Recording.
+  const cameraBudget = useMemo(() => checkUsbBudget(recordingConfig), [recordingConfig]);
   const cameraWanted =
     !isViewerMode &&
     hasBoundDevice(recordingConfig) &&
+    cameraBudget.ok &&
     (recordingConfigPanelOpen || isLauncherMode || activeRecordingFilename !== '');
   const cameraFeed = useCameraFeed({
     config: recordingConfig,

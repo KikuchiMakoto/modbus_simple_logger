@@ -409,11 +409,19 @@ export function RecordingConfigPanel({
             </p>
           ) : (
             <p className="text-[0.7rem] text-slate-500 dark:text-slate-400">
-              {!feed.active
-                ? 'Bind a camera or microphone below first.'
-                : outputDirName
-                  ? 'Files are named by the time they start, like the TSV.'
-                  : 'You will be asked for a folder when you press this.'}
+              {/* The over-budget case is called out separately from "no camera".
+                  The camera is not opened at all while the setting is over
+                  budget — a UVC camera reserves its bandwidth the moment it
+                  opens — so the preview below goes black, and without this line
+                  that reads as a broken camera rather than as a refused
+                  setting. */}
+              {!budget.ok
+                ? 'The camera is not opened while this size is over the USB budget — see below.'
+                : !feed.active
+                  ? 'Bind a camera or microphone below first.'
+                  : outputDirName
+                    ? 'Files are named by the time they start, like the TSV.'
+                    : 'You will be asked for a folder when you press this.'}
             </p>
           )}
 
