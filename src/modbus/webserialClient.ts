@@ -113,9 +113,8 @@ const REOPEN_SETTLE_MS = 50;
  * Cap on each individual teardown step in disconnect().
  *
  * A device that was physically unplugged may never settle reader.cancel(),
- * writer.close() or port.close(): behind the WebUSB polyfill the endpoint
- * source has no cancel hook (see readChunk()), and the underlying transfers
- * belong to a device that is simply gone. Awaiting those unbounded strands the
+ * writer.close() or port.close(): the underlying transfers belong to a device
+ * that is simply gone. Awaiting those unbounded strands the
  * whole app — the caller's disconnect handler never reaches its cleanup, so the
  * UI stays "connected", saving never stops, and Connect cannot be used again.
  *
@@ -162,11 +161,13 @@ const TIMER_STALL_THRESHOLD_MS = 25;
 // what the client does, only what it says when it fails.
 //
 // The failure being chased is a `transferIn` that neither resolves nor rejects.
-// readChunk() parks a read it gave up waiting for rather than cancelling it (see
-// there for why cancelling is fatal on mobile), so one hung transfer is enough
-// to make every later poll re-await the same never-settling promise. That looks
-// identical, in the log, to a device that has simply gone quiet: both say
-// `Timeout waiting for response (0/2 bytes)`. These tell them apart.
+// readChunk() parks a read it gave up waiting for rather than cancelling it, so
+// one hung transfer is enough to make every later poll re-await the same
+// never-settling promise. That looks identical, in the log, to a device that has
+// simply gone quiet: both say `Timeout waiting for response (0/2 bytes)`. These
+// tell them apart.
+//
+// Kept after the transport fix, because they are what would show it coming back.
 
 /** A read parked longer than this is worth a console line when it settles. */
 const PARKED_READ_REPORT_MS = 1000;
@@ -307,14 +308,16 @@ export class WebSerialModbusClient {
   /**
    * Counters since the last dead stream — the "epoch" a stream error ends.
    *
-   * Kept because the one question the reported logs cannot answer is whether
-   * the Android `transferIn` failure is timed or metered. The interval between
-   * failures changes with the response size (44 s of 16-channel int16 reads,
-   * 24 s of the same read in float32) while the volume does not (~16 KB either
-   * way), and only the volume is invisible in a timestamped log. Chunk counts
-   * come along because they are what distinguishes a USB-level pattern — how
-   * many `transferIn` completions a frame takes, and whether that changes as
-   * the epoch ages — from a serial-level one.
+   * These are what identified the Android `transferIn` failure as metered
+   * rather than timed: the interval between failures tracked the response size
+   * (44 s of 16-channel int16 reads, 24 s of the same read in float32) while
+   * the chunk count at failure did not (~16,200 either way). That constant is
+   * what pointed at a per-transfer resource rather than anything on the wire —
+   * `web-serial-polyfill` orphaning one `transferIn` per byte received until
+   * Android's pending-URB memory ran out. See modbus/webusbSerial.ts.
+   *
+   * Kept because a chunk count that starts climbing toward five figures again
+   * is the earliest visible sign of that class of bug returning.
    */
   private epochStartedAt = 0;
   private epochRxBytes = 0;
@@ -442,10 +445,11 @@ export class WebSerialModbusClient {
     const perFrame = this.epochFrames > 0 ? this.epochRxChunks / this.epochFrames : 0;
     // Bytes per chunk is the one that turned out to matter. A CDC adapter that
     // hands the host one byte per USB transfer makes a 69-byte response cost 69
-    // `transferIn` round trips, and it is the count of those — not the byte
-    // total — that the Android stack appears to run out of. Quoted here so the
-    // ratio is visible in the log rather than something a reader has to divide
-    // out for themselves.
+    // `transferIn` round trips, and that ratio is what made a leak of one
+    // orphaned transfer per *byte* — `web-serial-polyfill`'s, since replaced by
+    // modbus/webusbSerial.ts — fill Android's pending-URB budget in seconds
+    // rather than hours. Quoted here so the ratio stays visible in the log
+    // rather than being something a reader has to divide out.
     const perChunk = this.epochRxChunks > 0 ? this.epochRxBytes / this.epochRxChunks : 0;
     return (
       `${WebSerialModbusClient.formatBytes(this.epochRxBytes)} in ${this.epochFrames} frames ` +
@@ -647,7 +651,7 @@ export class WebSerialModbusClient {
     this.resetEpoch();
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
     this.log('DEBUG', () =>
-      `transport ready: ${this.isUsingPolyfill ? 'WebUSB polyfill' : 'native Web Serial'}, ` +
+      `transport ready: ${this.isUsingPolyfill ? 'WebUSB CDC-ACM' : 'native Web Serial'}, ` +
       `${this.serialSettings.baudRate}bps, silent interval ${this.minMessageIntervalMs.toFixed(1)}ms`);
 
     return true;
@@ -853,15 +857,19 @@ export class WebSerialModbusClient {
    * Read one chunk from the serial port, giving up after `timeoutMs`.
    *
    * The in-flight `read()` is parked in `this.pendingRead` and re-awaited by
-   * the next caller instead of being cancelled. Cancelling is deliberately
-   * avoided: it is unrecoverable behind the WebUSB polyfill used on mobile.
-   * That polyfill's `UsbEndpointUnderlyingSource` has no `cancel` hook, so
-   * `reader.cancel()` merely closes the ReadableStream while
-   * `SerialPort.readable` keeps handing back that same closed stream — every
-   * later `read()` then resolves `{ done: true }` forever, which stalls
-   * polling at 0 Hz with the UI still showing a live connection. Parking the
-   * read also keeps the bytes: they are handed to whoever reads next rather
-   * than thrown away with the reader.
+   * the next caller instead of being cancelled, for two reasons.
+   *
+   * It keeps the bytes. A cancelled read discards whatever the device had
+   * already sent; a parked one hands it to whoever reads next, which is how a
+   * response that arrives just past its deadline still gets used.
+   *
+   * And it was once the only safe option. `web-serial-polyfill` gave its
+   * endpoint source no `cancel` hook, so `reader.cancel()` closed the
+   * ReadableStream while `SerialPort.readable` went on handing back that same
+   * closed stream — every later `read()` resolved `{ done: true }` forever and
+   * polling stalled at 0 Hz with the UI still showing a live connection.
+   * modbus/webusbSerial.ts has a cancel hook and rebuilds the stream, so that
+   * particular trap is gone; parking stays because of the first reason.
    *
    * @param timeoutMs - How long to wait for bytes before giving up.
    * @returns The chunk, or null when the deadline expired first.
@@ -981,10 +989,11 @@ export class WebSerialModbusClient {
   /**
    * Close and re-open the port, rebuilding both stream locks.
    *
-   * The only way back from a dead ReadableStream: `SerialPort.readable` keeps
-   * returning the closed stream until the port is re-opened (the WebUSB
-   * polyfill rebuilds it in `close()`, native Web Serial in `open()`). No user
-   * gesture is needed — the port permission is already granted.
+   * The way back from a dead ReadableStream. Native Web Serial rebuilds it in
+   * `open()`; modbus/webusbSerial.ts drops it as soon as the stream errors, but
+   * its bulk-IN pipeline stays stopped until `open()` re-claims the interface,
+   * so a reopen is what actually restores the link on both. No user gesture is
+   * needed — the port permission is already granted.
    *
    * @throws If the port cannot be re-opened.
    */

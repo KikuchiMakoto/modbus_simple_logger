@@ -155,7 +155,7 @@ import {
 } from './hooks/useViewerFeed';
 import { RemoteViewerPanel } from './components/RemoteViewerPanel';
 import { isLauncherMode, isLauncherServed, isViewerMode } from './utils/appMode';
-import { serial as serialPolyfill } from 'web-serial-polyfill';
+import { webUsbSerial } from './modbus/webusbSerial';
 
 function isMobileDevice(): boolean {
   const userAgent = navigator.userAgent.toLowerCase();
@@ -167,7 +167,7 @@ function isMobileDevice(): boolean {
 }
 
 const shouldUsePolyfill = isMobileDevice() || !('serial' in navigator);
-const serial: Serial = shouldUsePolyfill ? serialPolyfill as unknown as Serial : navigator.serial;
+const serial: Serial = shouldUsePolyfill ? webUsbSerial as unknown as Serial : navigator.serial;
 const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 
 // GP8403 full scale. AO state is held in millivolts, so this is both the write
@@ -183,7 +183,7 @@ const AO_FULL_SCALE_MV = 10000;
  * needs a sample a minute on disk still wants a control loop that sees fresh
  * data. How much of it is kept is SAVE_RATE_OPTIONS.
  */
-const POLLING_OPTIONS_WEBSERIAL: PollingRateOption[] = [
+const POLLING_OPTIONS: PollingRateOption[] = [
   // 25 ms, not 20: 20 ms was tried on the bench and did not hold rate, 25 ms
   // does. It is still the setting nearest the edge — the read timeout has a
   // 100 ms floor it cannot honour, so what keeps it working is the device
@@ -193,38 +193,15 @@ const POLLING_OPTIONS_WEBSERIAL: PollingRateOption[] = [
   { label: '100 ms', valueMs: 100 },
 ];
 
-/**
- * The same list for WebUSB, where the transport is the limit rather than the
- * device.
- *
- * On Android there is no OS serial driver in the path, so the CDC adapter's
- * packetisation reaches this code raw: it delivers one byte per USB transfer,
- * measured, which makes a 16-channel float32 response cost 69 `transferIn`
- * round trips instead of one or two. Chrome's Android USB stack then fails the
- * stream at about 16,200 transfers — 16,206 and 16,194 in two traces — and
- * recovery costs a claim gate of some three seconds during which no sample is
- * taken.
- *
- * That limit is a *rate* budget, so the poll interval buys uptime directly.
- * Against the observed 16,200 transfers, per failure:
- *
- *              float32 (69/frame)   int16 (37/frame)
- *     100 ms          24 s               44 s
- *     200 ms          47 s               88 s
- *     500 ms         117 s              219 s
- *
- * 100 ms and faster are therefore not offered here at all. They do not fail
- * gracefully — they fail every 24 seconds, and each failure eats a multi-second
- * hole out of the middle of a recording.
- */
-const POLLING_OPTIONS_WEBUSB: PollingRateOption[] = [
-  { label: '200 ms', valueMs: 200 },
-  { label: '500 ms', valueMs: 500 },
-];
-
-const POLLING_OPTIONS: PollingRateOption[] =
-  shouldUsePolyfill ? POLLING_OPTIONS_WEBUSB : POLLING_OPTIONS_WEBSERIAL;
-const DEFAULT_POLLING_RATE_MS = shouldUsePolyfill ? 200 : 100;
+// One list for both transports. WebUSB was held to 200-500 ms for a while
+// because the link died every 24 s at 100 ms — that turned out to be a leak in
+// `web-serial-polyfill`, which orphaned one `transferIn` per byte received until
+// Android's usbfs ran out of memory for pending URBs. The rate never was the
+// problem; it only set how fast the leak filled up, which is why lowering it
+// bought time without ever fixing anything. modbus/webusbSerial.ts replaces that
+// polyfill with a transport that awaits every transfer it starts, so the two
+// transports are back on the same footing.
+const DEFAULT_POLLING_RATE_MS = 100;
 
 /**
  * How often a polled sample is written to the TSV file.
@@ -241,11 +218,11 @@ const DEFAULT_POLLING_RATE_MS = shouldUsePolyfill ? 200 : 100;
  *
  * The floor being at or above the slowest poll rate is what lets the two lists
  * be independent — a save interval shorter than the poll interval would ask for
- * rows that were never sampled. That is why the floor moves with the transport:
- * WebUSB polls at 200-500 ms (see POLLING_OPTIONS_WEBUSB) and so starts at 1 s,
- * which is a whole multiple of both, keeping every written row on the poll grid.
+ * rows that were never sampled. 200 ms clears the slowest poll rate on offer
+ * (100 ms) and is a whole multiple of all three, on either transport, so one
+ * floor covers both.
  */
-const SAVE_RATE_MIN_MS = shouldUsePolyfill ? 1000 : 200;
+const SAVE_RATE_MIN_MS = 200;
 
 const ALL_SAVE_RATE_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
