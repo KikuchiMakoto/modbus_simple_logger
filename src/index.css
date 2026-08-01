@@ -150,6 +150,42 @@ html.msl-launcher body {
   }
 }
 
+/* The recording indicator, blinking like the tally light on a camera.
+ *
+ * A steady dot says "a camera is configured"; a blinking one says "it is
+ * running right now", which is the thing that has to be true at a glance —
+ * this is the only marker that a file is being written, and unlike Stop Save
+ * there is no second control on screen restating it.
+ *
+ * A hard on/off rather than a fade: a tally light is a lamp, and the sharp edge
+ * is what makes it read as one from the corner of the eye.
+ */
+@keyframes rec-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+.rec-blink {
+  animation: rec-blink 1.2s steps(1, end) infinite;
+}
+
+/* Reduced motion: hold it lit. Same reasoning as the Stop/Save pulse — this is
+   a functional state indicator, not decoration, so it must not vanish; but
+   unlike that one there is no colour-only variant worth inventing, because the
+   dot is already the strongest red on the screen. */
+@media (prefers-reduced-motion: reduce) {
+  .rec-blink {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* Footer log line, rolled like a departure board: the arriving line rises from
    below the bar and shoves the one it replaces out through the top. The bar
    shows exactly one line of a log that can be hundreds long, and a line that

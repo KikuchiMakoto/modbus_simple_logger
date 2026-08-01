@@ -81,6 +81,40 @@ const DEVICE_RESPONSE_ALLOWANCE_MS = 200;
 const STALE_PREWRITE_FLUSH_MS_NATIVE = 5;
 const STALE_PREWRITE_FLUSH_MS_POLYFILL = 15;
 
+// Main-thread stall compensation for the read deadline.
+//
+// The deadline is wall-clock, but the wire is not. A long task on the main
+// thread — a chart redraw, a React commit, a GC pause — burns the budget while
+// the bytes are already sitting in the OS buffer, delivered on time. When the
+// thread frees up, the expired timer and the settled read() are both queued and
+// the timer usually wins the race in readChunk(), so a device that answered
+// correctly is reported as `Timeout waiting for response (0/2 bytes)` and its
+// response is then thrown away by the stale-RX flush.
+//
+// The tell is how late the deadline itself fired: setBackgroundTimeout() cannot
+// fire early, so an overshoot beyond scheduling noise means the thread was
+// blocked, not that the device was silent. That time is credited back to the
+// budget instead of being charged to the device.
+//
+// Deliberately not a bigger DEVICE_RESPONSE_ALLOWANCE_MS: raising the flat
+// deadline slows down every genuine failure too. This only spends time when
+// there is evidence the clock, not the link, is at fault.
+
+/** Deadline overshoot beyond this is a blocked main thread, not timer jitter. */
+const TIMER_STALL_THRESHOLD_MS = 25;
+
+/**
+ * Extra window granted alongside the credited stall time, so an already-settled
+ * read() can actually be picked up rather than racing the next deadline.
+ */
+const STALL_GRACE_MS = 30;
+
+/**
+ * Cap on stall credits per transfer. Bounded so a genuinely dead device still
+ * fails within roughly twice the deadline instead of stretching the poll loop.
+ */
+const MAX_STALL_CREDITS_PER_TRANSFER = 2;
+
 /**
  * Wait for `promise` to settle, or give up after `ms`.
  *
@@ -135,6 +169,12 @@ export class WebSerialModbusClient {
    * stream — see readChunk() for why cancelling is fatal on mobile.
    */
   private pendingRead: Promise<ReadOutcome> | null = null;
+  /**
+   * How late the last read deadline fired, in ms past the requested delay.
+   * Non-zero only when readChunk() gave up, and read by transfer() to tell a
+   * blocked main thread from a silent device — see TIMER_STALL_THRESHOLD_MS.
+   */
+  private lastReadOvershootMs = 0;
   /** True once a read reported `done` or threw: the stream can never recover. */
   private streamDead = false;
   /**
@@ -264,6 +304,33 @@ export class WebSerialModbusClient {
   private minimumReadTimeoutMs(expectedLength: number): number {
     const wireMs = (expectedLength * this.bitsPerChar() * 1000) / this.serialSettings.baudRate;
     return DEVICE_RESPONSE_ALLOWANCE_MS + wireMs * 2;
+  }
+
+  /**
+   * Build the read-timeout error, logging what the deadline actually measured.
+   *
+   * The message stays exactly as users have seen it — it is what gets shown in
+   * the status bar and the desktop notification — while the numbers that say
+   * *why* it fired go to the console. Without them "(0/2 bytes)" is unfalsifiable
+   * from a bug report: a silent device and a main thread that was blocked
+   * straight through the budget produce the identical string.
+   */
+  private timeoutError(
+    buffered: number,
+    atLeast: number,
+    elapsedMs: number,
+    effectiveTimeout: number,
+    stallCreditMs: number,
+  ): Error {
+    console.warn(`${this.debugPrefix} transfer() read timeout`, {
+      buffered,
+      atLeast,
+      elapsedMs,
+      effectiveTimeout,
+      stallCreditMs,
+      budgetMs: effectiveTimeout + stallCreditMs,
+    });
+    return new Error(`Timeout waiting for response (${buffered}/${atLeast} bytes)`);
   }
 
   /**
@@ -506,11 +573,13 @@ export class WebSerialModbusClient {
     }
     const pending = this.pendingRead;
 
+    const requestedMs = Math.max(0, timeoutMs);
+    const armedAt = Date.now();
     let timeoutId: number | undefined;
     const outcome = await Promise.race<ReadOutcome | null>([
       pending,
       new Promise<null>((resolve) => {
-        timeoutId = setBackgroundTimeout(() => resolve(null), Math.max(0, timeoutMs));
+        timeoutId = setBackgroundTimeout(() => resolve(null), requestedMs);
       }),
     ]);
     if (timeoutId !== undefined) {
@@ -520,9 +589,11 @@ export class WebSerialModbusClient {
     // Deadline hit first: leave `pendingRead` in place so the bytes are not
     // lost and the reader stays usable.
     if (outcome === null) {
+      this.lastReadOvershootMs = Math.max(0, Date.now() - armedAt - requestedMs);
       return null;
     }
 
+    this.lastReadOvershootMs = 0;
     this.pendingRead = null;
     if (!outcome.ok) {
       this.streamDead = true;
@@ -751,6 +822,10 @@ export class WebSerialModbusClient {
       const buffer: number[] = [];
       let responseArray: Uint8Array | null = null;
       let isException = false;
+      // Wall-clock time credited back to the deadline because the main thread
+      // was blocked through it — see TIMER_STALL_THRESHOLD_MS.
+      let stallCreditMs = 0;
+      let stallCredits = 0;
 
       while (responseArray === null) {
         const scan = scanModbusFrame(buffer, expectedSlaveId, expectedFunctionCode, expectedLength);
@@ -772,16 +847,35 @@ export class WebSerialModbusClient {
           break;
         }
 
-        const remainingMs = effectiveTimeout - (Date.now() - readStart);
+        const elapsedMs = Date.now() - readStart;
+        const remainingMs = effectiveTimeout + stallCreditMs - elapsedMs;
         if (remainingMs <= 0) {
-          throw new Error(
-            `Timeout waiting for response (${buffer.length}/${scan.atLeast} bytes)`,
-          );
+          throw this.timeoutError(buffer.length, scan.atLeast, elapsedMs, effectiveTimeout, stallCreditMs);
         }
         const chunk = await this.readChunk(remainingMs);
         if (chunk === null) {
-          throw new Error(
-            `Timeout waiting for response (${buffer.length}/${scan.atLeast} bytes)`,
+          // A deadline that fired far past its delay did not measure the
+          // device; it measured a main thread that was blocked. Credit the lost
+          // time back and look again — the response is very likely already
+          // delivered and waiting in the parked read.
+          const overshootMs = this.lastReadOvershootMs;
+          if (overshootMs > TIMER_STALL_THRESHOLD_MS && stallCredits < MAX_STALL_CREDITS_PER_TRANSFER) {
+            stallCredits += 1;
+            stallCreditMs += overshootMs + STALL_GRACE_MS;
+            console.warn(`${this.debugPrefix} transfer() read deadline fired late; main thread stalled`, {
+              overshootMs,
+              stallCredits,
+              stallCreditMs,
+              buffered: buffer.length,
+            });
+            continue;
+          }
+          throw this.timeoutError(
+            buffer.length,
+            scan.atLeast,
+            Date.now() - readStart,
+            effectiveTimeout,
+            stallCreditMs,
           );
         }
 

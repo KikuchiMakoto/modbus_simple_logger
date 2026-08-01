@@ -220,6 +220,14 @@ export const startViewerServer = (assets: Assets, mode: ViewerMode): ViewerServe
         // or the hardware. This is the enforcement point for "read-only" —
         // hiding buttons in the viewer UI is presentation, not a boundary.
         message() {},
+        // Not a message from the viewer — this is the socket itself reporting
+        // that its send queue has emptied, so it does not weaken the rule above.
+        // Media frames are skipped for a viewer between a backpressured send and
+        // this callback; without it, a viewer that stalls once would never be
+        // sent video again.
+        drain(ws) {
+          viewerHub.drained(ws);
+        },
         close(ws) {
           viewerHub.detach(ws);
           hostFeed.refreshViewerCount();

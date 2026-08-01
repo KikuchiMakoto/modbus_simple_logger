@@ -199,3 +199,141 @@ export const TSV_MIRROR_FLUSH_INTERVAL_MS = 1_000;
 // Row-count cap for the same, so a high sampling rate does not leave a second's
 // worth of rows sitting in memory between ticks.
 export const TSV_MIRROR_FLUSH_MAX_ROWS = 100;
+
+// ---------------------------------------------------------------------------
+// Video recording (Recording Config)
+// ---------------------------------------------------------------------------
+
+// Sizes offered in the panel, filtered at runtime by what the camera reports it
+// can do (see VideoTrack.getCapabilities). Typed entry was removed: a camera
+// answers with a *range* rather than a list of modes, and every size inside that
+// range "succeeds" because Chromium will crop-and-scale to it — so a free-form
+// field could only ever produce a number that looks accepted whether or not the
+// camera has anything like it.
+// The sizes UVC cameras actually offer, both aspect ratios, ordered by pixel
+// count so the list reads as "bigger" downwards rather than as two lists. The
+// ratio is labelled because at a glance 1280×960 and 1280×720 are the same
+// number, and picking the wrong one crops the part of the rig that mattered.
+// The camera's reported maximum trims this at runtime.
+export const VIDEO_SIZES = [
+  { width: 640, height: 480, ratio: '4:3' },
+  { width: 800, height: 600, ratio: '4:3' },
+  { width: 1024, height: 768, ratio: '4:3' },
+  { width: 1280, height: 720, ratio: '16:9' },
+  { width: 1280, height: 960, ratio: '4:3' },
+  { width: 1600, height: 1200, ratio: '4:3' },
+  { width: 1920, height: 1080, ratio: '16:9' },
+  { width: 2048, height: 1536, ratio: '4:3' },
+  { width: 2560, height: 1440, ratio: '16:9' },
+  { width: 2592, height: 1944, ratio: '4:3' },
+  { width: 3264, height: 2448, ratio: '4:3' },
+  { width: 3840, height: 2160, ratio: '16:9' },
+  { width: 4096, height: 3072, ratio: '4:3' },
+  { width: 5120, height: 2880, ratio: '16:9' },
+  { width: 5184, height: 3888, ratio: '4:3' },
+] as const;
+
+export const VIDEO_MIN_WIDTH = 640;
+export const VIDEO_MIN_HEIGHT = 480;
+
+/**
+ * Capture rate — what the camera is asked to stream, and therefore what it
+ * reserves USB bandwidth for.
+ */
+export const VIDEO_CAPTURE_FPS_OPTIONS = [5, 10, 15, 20, 24, 30, 60] as const;
+
+/**
+ * Recording rate — how many of those frames are written to the file.
+ *
+ * Separate from the capture rate for the same reason Save Rate is separate from
+ * Polling Rate: they answer different questions. The capture rate is what the
+ * link can carry; the recording rate is what the record needs to be useful. A
+ * rig watched overnight is perfectly served by 1 fps, and writing 30 would
+ * multiply the file thirtyfold to say the same thing.
+ */
+// Down to one frame every ten seconds. A rig watched overnight for a slow leak
+// or a creeping deflection is a time-lapse, not a video, and 0.1 fps turns eight
+// hours into under three thousand frames.
+export const VIDEO_RECORD_FPS_OPTIONS = [
+  0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 20, 24, 30, 60,
+] as const;
+
+export const VIDEO_DEFAULT_WIDTH = 1280;
+export const VIDEO_DEFAULT_HEIGHT = 960;
+// Deliberately low, and paired with a generous bitrate below. What this records
+// is a rig that changes slowly, where a sharp frame every tenth of a second says
+// more than a smooth blur — and the frames not taken are the encoder cycles the
+// polling loop gets to keep.
+export const VIDEO_DEFAULT_CAPTURE_FPS = 10;
+export const VIDEO_DEFAULT_RECORD_FPS = 10;
+
+export const VIDEO_MIN_FPS = 1;
+/** The recording rate alone goes sub-1, for time-lapse use. */
+export const VIDEO_MIN_RECORD_FPS = 0.1;
+export const VIDEO_MAX_FPS = 240;
+
+/**
+ * How the quality setting becomes a bitrate. See bitrateFor in utils/videoAccel
+ * for why it is a formula rather than a table, and why fps is not linear in it.
+ *
+ * The numbers are bits per pixel for a frame at 1 fps — an intra frame's
+ * budget, which is the honest unit here because at these rates most frames very
+ * nearly are one. As a sanity check, JPEG at a quality nobody complains about
+ * lands around 1 bit per pixel.
+ */
+export const VIDEO_FPS_EXPONENT = 0.75;
+
+export type VideoQuality = 'standard' | 'high' | 'max';
+
+export const VIDEO_QUALITY_LEVELS: {
+  value: VideoQuality;
+  label: string;
+  bitsPerPixel: number;
+}[] = [
+  { value: 'standard', label: 'Standard', bitsPerPixel: 0.43 },
+  { value: 'high', label: 'High', bitsPerPixel: 0.86 },
+  { value: 'max', label: 'Maximum', bitsPerPixel: 1.5 },
+];
+
+/**
+ * High, not Standard. What this records is evidence — a gauge face, a crack, a
+ * drip — and the failure mode of too few bits is that the small feature someone
+ * is watching for dissolves into blocking, which is not recoverable afterwards.
+ * Disk is. At the default 1280×960@10 this is about 5.9 Mbps.
+ */
+export const VIDEO_DEFAULT_QUALITY: VideoQuality = 'high';
+
+export const bitsPerPixelFor = (quality: VideoQuality): number =>
+  (VIDEO_QUALITY_LEVELS.find((q) => q.value === quality) ?? VIDEO_QUALITY_LEVELS[1]).bitsPerPixel;
+
+export const VIDEO_MIN_BITRATE = 1_500_000;
+// A ceiling that stops an accidental setting from filling the disk while still
+// letting 4K reach Maximum-adjacent rates: 60 Mbps is ~27 GB/hour.
+export const VIDEO_MAX_BITRATE = 60_000_000;
+
+// MediaRecorder chunk interval for the file. Each chunk is appended to OPFS
+// synchronously, so this is also the worst-case data loss on a crash.
+export const VIDEO_CHUNK_INTERVAL_MS = 1_000;
+
+// --- Remote streaming -------------------------------------------------------
+
+// Separate from the file's bitrate: the recording must not lose quality because
+// somebody is watching over a phone.
+// The remote picture is a JPEG slideshow rather than a video stream, so what
+// matters is how often a still arrives and how big it is.
+//
+// About one a second. Enough to see whether a rig is still turning, whether
+// something has moved, whether smoke is coming off it — which is what remote
+// monitoring is for. A video stream bought smoothness nobody asked for at the
+// cost of every hard bug this feature had.
+export const STREAM_SNAPSHOT_FPS = 1;
+// Stills are scaled down to this before encoding. A 640-wide JPEG at moderate
+// quality is 30-60 kB, so a frame a second is well under half a megabit even
+// over a phone link.
+export const STREAM_SNAPSHOT_MAX_WIDTH = 640;
+export const STREAM_JPEG_QUALITY = 0.6;
+
+// Past this much queued on the host's socket, stills are dropped rather than
+// buffered. A slow link must cost the measurement nothing, and for a slideshow
+// dropping is free: the next picture to get through is the current one anyway.
+export const STREAM_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;

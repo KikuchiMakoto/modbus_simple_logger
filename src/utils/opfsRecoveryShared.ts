@@ -24,6 +24,21 @@
 /** Directory under the OPFS root that holds in-progress mirrors. */
 export const RECOVERY_DIR = 'tsv-recovery';
 
+/**
+ * Recordings deliberately do not mirror here.
+ *
+ * They have the same weakness the TSV does — a file opened through
+ * createWritable() stays 0 bytes until close(), so a crash loses the run — but
+ * not the same arithmetic. Mirroring writes every byte twice, and an hour of
+ * 720p is gigabytes where a TSV run is megabytes. Doubling that on the machine
+ * running the acquisition loop spends exactly the disk bandwidth this app
+ * exists to protect.
+ *
+ * So a recording interrupted by a crash is lost, and Recording Config says so
+ * beside the button that starts one, rather than the app implying a safety net
+ * it does not have.
+ */
+
 /** Metadata recovered from a mirror's filename. */
 export interface RecoveryNameParts {
   /** Name of the file the user originally chose in the save picker. */

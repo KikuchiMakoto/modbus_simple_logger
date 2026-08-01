@@ -194,8 +194,23 @@ export const createServer = async (assets: Assets) => {
         hostFeed.attach(ws);
       },
       message(_ws, message) {
-        if (typeof message !== 'string') return;
-        hostFeed.handleMessage(message);
+        // Text is the control and measurement protocol; binary is a media
+        // fragment on its way to the viewers. Splitting on the type rather than
+        // on a field is what let video join this socket without touching the
+        // existing `{type: ...}` frames at all.
+        if (typeof message === 'string') {
+          hostFeed.handleMessage(message);
+          return;
+        }
+        // Bun hands binary frames over as a Buffer/Uint8Array view. Slice to a
+        // standalone ArrayBuffer: the view may point into a pooled buffer that
+        // is reused before the fragment has been written to every viewer.
+        hostFeed.handleBinaryMessage(
+          message.buffer.slice(
+            message.byteOffset,
+            message.byteOffset + message.byteLength,
+          ) as ArrayBuffer,
+        );
       },
       close(ws) {
         hostFeed.detach(ws);

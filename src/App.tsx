@@ -82,6 +82,16 @@ import {
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import {
+  hasBoundDevice,
+  loadRecordingConfig,
+  saveRecordingConfig,
+  type RecordingConfig,
+} from './utils/recordingConfig';
+import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
+import { useCameraFeed } from './hooks/useCameraFeed';
+import { useMediaStreamHost } from './hooks/useMediaStreamHost';
+import { useRemoteVideo } from './hooks/useRemoteVideo';
+import {
   discardRecoveredRun,
   downloadRecoveredRun,
   formatRunSize,
@@ -90,7 +100,15 @@ import {
   requestPersistentStorage,
 } from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
-import { clearStatusSource, postStatus, reportError } from './utils/appStatus';
+import {
+  clearStatusSource,
+  logSystem,
+  type AppStatusSource,
+  postFailure,
+  reportError,
+  SOURCE,
+  systemLogSnapshot,
+} from './utils/systemLog';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import { runAtPriority } from './utils/taskPriority';
 import { useRenderBackend } from './utils/renderBackend';
@@ -113,16 +131,19 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
+import { RecordingConfigPanel } from './components/RecordingConfigPanel';
+import { CameraCard } from './components/CameraCard';
+import { SystemLogCard } from './components/SystemLogCard';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
-import { ScriptLogPanel } from './components/ScriptLogPanel';
-import { ScriptStatusBar } from './components/ScriptStatusBar';
+import { SystemLogPanel } from './components/SystemLogPanel';
+import { FooterBar } from './components/FooterBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
-import { AppStatusBar } from './components/AppStatusBar';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
+import type { SystemLogEntry } from './utils/systemLog';
 import { useNotifications } from './hooks/useNotifications';
 import {
   useViewerHost,
@@ -130,9 +151,10 @@ import {
   type ViewerHostHandle,
   type ViewerSample,
   type ViewerStatePayload,
+  VIEWER_SYSTEM_LOG_TAIL,
 } from './hooks/useViewerFeed';
 import { RemoteViewerPanel } from './components/RemoteViewerPanel';
-import { isViewerMode } from './utils/appMode';
+import { isLauncherMode, isLauncherServed, isViewerMode } from './utils/appMode';
 import { serial as serialPolyfill } from 'web-serial-polyfill';
 
 function isMobileDevice(): boolean {
@@ -490,7 +512,13 @@ function App() {
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
-  const [scriptLogPanelOpen, setScriptLogPanelOpen] = useState(false);
+  const [systemLogPanelOpen, setSystemLogPanelOpen] = useState(false);
+  const [recordingConfigPanelOpen, setRecordingConfigPanelOpen] = useState(false);
+  const [recordingConfig, setRecordingConfig] = useState<RecordingConfig>(() =>
+    loadRecordingConfig(),
+  );
+  /** Name of the video being written, or '' when nothing is recording. */
+  const [activeRecordingFilename, setActiveRecordingFilename] = useState('');
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -609,10 +637,15 @@ function App() {
   // nothing else, whereas a missing TSV row is missing data.
   const plotStrideRef = useRef(1);
   const pollsSincePlotRef = useRef(0);
-  // Measured poll interval, for the header's parenthetical. Taken from the poll
-  // loop rather than from the recorded points, which at the slow save rates are
-  // a different and much rarer clock: the header answers "is the link keeping
-  // up", and that question is about the wire.
+  // Measured poll interval, for the footer's right-hand readout. Taken from the
+  // poll loop rather than from the recorded points, which at the slow save rates
+  // are a different and much rarer clock: the readout answers "is the link
+  // keeping up", and that question is about the wire.
+
+  // No nominal printed alongside it: the wire rate is a fixed constant rather
+  // than something the user chose, so the target would just be a reminder of
+  // what 100 is. What reaches the file is the Save Rate, whose progress is the
+  // header's point count.
   const recentPollTimestampsRef = useRef<number[]>([]);
   const lastPollRatePublishRef = useRef(0);
   const [actualPollIntervalMs, setActualPollIntervalMs] = useState(0);
@@ -628,6 +661,12 @@ function App() {
   // A viewer renders the host's serial line; it has no port of its own to
   // describe, and the local DEFAULT_SERIAL_SETTINGS would be a fiction.
   const [remoteSerialLabel, setRemoteSerialLabel] = useState('');
+  // The host's System Log, mirrored for chart slot 3 and the footer line. A
+  // viewer runs no script and owns no serial port, so this is the only thing
+  // either of those could ever show.
+  const [remoteSystemLog, setRemoteSystemLog] = useState<SystemLogEntry[]>([]);
+  const [remoteScriptStatus, setRemoteScriptStatus] = useState('');
+  const [remoteScriptRunning, setRemoteScriptRunning] = useState(false);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -646,10 +685,12 @@ function App() {
       setManualPanelOpen(true);
     } else if (item === 'scriptRunner') {
       setScriptRunnerPanelOpen(true);
-    } else if (item === 'scriptLog') {
-      setScriptLogPanelOpen(true);
+    } else if (item === 'systemLog') {
+      setSystemLogPanelOpen(true);
     } else if (item === 'remoteViewer') {
       setRemoteViewerPanelOpen(true);
+    } else if (item === 'recordingConfig') {
+      setRecordingConfigPanelOpen(true);
     }
   };
 
@@ -660,8 +701,19 @@ function App() {
   // restating something the UI had already changed to show, so the bar was
   // almost always occupied by something nobody needed to read. Failures are the
   // only thing worth interrupting for, and they go through reportError().
-  const setStatus = useCallback((msg: string) => {
+  // The app's own running commentary. This was console-only for a long time —
+  // there was nowhere in the UI it could go, since the status bar that replaced
+  // the old header line took failures only, on the argument that every one of
+  // these messages restated something already on screen. The System Log is
+  // where they belong: a strip glanced at is not a place for "connected at
+  // 9600 8N1", but a log read after the fact is exactly where that line is
+  // wanted, an hour later, next to the failure it explains.
+  //
+  // INFO, and tagged with the subsystem speaking rather than a blanket App: it
+  // is what the default threshold shows, and it is the run's story.
+  const setStatus = useCallback((msg: string, source: AppStatusSource = 'app') => {
     console.info('[App]', msg);
+    logSystem('INFO', SOURCE[source], msg);
   }, []);
 
   useEffect(() => {
@@ -809,6 +861,10 @@ function App() {
   useEffect(() => {
     writeJsonStorage('param_collapsed', paramCollapsed);
   }, [paramCollapsed]);
+
+  useEffect(() => {
+    saveRecordingConfig(recordingConfig);
+  }, [recordingConfig]);
 
   const handleAiFreeLabelChange = useCallback((idx: number, value: string) => {
     setAiFreeLabels((prev) => {
@@ -1161,6 +1217,44 @@ function App() {
   const viewerHost = useViewerHost();
   viewerHostRef.current = viewerHost;
 
+  // --- Camera / microphone capture ---------------------------------------
+  //
+  // One device, one stream, four consumers (this panel's preview, the chart
+  // slot on the launcher, the file recorder and the remote publisher). The
+  // device is opened only while one of them is actually looking, so a bound
+  // camera costs nothing until it is used — and it is frozen while recording,
+  // because re-opening it mid-run would cut the recording in half.
+  const cameraWanted =
+    !isViewerMode &&
+    hasBoundDevice(recordingConfig) &&
+    (recordingConfigPanelOpen || isLauncherMode || activeRecordingFilename !== '');
+  const cameraFeed = useCameraFeed({
+    config: recordingConfig,
+    active: cameraWanted,
+    locked: activeRecordingFilename !== '',
+  });
+  const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+
+  // Host side of remote video. A second encoder, so it only runs when somebody
+  // is actually attached — see useMediaStreamHost.
+  useMediaStreamHost({
+    stream: cameraFeed.stream,
+    viewerCount: viewerHost.status?.viewers ?? 0,
+    publishMedia: viewerHost.publishMedia,
+    publishMediaEnd: viewerHost.publishMediaEnd,
+  });
+
+  // What the System Log window puts in its subtitle, shared with slot 3 and
+  // with the snapshot sent to viewers so all three say the same thing. The log
+  // itself covers the whole app now; this line still names the run, because a
+  // tail left open across runs would otherwise not say which one it is of.
+  const hostScriptStatus = scriptRunner.runningTab
+    ? `${scriptRunner.runningTab.name} — ${scriptRunner.scriptRunning ? 'Running' : scriptRunner.scriptRun.outcome}`
+    : scriptRunner.scriptRunning
+      ? 'Running'
+      : scriptRunner.scriptRun.outcome;
+
   // Rebuilt every render (see viewerStateRef below) so the timer below always reads
   // current values without owning them as dependencies.
   const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
@@ -1182,6 +1276,13 @@ function App() {
     actualPollIntervalMs,
     precision: resolvedPrecision,
     serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
+    // The tail only. A viewer's chart slot shows about a screenful, and sending
+    // the whole log every second would put a session's entire output on the wire
+    // once a second to redraw the same last few lines. Unfiltered by level: the
+    // viewer applies its own threshold, which is that machine's setting.
+    systemLog: systemLogSnapshot().slice(-VIEWER_SYSTEM_LOG_TAIL),
+    scriptStatus: hostScriptStatus,
+    scriptRunning: scriptRunner.scriptRunning,
   });
 
   useEffect(() => {
@@ -1271,6 +1372,11 @@ function App() {
     setSavePointCount(state.savePointCount);
     setActualPollIntervalMs(state.actualPollIntervalMs ?? 0);
     setRemoteSerialLabel(state.serial);
+    // Absent from a host running an older build, which is why it defaults
+    // rather than being read straight through.
+    setRemoteSystemLog(state.systemLog ?? []);
+    setRemoteScriptStatus(state.scriptStatus ?? '');
+    setRemoteScriptRunning(state.scriptRunning === true);
     // Mirror the host's resolved register map. Without this the viewer's
     // resolvedPrecision stays at its 'normal' default and a host in Extended
     // mode prints its Raw without toFixed(3), dropping the decimal part that
@@ -1297,10 +1403,16 @@ function App() {
     setDisplayRevision((v) => v + 1);
   }, []);
 
+  // Viewer side of the host's camera. Inert on the host itself, where onMedia
+  // is never called.
+  const remoteVideo = useRemoteVideo();
+
   const viewerClient = useViewerClient({
     onState: ingestRemoteState,
     onSamples: ingestRemoteSamples,
     onReset: ingestRemoteReset,
+    onMedia: remoteVideo.onMedia,
+    onMediaEnd: remoteVideo.onMediaEnd,
   });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
@@ -1656,7 +1768,7 @@ function App() {
       enqueueDisplayUpdate(timestamp, aiRaw, aiPhysical, param, plot);
       if (record) enqueueSaveUpdate(timestamp, aiRaw, aiPhysical, param);
 
-      // Measured poll interval for the header. Sampled here, at the top of the
+      // Measured poll interval for the footer. Sampled here, at the top of the
       // loop, rather than downstream of the display queue: the number answers
       // "is the link keeping up", so it must not fold in how long the chart
       // took to accept the point.
@@ -1928,6 +2040,7 @@ function App() {
       setStatus(
         `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL[resolved]}` +
           (modbusPrecision === 'auto' ? ' (auto)' : ''),
+        'link',
       );
       await requestWakeLock();
       keepLatestCountRef.current = 0;
@@ -1948,7 +2061,7 @@ function App() {
 
       if (err instanceof DOMException && err.name === 'NotFoundError') {
         // The user closed the port picker. Not a failure.
-        setStatus('Device selection cancelled');
+        setStatus('Device selection cancelled', 'link');
         return;
       }
       // The worst of the swallowed errors: a wrong baud rate or slave ID left
@@ -2027,7 +2140,7 @@ function App() {
     } finally {
       await releaseWakeLock();
       setConnected(false);
-      setStatus('Disconnected');
+      setStatus('Disconnected', 'link');
       disconnectInProgressRef.current = false;
       console.info('[App] handleDisconnect complete');
     }
@@ -2198,10 +2311,10 @@ function App() {
       const data = JSON.parse(text) as Record<string, unknown>;
 
       if (data.type !== 'Calibration') {
-        postStatus(
-          'error',
-          'Invalid calibration file format: missing "type": "Calibration" field',
+        postFailure(
+          'ERROR',
           'calibration',
+          'Invalid calibration file format: missing "type": "Calibration" field',
         );
         return;
       }
@@ -2226,10 +2339,87 @@ function App() {
 
       setAiCalibration(loadedCalibration);
       setAiChannels((prev) => applyCalibrationToChannels(prev, loadedCalibration));
-      setStatus('Calibration loaded successfully');
+      setStatus('Calibration loaded successfully', 'calibration');
       clearStatusSource('calibration');
     } catch (err) {
       reportError('calibration', err, 'Failed to load calibration file');
+    }
+  };
+
+  /**
+   * Start recording, from the button in Recording Config.
+   *
+   * Deliberately not tied to Start Save any more. Recording is most often
+   * wanted for remote monitoring — watching a rig for an hour with no TSV run
+   * in progress at all — and binding it to the save made that impossible while
+   * also forcing the video into the downloads folder, because Start Save's own
+   * picker had already spent the click's user activation. A button of its own
+   * carries its own activation, which is what lets the folder be chosen.
+   */
+  const handleStartRecording = async () => {
+    if (videoRecorderRef.current) return;
+
+    const stream = cameraFeed.stream;
+    if (!stream) {
+      postFailure(
+        'ERROR',
+        'recording',
+        cameraFeed.error
+          ? `Recording not started: ${cameraFeed.error}`
+          : 'Recording not started: no camera or microphone is bound.',
+      );
+      return;
+    }
+
+    try {
+      // The save dialog opens inside this call, on this click — the only place
+      // it can, since a file picker needs a user gesture.
+      const recorder = await createVideoRecorder({
+        stream,
+        config: recordingConfig,
+        onError: (message, severity) => {
+          if (severity === 'warning') {
+            console.warn('Recording warning:', message);
+            // A dropped frame or a re-negotiated bitrate: the recording is
+            // still running, so this must not read as a failure — which is what
+            // it had to do, or say nothing at all, before there were levels.
+            logSystem('WARN', SOURCE.recording, message);
+            return;
+          }
+          console.error('Recording error:', message);
+          postFailure('ERROR', 'recording', message);
+        },
+      });
+      // Cancelled the save dialog. Nothing was started and nothing is said.
+      if (!recorder) return;
+      videoRecorderRef.current = recorder;
+      setActiveRecordingFilename(recorder.getFileName());
+      setRecordingStartedAt(Date.now());
+      setStatus(`Recording to ${recorder.getFileName()}`, 'recording');
+      clearStatusSource('recording');
+    } catch (err) {
+      reportError('recording', err, 'Recording failed to start');
+    }
+  };
+
+  const handleStopRecording = async () => {
+    const recorder = videoRecorderRef.current;
+    if (!recorder) return;
+    videoRecorderRef.current = null;
+    const fileName = recorder.getFileName();
+    setActiveRecordingFilename('');
+    setRecordingStartedAt(null);
+
+    try {
+      const bytes = await recorder.stop();
+      if (bytes === 0) {
+        postFailure('ERROR', 'recording', 'Recording produced no data.');
+        return;
+      }
+      setStatus(`Saved ${fileName}`, 'recording');
+      clearStatusSource('recording');
+    } catch (err) {
+      reportError('recording', err, 'Failed to finish the recording');
     }
   };
 
@@ -2262,7 +2452,7 @@ function App() {
             return;
           }
           console.error('TSV worker error:', message);
-          postStatus('error', `TSV write error: ${message}`, 'save');
+          postFailure('ERROR', 'save', `TSV write error: ${message}`);
         },
         () => {
           filePickerOpenRef.current = false;
@@ -2312,7 +2502,7 @@ function App() {
         savePointCountRef.current = 0;
         lastSaveCountPublishRef.current = 0;
         setSavePointCount(0);
-        setStatus('Saving data to file');
+        setStatus('Saving data to file', 'save');
         clearStatusSource('save');
       } catch (setupErr) {
         // Post-creation setup failed (e.g. IndexedDB clear): close the writer
@@ -2320,6 +2510,7 @@ function App() {
         writer.close().catch(() => {});
         throw setupErr;
       }
+
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         // The user cancelled the file picker. Not a failure.
@@ -2353,6 +2544,7 @@ function App() {
       console.warn('Error closing TSV writer:', err);
     }
 
+
     pendingDataPoints.current = [];
     // Re-phase the recording deadline the same way the save start did. The poll
     // rate measurement is deliberately left alone: the loop kept running through
@@ -2364,7 +2556,7 @@ function App() {
     viewerHostRef.current?.publishReset();
     setDisplayRevision((v) => v + 1);
 
-    setStatus('Stopped saving');
+    setStatus('Stopped saving', 'save');
   };
 
   // Auto has no answer until it has connected once, and saying "i16t" before
@@ -2415,20 +2607,37 @@ function App() {
                 aria-live="polite"
                 className="flex flex-wrap items-baseline gap-x-3 gap-y-0 text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400"
               >
+                {/* Two items, in the order they are asked about: how much has
+                    been written, and what it is called.
+
+                    The filename is last, where it used to be first. These are
+                    read by position — the eye goes to where the number was last
+                    time — and the filename is the only thing here whose width
+                    jumps, from `-` to whatever the user picked, at the exact
+                    moment a save begins. In front, it moved every readout
+                    beside it; behind them, nothing it does can. The REC lamp
+                    (which sat between the two) and the measured poll rate are
+                    both in the footer now for the same reason: a sticky header
+                    spends its width for the whole session, and neither was
+                    worth a permanent bite out of the channel grid. */}
+                {/* Dashes, not 00:00:00 / # 0, until a save is actually running.
+                    A zeroed clock is a reading — it says a save is open and has
+                    recorded nothing, which is a fault worth panicking about —
+                    where dashes say there is nothing to read yet. `-` is what
+                    the footer's poll readout uses for the same thing, and in
+                    Iosevka the dashes occupy the digits' width exactly, so the
+                    row does not step when the clock starts.
+
+                    This is also the state after Stop Save: the counters are
+                    cleared with the writer, so the alternative was showing a
+                    zeroed total for a run that had just written 40 000 rows. */}
+                <span className="tabular-nums">
+                  {activeSaveFilename === ''
+                    ? 'Total: --:--:-- / # -'
+                    : `Total: ${formatElapsedTime(saveElapsedMs)} / # ${savePointCount}`}
+                </span>
                 <span className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
-                </span>
-                <span className="tabular-nums">
-                  Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
-                </span>
-                {/* Measured only, no nominal alongside it: the wire rate is now
-                    a fixed constant rather than something the user chose, so
-                    printing the target next to it would just be a reminder of
-                    what 100 is. What this answers is whether the link is
-                    keeping up. What reaches the file is the Save Rate, and its
-                    progress is the count to the left. */}
-                <span className="tabular-nums">
-                  Polling: {actualPollIntervalMs > 0 ? `${actualPollIntervalMs} ms` : '-'}
                 </span>
               </div>
             </div>
@@ -2547,7 +2756,7 @@ function App() {
                   {/* The file the picker creates stays 0 bytes until the writer
                       closes it: a FileSystemWritableFileStream buffers into a
                       swap file and only swings it onto the target on close().
-                      Nothing warns about that anywhere else — AppStatusBar
+                      Nothing warns about that anywhere else — the System Log
                       reports failures, not standing properties of the format,
                       and the header has no room for a permanent notice — so it
                       is said here, on the two buttons that bracket the run. No portal/tooltip library: the sticky header (z-10,
@@ -2806,32 +3015,64 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        <ChartPanel
-          color="#f472b6"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart3X}
-          yAxis={chart3Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart3X}
-          onYAxisChange={setChart3Y}
-        />
-        <ChartPanel
-          color="#fbbf24"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart4X}
-          yAxis={chart4Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart4X}
-          onYAxisChange={setChart4Y}
-        />
+        {/* Slots 3 and 4 are the launcher's, and only the launcher's. On the web
+            build these stay plots, so nothing an existing user is looking at
+            moves. The axis selections for both are still loaded and still saved
+            — they are simply unused here, so switching between the two builds
+            does not cost the user their chart setup.
+
+            Slot 3 is the System Log in both. A viewer runs no script and owns
+            no serial port, so the entries come over the feed from the host —
+            which is the point: what a script printed and what the link did are
+            the other half of what the charts are showing, and that is as true
+            for someone watching remotely as for the person at the machine.
+
+            Slot 4 is the camera in both, from different sources — the local
+            device on the host, the host's stream on a viewer. */}
+        {isLauncherServed ? (
+          <SystemLogCard
+            remoteEntries={isViewerMode ? remoteSystemLog : undefined}
+            subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
+            running={isViewerMode ? remoteScriptRunning : scriptRunner.scriptRunning}
+          />
+        ) : (
+          <ChartPanel
+            color="#f472b6"
+            dataPoints={dataBufferRef.current}
+            purgeEpoch={chartEpoch}
+            displayRevision={displayRevision}
+            axisOptions={axisOptions}
+            axisLabels={chartAxisLabels}
+            xAxis={chart3X}
+            yAxis={chart3Y}
+            isDarkMode={isDarkMode}
+            onXAxisChange={setChart3X}
+            onYAxisChange={setChart3Y}
+          />
+        )}
+        {isLauncherServed ? (
+          <CameraCard
+            feed={cameraFeed}
+            recording={activeRecordingFilename !== ''}
+            remote={isViewerMode}
+            snapshotUrl={remoteVideo.snapshotUrl}
+            lastFrameAt={remoteVideo.lastFrameAt}
+          />
+        ) : (
+          <ChartPanel
+            color="#fbbf24"
+            dataPoints={dataBufferRef.current}
+            purgeEpoch={chartEpoch}
+            displayRevision={displayRevision}
+            axisOptions={axisOptions}
+            axisLabels={chartAxisLabels}
+            xAxis={chart4X}
+            yAxis={chart4Y}
+            isDarkMode={isDarkMode}
+            onXAxisChange={setChart4X}
+            onYAxisChange={setChart4Y}
+          />
+        )}
       </div>
       </div>
 
@@ -2920,6 +3161,19 @@ function App() {
         onClose={() => setManualPanelOpen(false)}
       />
 
+      <RecordingConfigPanel
+        open={recordingConfigPanelOpen}
+        onClose={() => setRecordingConfigPanelOpen(false)}
+        config={recordingConfig}
+        onConfigChange={setRecordingConfig}
+        feed={cameraFeed}
+        locked={activeRecordingFilename !== ''}
+        activeFileName={activeRecordingFilename}
+        recordingStartedAt={recordingStartedAt}
+        onStartRecording={handleStartRecording}
+        onStopRecording={handleStopRecording}
+      />
+
       <ScriptRunnerPanel
         open={scriptRunnerPanelOpen}
         onClose={() => setScriptRunnerPanelOpen(false)}
@@ -2930,10 +3184,11 @@ function App() {
       {/* Opened separately from the runner: the two are meant to sit side by
           side, and a log window that only existed while the editor was open
           would be back to being a pane inside it. */}
-      <ScriptLogPanel
-        open={scriptLogPanelOpen}
-        onClose={() => setScriptLogPanelOpen(false)}
-        scriptRunner={scriptRunner}
+      <SystemLogPanel
+        open={systemLogPanelOpen}
+        onClose={() => setSystemLogPanelOpen(false)}
+        remoteEntries={isViewerMode ? remoteSystemLog : undefined}
+        subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
       />
 
       <RemoteViewerPanel
@@ -2943,24 +3198,31 @@ function App() {
         onEnabledChange={viewerHost.setEnabled}
       />
 
-      {/* Not on a viewer: it has no menu, so Script Runner is unreachable
-          there and a bar reporting its state would describe a feature the
-          window does not offer. */}
-      {!isViewerMode && (
-        <ScriptStatusBar
-          running={scriptRunner.scriptRunning}
-          outcome={scriptRunner.scriptRun.outcome}
-          status={scriptRunner.scriptRunnerStatus}
-          lastLogLine={scriptRunner.scriptLog[scriptRunner.scriptLog.length - 1] ?? null}
-          languageLabel={SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label}
-          runtimeBadge={SCRIPT_LANGUAGES[scriptRunner.statusLanguage].badge}
-        />
-      )}
-
-      {/* Last, so it stacks above the PyScript bar. Unlike that one it is
-          rendered on a viewer too: a viewer can still lose its feed, and
-          nothing else on that window would say so. */}
-      <AppStatusBar />
+      {/* One strip, on every build. A viewer gets the log line without the
+          runner badge: it has no menu, so Script Runner is unreachable there and
+          a badge reporting its state would describe a feature that window does
+          not offer — but it can still lose its feed, and the log line is what
+          says so. */}
+      <FooterBar
+        remoteEntries={isViewerMode ? remoteSystemLog : undefined}
+        // Null on a viewer without a branch of its own: a viewer cannot start a
+        // recording, so this is always '' there.
+        recording={activeRecordingFilename === '' ? null : { fileName: activeRecordingFilename }}
+        // The host's own measurement, or the host's as relayed, depending on
+        // which window this is — the same value the header used to print.
+        pollIntervalMs={actualPollIntervalMs}
+        runner={
+          isViewerMode
+            ? null
+            : {
+                running: scriptRunner.scriptRunning,
+                outcome: scriptRunner.scriptRun.outcome,
+                status: scriptRunner.scriptRunnerStatus,
+                languageLabel: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label,
+                scriptName: scriptRunner.statusTabName,
+              }
+        }
+      />
     </div>
   );
 }

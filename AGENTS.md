@@ -55,11 +55,15 @@ src/
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
 │   ├── useScriptRunner.ts           # 言語ごとの Worker 管理（1言語1つ・生成後は保持）+ SAB 先行確保 + 言語別コード永続化
 │   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
+│   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示する3コンポーネントだけが購読する
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
-│   ├── ScriptStatusBar.tsx          # 画面下端固定の ScriptRunner 状態バー（選択中の言語名を出す・md 以上のみ・常設なので h-8 スペーサを持つ）
-│   ├── AppStatusBar.tsx             # 画面下端固定のエラーバー（**失敗のみ**。正常時は出ない）。ScriptRunner バーの上に重なる。何も無ければ null（スペーサを持たない純オーバーレイ）・全ブレークポイントで表示
+│   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（左端＝録画中の REC ランプ → ScriptRunner 状態 → System Log 最新1行のロール表示 → 右端＝実測ポーリング周期）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
+│   ├── RecLamp.tsx                  # 点滅する REC ランプ（FooterBar と CameraCard が共有。入れ物のスタイルは呼び出し側が決める）
+│   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・チャート枠・フッターの3面で共有（行は memo 済み）
+│   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）
+│   ├── SystemLogCard.tsx            # ランチャーのチャート枠3番目に入る System Log カード
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／言語セレクタ／実行・停止・Output ログ・API 一覧（UI 名: Script Runner）
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
@@ -80,7 +84,7 @@ src/
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── calibrationExport.ts         # キャリブレーションの JSON 入出力
-    ├── appStatus.ts                 # エラーのモジュールレベルストア（**失敗のみ**・同一文言の畳み込み・source 別クリア・notify() へ転送）
+    ├── systemLog.ts                 # アプリ唯一のログのモジュールレベルストア（log4j 6段階・同一文言の畳み込み・100ms コアレス発火・2000行/2000文字・ERROR/FATAL は notify() へ転送）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
     ├── opfsRecoveryShared.ts        # OPFS ミラーの命名規約（Worker と主スレッドで共有）
@@ -156,7 +160,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
     - **保存開始のリセットは `tsvWriterRef.current = writer` の直前に置く**。他のリセット群と一緒に上へ動かしてはならない — 間に `await dataStorage.clearAllData()` があり、ポーリング周期より長く掛かりうる。その隙間に来たポーリングがリセットを消費して締切を1保存周期ぶん進めてしまい、しかも `enqueueSaveUpdate` はまだ writer が無いので書かない。結果として**このリセットが防ごうとしている遅延（30分周期なら1行目が30分後）がそのまま再発する**（v4.1 で混入し修正）
   - 保存周期がポーリング周期の整数倍でない組み合わせでは、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**。なお**現行の選択肢では起こらない** — ポーリングは 25/50/100ms、保存は下限 200ms でどれも全ポーリング周期の整数倍になっている。どちらかのリストに整数倍でない値を足すときに効いてくる話として残してある
   - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。25/50/100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
-  - ヘッダー表示は `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗は同じ行の点数カウンタが示す
+  - 表示は**フッター右端**の `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗はヘッダーの点数カウンタが示す
+    - **sticky ヘッダーから外した**（v4.x）。sticky ヘッダーの幅は全セッションぶんチャンネルグリッドから引かれる一方、この値を見るのは限られた場面。フッターなら削るのは元から truncate 済みのログ行だけで済む
+    - **ブレークポイントで隠さないこと**。この値はアプリ内の他のどこにも出ておらず、幅が最も無い構成（スマホ + WebUSB。Connection Config も Script Runner も開けない）がまさに他に答えるものが無い場面。実測 52px、横スクロールは 320px でも発生しない
   - ViewerStatePayload は `pollingIntervalMs` と `saveIntervalMs` の両方を返す（ビューアは両方を自分の選択肢へ引き当てる）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ）
@@ -193,7 +199,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### 通知（`utils/notifications.ts` + `useNotifications.ts`）
 - 通知の可否は**モジュールレベルの1箇所**（`utils/notifications.ts` の `enabled` + 許可状態）で判定する。`notify()` は Worker のメッセージハンドラなど React の外から呼ばれるため、React state をゲートにしないこと
-- 対象は ScriptRunner の開始 / 停止 / 完了 / エラーと、スクリプトの `SetNotify(msg)`。**通知した内容は必ず `scriptLog` にも書く**（通知 OFF や許可なしでも情報が消えないように）
+- 対象は ScriptRunner の開始 / 停止 / 完了 / エラーと、スクリプトの `SetNotify(msg)`、およびアプリの ERROR / FATAL。**通知した内容は必ず System Log にも書く**（通知 OFF や許可なしでも情報が消えないように）
 - **許可要求は起動時に1回**（`useNotifications` の effect、トグル ON かつ `permission === 'default'` のときだけ）。計測は「開始したら人が離れる」使い方なので、失敗した瞬間に許可ダイアログを出しても誰も答えられない。拒否された場合はトグルを自動で OFF にして、UI と実態を合わせる
 - **通知は tag で潰す**（`NOTIFY_TAG`）。`while True:` の中の `SetNotify()` でデスクトップが埋まらないようにするため。連投は「最新1件が残る」挙動になる
 - 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
@@ -248,7 +254,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **COOP/COEP ヘッダー必須**（`SharedArrayBuffer` 利用のため）
 - Worker init 失敗時は `initPromise` をリセットし再試行可能。メインスレッドは `init` を Worker 生成時に1度しか送らないため、Worker 側は `initArgs` を保持して `run` 受信時に**自力で再 init する**
 - **stdout/stderr は `pyodide.setStdout/setStderr`（batched）でメインスレッドへ転送する**（`{ type: 'output' }`）。Worker のコンソールはページの devtools に既定では出ないため。エラー時は `{ type: 'error', message, traceback }` で**要約1行と完全なトレースバックの両方**を送る（ステータス表示は要約、ログはトレースバック）
-- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と `scriptLog` に記録する**。ログは実行開始時にクリアし直近 100 行（`SCRIPT_LOG_MAX`）・1行あたり 2000 文字（`SCRIPT_LOG_LINE_MAX`、超過分は残り文字数を添えて切る）を保持。**上限を増やす前に**、1行 print するたびにパネル全体が再レンダリングされ配列を map し直すコストが、Modbus ポーリングと同じ主スレッドに乗ることを踏まえること（バイト数ではなくこれが律速）。両者は **ref にもミラーする**（Worker のメッセージハンドラは React のレンダリング外で走るため、state だけでは直前の失敗を取り逃す）
+- **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と System Log（`utils/systemLog.ts`）に記録する**。`scriptRun` は **ref にもミラーする**（Worker のメッセージハンドラは React のレンダリング外で走るため、state だけでは直前の失敗を取り逃す）。ログ側は元々モジュールレベルなので同じ問題を持たない
+- **ログは実行開始時にクリアしない**。同じログにリンク断や保存失敗が入っており、Run がそれを消してよい理由はない。代わりに `Run started (<言語>)` の行を出して区切る
 - **`pyodide.setInterruptBuffer()` は init の最後に呼ぶこと**。Pyodide は `runPython()` のたびに割込みバッファを見るため、Pyodide ロード中に Stop された状態（`interruptBuffer[0] === 2`）で先に arm すると `RUNNER_SETUP` 実行時に KeyboardInterrupt が飛び、**init 自体が失敗して Worker が再起動まで使えなくなる**
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
@@ -402,10 +409,12 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）
   - **状態色は許可されている**（v4.5 で明文化）。禁止されているのは「装飾として色を増やすこと」であって、状態を色で伝えること自体ではない:
     - **警告 = 黄／橙**（`amber` / `yellow`）。「このままだと困ったことになる」「取り戻せないデータがある」の類。文字/枠 = `text-amber-600 dark:text-amber-400`、塗り = `bg-amber-500`
-    - **警戒・危険・エラー = 赤**（`red`）。実際に失敗した、または操作すると壊れるもの。ドット = `bg-red-500`、文字 = `text-red-600 dark:text-red-400`（`ScriptStatusBar` / `AppStatusBar` のエラー表示が基準トークン）
+    - **警戒・危険・エラー = 赤**（`red`）。実際に失敗した、または操作すると壊れるもの。ドット = `bg-red-500`、文字 = `text-red-600 dark:text-red-400`（`FooterBar` / `SystemLogBody` の ERROR 表示が基準トークン）
     - **成功・正常 = 緑**、**中立・ロック・無効 = グレー**
   - **色は意味に対して一意に保つこと**。同じ「エラー」を場所によって赤とグレーで出し分けない。逆に、中立的な説明文（ただのヘルプ、機能の解説）に警告色を使わない — **警告かどうかの区別はユーザーが付ける**（v3.18 の Save ボタン注記が amber の初出）
   - 上記4色の外（青/sky・紫・ピンク等）を**装飾目的で新規に持ち込まない**。既存の確立済みセマンティック色（レベルメーターの red/yellow、電圧表示の sky 等）は現状維持でよいが、これらを別の意味へ流用しない
+- **ヘッダーの計測表示は `Total:` → `File:` の順で固定**。**幅が変わる項目を後ろに置く**のが理由 — ファイル名は保存開始の瞬間に `-` から実ファイル名へ幅が跳ねる唯一の項目で、先頭にあると隣の数値が毎回横へずれる。これらは位置で読むもの。同じ理由で REC ランプ（旧: `File:` と `Total:` の間）と実測ポーリング周期はフッターへ移した
+- **保存していない間の `Total:` は `--:--:-- / # -`**。`00:00:00 / # 0` は読み値であり「保存が開いているのに1行も書けていない」という異常を意味してしまう。Stop Save 後もカウンタはライターと一緒にクリアされるので同じ表示になる。Iosevka ではダッシュが数字と同幅なので、時計が動き出しても行はずれない
 - **ヘッダーリンク**: アプリタイトル `ModbusSimpleLogger` は `<a>` タグで GitHub リポジトリへリンクし、`target="_blank" rel="noopener noreferrer"` を付与する
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `SetAiTare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **Input Calibrator の2方式**（`InputCalibratorPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) を**1ウィンドウ**で扱う。チャネル選択は CH00-15 の単一ドロップダウンで、どちらのフロントエンドかは ch 番号（AI マップの前半/後半）から決まる。チップ種別を先に選ばせるタブは置かない（ch の属性であって、ユーザーが選ぶモードではないため）。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。

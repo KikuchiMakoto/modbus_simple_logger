@@ -16,3 +16,6 @@ dist
 # NOTE: a NEW launcher source file must be staged with `git add -f launcher/…`;
 # a plain `git add` will skip it because of this rule.
 launcher/
+
+# Bun build scratch files
+*.bun-build

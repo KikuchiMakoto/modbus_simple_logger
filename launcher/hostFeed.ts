@@ -88,6 +88,14 @@ class HostFeed {
     }
   }
 
+  /**
+   * One still from the page, relayed verbatim. The launcher never looks inside
+   * it: this is a relay, and a JPEG has nothing it needs to know.
+   */
+  handleBinaryMessage(data: ArrayBuffer): void {
+    viewerHub.publishMedia(data);
+  }
+
   handleMessage(raw: string): void {
     let frame: {
       type?: string;
@@ -110,6 +118,12 @@ class HostFeed {
         break;
       case 'reset':
         viewerHub.publishReset();
+        break;
+      // The page stopped sending stills. Said explicitly rather than inferred
+      // from them drying up, so a viewer is told the difference between "the
+      // host turned the camera off" and "the link went quiet".
+      case 'media-end':
+        viewerHub.publishMediaEnd();
         break;
       case 'enable':
         void this.runControl({ type: 'enable', mode: frame.mode === 'tunnel' ? 'tunnel' : 'lan' });
