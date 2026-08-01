@@ -266,14 +266,14 @@ export function FooterBar({
             it is wanted and ignored when it is not; between REC and the log
             line it would be movement in the middle of the bar.
 
-            Dropped below `sm`, not `md` like the script-name chip beside it.
-            768px is a laptop window someone has made narrow to fit something
-            else beside it, not a phone, and "is the link keeping up" is a
-            question that does not stop mattering because the window got
-            smaller — it is a measurement either way. It costs about 70px, which
-            comes out of the log line's truncation and nothing else. Below
-            640px the bar is 24px tall and the message needs the room. */}
-        <span className="hidden shrink-0 tabular-nums text-slate-400 dark:text-slate-500 sm:inline">
+            No breakpoint gate at all, unlike the script-name chip beside it.
+            That chip can go because the log line already names the script it
+            came from; this is stated nowhere else in the app, and a phone on
+            the WebUSB path — no room for a Script Runner window, no room for
+            Connection Config either — is exactly the setup with nothing else
+            that could answer "is the link keeping up". It costs about 52px,
+            all of it out of a log line that was already truncating. */}
+        <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
           Polling: {pollIntervalMs > 0 ? `${pollIntervalMs} ms` : '-'}
         </span>
       </div>
