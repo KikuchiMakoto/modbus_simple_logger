@@ -63,8 +63,35 @@ type ReadOutcome =
   | { ok: true; result: ReadableStreamReadResult<Uint8Array> }
   | { ok: false; error: unknown };
 
-/** Minimum spacing between automatic port-reopen attempts after a dead stream. */
-const REOPEN_THROTTLE_MS = 2000;
+/**
+ * Backoff between automatic port-reopen attempts, in ms, one per consecutive
+ * failure. The last entry repeats once the list runs out.
+ *
+ * Was a flat 2000. A field trace showed why that is the wrong shape: the first
+ * reopen after a dead stream fails on `claimInterface` ("Unable to claim
+ * interface") because Android has not finished releasing the interface the
+ * close() just gave up, and a flat throttle then charged a full two seconds for
+ * a condition that clears in a few hundred milliseconds. Three attempts at two
+ * seconds each is where that run's four-second hole came from.
+ *
+ * Still bounded at two seconds, because the other thing this throttle protects
+ * against has not changed: a device that has genuinely been unplugged must not
+ * be retried on every poll for the rest of the session.
+ */
+const REOPEN_BACKOFF_MS = [500, 1000, 2000];
+
+/**
+ * Pause between closing and re-opening the port during recovery.
+ *
+ * `claimInterface` is refused if it runs before Android has finished tearing
+ * down the previous claim, and the polyfill's open() claims immediately. The
+ * two calls are back to back with nothing between them, so the wait has to go
+ * here, in the only place this code controls.
+ *
+ * Polyfill only: native Web Serial claims nothing and has no such race, so
+ * desktop recovery keeps its current speed.
+ */
+const REOPEN_SETTLE_MS = 300;
 
 /**
  * Cap on each individual teardown step in disconnect().
@@ -294,6 +321,10 @@ export class WebSerialModbusClient {
    */
   private rxSuspect = false;
   private lastReopenAttemptAt = 0;
+  /** Consecutive failed reopen attempts, indexing REOPEN_BACKOFF_MS. */
+  private reopenFailures = 0;
+  /** True while a throttle window is being waited out, so it is said once. */
+  private reopenThrottleReported = false;
   private slaveId: number;
   private serialSettings: SerialSettings;
   private serialApi: Serial;
@@ -379,9 +410,17 @@ export class WebSerialModbusClient {
   private epochSummary(): string {
     const seconds = (Date.now() - this.epochStartedAt) / 1000;
     const perFrame = this.epochFrames > 0 ? this.epochRxChunks / this.epochFrames : 0;
+    // Bytes per chunk is the one that turned out to matter. A CDC adapter that
+    // hands the host one byte per USB transfer makes a 69-byte response cost 69
+    // `transferIn` round trips, and it is the count of those — not the byte
+    // total — that the Android stack appears to run out of. Quoted here so the
+    // ratio is visible in the log rather than something a reader has to divide
+    // out for themselves.
+    const perChunk = this.epochRxChunks > 0 ? this.epochRxBytes / this.epochRxChunks : 0;
     return (
       `${WebSerialModbusClient.formatBytes(this.epochRxBytes)} in ${this.epochFrames} frames ` +
-      `over ${seconds.toFixed(1)}s, ${this.epochRxChunks} chunks (${perFrame.toFixed(2)}/frame)`
+      `over ${seconds.toFixed(1)}s, ${this.epochRxChunks} USB transfers ` +
+      `(${perFrame.toFixed(1)}/frame, ${perChunk.toFixed(2)} B each)`
     );
   }
 
@@ -574,6 +613,8 @@ export class WebSerialModbusClient {
     this.lastReadParkedForMs = 0;
     this.lastFailureAt = 0;
     this.lastReopenAttemptAt = 0;
+    this.reopenFailures = 0;
+    this.reopenThrottleReported = false;
     this.resetEpoch();
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
     this.log('DEBUG', () =>
@@ -699,14 +740,28 @@ export class WebSerialModbusClient {
   private async ensureReadyOrRecover(): Promise<void> {
     if (this.port && !this.disconnecting && (!this.reader || !this.writer)) {
       const now = Date.now();
-      if (now - this.lastReopenAttemptAt >= REOPEN_THROTTLE_MS) {
+      // Same backoff ladder as recoverAfterTransferError(): this is the same
+      // reopen, reached from the other side, and two independent throttles over
+      // one operation would let each reset the other's window.
+      const backoffMs = REOPEN_BACKOFF_MS[
+        Math.min(this.reopenFailures, REOPEN_BACKOFF_MS.length - 1)
+      ];
+      if (now - this.lastReopenAttemptAt >= backoffMs) {
         this.lastReopenAttemptAt = now;
+        this.reopenThrottleReported = false;
         console.warn(`${this.debugPrefix} streams missing; reopening port`);
+        this.log('DEBUG', () => 'streams missing; reopening the port');
         try {
           await this.reopenPort();
           console.info(`${this.debugPrefix} port reopened before transfer`);
+          this.reopenFailures = 0;
+          this.log('DEBUG', () => `port reopened in ${Date.now() - now}ms`);
         } catch (err) {
           console.error(`${this.debugPrefix} port reopen failed`, err);
+          this.reopenFailures += 1;
+          this.log('DEBUG', () =>
+            `port reopen FAILED after ${Date.now() - now}ms: ` +
+            `${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }
@@ -889,6 +944,17 @@ export class WebSerialModbusClient {
     this.pendingRead = null;
 
     try { await port.close(); } catch (err) { console.warn(`${this.debugPrefix} reopenPort() close failed`, err); }
+
+    // Let Android finish releasing the interface before asking for it back.
+    // Without this the very next call is `claimInterface`, and a field trace
+    // caught it failing twice in a row with "Unable to claim interface" —
+    // 328 ms of work to produce an error, then a throttle window, then the same
+    // again. The device was fine; only the timing was wrong. See
+    // REOPEN_SETTLE_MS.
+    if (this.isUsingPolyfill) {
+      await new Promise<void>((resolve) => setBackgroundTimeout(resolve, REOPEN_SETTLE_MS));
+    }
+
     await port.open({
       baudRate: this.serialSettings.baudRate,
       dataBits: this.serialSettings.dataBits,
@@ -925,7 +991,7 @@ export class WebSerialModbusClient {
    * Best-effort recovery run after every failed transfer.
    *
    * A live stream only needs its stale bytes drained. A dead one needs the
-   * port re-opened, throttled to REOPEN_THROTTLE_MS so a permanently
+   * port re-opened, on the REOPEN_BACKOFF_MS ladder so a permanently
    * unplugged device does not spin on reopen attempts every polling cycle.
    */
   private async recoverAfterTransferError(): Promise<void> {
@@ -942,21 +1008,37 @@ export class WebSerialModbusClient {
     if (!this.streamDead) return;
 
     const now = Date.now();
-    if (now - this.lastReopenAttemptAt < REOPEN_THROTTLE_MS) {
-      this.log('DEBUG', () =>
-        `reopen throttled, ${REOPEN_THROTTLE_MS - (now - this.lastReopenAttemptAt)}ms to go`);
+    const backoffMs = REOPEN_BACKOFF_MS[
+      Math.min(this.reopenFailures, REOPEN_BACKOFF_MS.length - 1)
+    ];
+    if (now - this.lastReopenAttemptAt < backoffMs) {
+      // Once per window, not once per poll. Said every poll — with a countdown
+      // that changed each time, so it could not collapse either — this line
+      // interleaved with the caller's own error lines and stopped *those* from
+      // collapsing too, turning one incident into eighty rows.
+      if (!this.reopenThrottleReported) {
+        this.reopenThrottleReported = true;
+        this.log('DEBUG', () => `waiting ${backoffMs}ms before the next reopen attempt`);
+      }
+      console.debug(`${this.debugPrefix} reopen throttled`, {
+        msToGo: backoffMs - (now - this.lastReopenAttemptAt),
+        reopenFailures: this.reopenFailures,
+      });
       return;
     }
     this.lastReopenAttemptAt = now;
+    this.reopenThrottleReported = false;
 
     console.warn(`${this.debugPrefix} serial stream is dead; reopening port`);
     this.log('DEBUG', () => 'reopening the port after a dead stream');
     try {
       await this.reopenPort();
       console.info(`${this.debugPrefix} port reopened after dead stream`);
+      this.reopenFailures = 0;
       this.log('DEBUG', () => `port reopened in ${Date.now() - now}ms`);
     } catch (reopenErr) {
       console.error(`${this.debugPrefix} port reopen failed`, reopenErr);
+      this.reopenFailures += 1;
       this.log('DEBUG', () =>
         `port reopen FAILED after ${Date.now() - now}ms: ` +
         `${reopenErr instanceof Error ? reopenErr.message : String(reopenErr)}`);
