@@ -2605,23 +2605,12 @@ function App() {
                 <span className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
                 </span>
-                {/* Only while a recording is actually running. It disappears the
-                    moment the encoder stops, which is what makes it worth the
-                    space: a save that is still going with no badge here is a
-                    save whose video died, and that is visible at a glance
-                    rather than at Stop Save. */}
-                {activeRecordingFilename !== '' && (
-                  <span
-                    className="font-semibold text-rose-600 dark:text-rose-400"
-                    translate="no"
-                    title={activeRecordingFilename}
-                  >
-                    {/* Only the lamp blinks, not the word: a flashing label is
-                        harder to read, and it is the light that carries the
-                        state. */}
-                    <span className="rec-blink">●</span> REC
-                  </span>
-                )}
+                {/* The REC lamp used to sit here, between File: and Total:.
+                    These three are read by position — the eye goes to where the
+                    number was last time — and a badge that appears in the middle
+                    of them moved two of the three sideways every time a
+                    recording started or stopped. It is in the footer now, which
+                    is a fixed strip of fixed height and cannot push anything. */}
                 <span className="tabular-nums">
                   Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
                 </span>
@@ -3200,6 +3189,9 @@ function App() {
           says so. */}
       <FooterBar
         remoteEntries={isViewerMode ? remoteSystemLog : undefined}
+        // Null on a viewer without a branch of its own: a viewer cannot start a
+        // recording, so this is always '' there.
+        recording={activeRecordingFilename === '' ? null : { fileName: activeRecordingFilename }}
         runner={
           isViewerMode
             ? null
