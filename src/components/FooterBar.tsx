@@ -119,7 +119,8 @@ export function FooterBar({
     outcome: ScriptOutcome;
     status: string;
     languageLabel: string;
-    runtimeBadge: string;
+    /** The script the runner is pointed at — the running one, or the tab in front. */
+    scriptName: string;
   } | null;
 }) {
   const visible = useVisibleSystemLog(useSystemLogSource(remoteEntries));
@@ -155,9 +156,9 @@ export function FooterBar({
           below `md`, which is exactly where a phone on the WebUSB path sits —
           the one setup with no room for a Script Runner window either, so the
           bar was the only thing that could have said a script was running at
-          all. Two steps of h/text/gap instead, and only the runtime chip drops
-          out: it repeats what the language name already implies, and it is the
-          widest thing here. */}
+          all. Two steps of h/text/gap instead, and only the script-name chip
+          drops out: the log line beside it already names the script it came
+          from, and the chip is the widest fixed thing here. */}
       <div className="fixed bottom-0 left-0 right-0 z-20 flex h-6 items-center border-t border-slate-200 bg-slate-50/70 px-2 text-[0.65rem] backdrop-blur dark:border-slate-800 dark:bg-slate-950/70 md:h-8 md:px-3 md:text-xs">
         {runner && badge && (
           <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
@@ -165,8 +166,19 @@ export function FooterBar({
             <span className="font-semibold text-slate-800 dark:text-slate-100">
               {runner.languageLabel}
             </span>
-            <span className="hidden rounded bg-slate-200 px-1 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-700 dark:text-slate-400 md:inline">
-              {runner.runtimeBadge}
+            {/* The script's name, where the runtime version used to be. The
+                version was a constant — it said "Pyodide 314.0.3" for the life
+                of the install, next to a language name that already implied it
+                — while the one thing this bar could not answer was WHICH script
+                Run/Stop is about, which changes with every tab. It is in the
+                Script Runner's subtitle for anyone who wants it.
+
+                Not uppercased, unlike the chip it replaces: this is a name the
+                user typed, and case is part of it. Still dropped below `md`,
+                where the bar is 24px tall — the message is what the bar is for,
+                and a name is the widest thing here. */}
+            <span className="hidden max-w-[10rem] truncate rounded bg-slate-200 px-1 py-0.5 text-[0.6rem] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300 md:inline">
+              {runner.scriptName}
             </span>
             <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
           </div>

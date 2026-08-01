@@ -538,6 +538,12 @@ export function useScriptRunner(
      * that is not the one executing.
      */
     statusLanguage: tabs.find((tab) => tab.id === runningTabId)?.language ?? scriptLanguage,
+    /**
+     * Which script the status bar should name — the running one when there is
+     * one, for the same reason as the language above: paging to another tab
+     * mid-run must not make the bar report a script that is not executing.
+     */
+    statusTabName: tabs.find((tab) => tab.id === runningTabId)?.name ?? activeTab.name,
     scriptLanguage,
     setScriptLanguage,
     scriptCode,

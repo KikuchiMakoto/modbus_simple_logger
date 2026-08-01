@@ -3208,7 +3208,7 @@ function App() {
                 outcome: scriptRunner.scriptRun.outcome,
                 status: scriptRunner.scriptRunnerStatus,
                 languageLabel: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label,
-                runtimeBadge: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].badge,
+                scriptName: scriptRunner.statusTabName,
               }
         }
       />
