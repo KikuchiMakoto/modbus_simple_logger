@@ -10,6 +10,18 @@ import { SerialSettings } from '../types';
 // a whole minute the moment the window stops being visible (see
 // utils/backgroundTimer.ts).
 import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
+// The transport talks to the app's log directly, not only to the console.
+// The failures this file has to explain happen on an Android phone, where the
+// console is only reachable over remote debugging with a cable already occupied
+// by the device under test. The in-app log is the one surface a user can
+// actually read and paste from in the field.
+import {
+  logSystem,
+  passesLevel,
+  SOURCE,
+  systemLogLevel,
+  type SystemLogLevel,
+} from '../utils/systemLog';
 
 /**
  * Simple async mutex implementation for exclusive access control
@@ -126,6 +138,29 @@ const PARKED_READ_REPORT_MS = 1000;
 const STUCK_READ_MS = 5000;
 
 /**
+ * Quiet period held after a failed transfer, before the next request goes out.
+ *
+ * Modbus RTU has no way to say "that reply was for the previous question". A
+ * device that was still assembling or still shifting out its answer when the
+ * link broke will finish doing so, and if the next request is already on the
+ * wire by then, that answer is read as its reply — same slave, same function
+ * code, same length, valid CRC. Nothing downstream can catch it.
+ *
+ * So the fix is silence, not cleverness: wait until the device has certainly
+ * finished talking, drain whatever it said, and only then ask again. Sized from
+ * DEVICE_RESPONSE_ALLOWANCE_MS, which is how long the reference hardware may
+ * take to produce a first byte — past that, plus the frame's own wire time, the
+ * device is idle by construction.
+ *
+ * Only spent when the previous transfer ended mid-frame (`rxSuspect`), so a
+ * healthy link never pays it. It costs a poll slot or two during recovery,
+ * which the polling loop absorbs: it re-arms after each poll returns rather
+ * than on a fixed timer, so a slow transfer delays the next poll instead of
+ * stacking up behind it.
+ */
+const RECOVERY_QUIET_MS = 200;
+
+/**
  * Bucket size for the received-byte count quoted on a dead-stream error.
  *
  * Quoted coarsely on purpose: the system log collapses consecutive identical
@@ -135,6 +170,15 @@ const STUCK_READ_MS = 5000;
  * "roughly 16 KB again?", not "how many bytes exactly".
  */
 const RX_BYTES_BUCKET = 4096;
+
+/**
+ * Frames between DEBUG health lines — 10 s of a 10 Hz poll.
+ *
+ * Chosen so a run left at DEBUG produces a readable trickle rather than a
+ * flood, while still bracketing any failure closely enough that the last health
+ * line before it says what the link had carried.
+ */
+const HEALTH_LINE_EVERY_FRAMES = 100;
 
 /**
  * Extra window granted alongside the credited stall time, so an already-settled
@@ -210,13 +254,37 @@ export class WebSerialModbusClient {
   private lastReadOvershootMs = 0;
   /** When the read now sitting in `pendingRead` was issued. Diagnostic only. */
   private pendingReadIssuedAt = 0;
+  /** When the read that most recently settled or expired had been issued. */
+  private lastSettledReadIssuedAt = 0;
   /**
    * How long the read had already been parked when the last deadline expired.
    * Zero when that read was issued by the transfer that timed out on it.
    */
   private lastReadParkedForMs = 0;
-  /** Bytes received since the last dead stream. Diagnostic only. */
-  private rxBytesSinceStreamError = 0;
+  /**
+   * Counters since the last dead stream — the "epoch" a stream error ends.
+   *
+   * Kept because the one question the reported logs cannot answer is whether
+   * the Android `transferIn` failure is timed or metered. The interval between
+   * failures changes with the response size (44 s of 16-channel int16 reads,
+   * 24 s of the same read in float32) while the volume does not (~16 KB either
+   * way), and only the volume is invisible in a timestamped log. Chunk counts
+   * come along because they are what distinguishes a USB-level pattern — how
+   * many `transferIn` completions a frame takes, and whether that changes as
+   * the epoch ages — from a serial-level one.
+   */
+  private epochStartedAt = 0;
+  private epochRxBytes = 0;
+  private epochRxChunks = 0;
+  private epochFrames = 0;
+  /** Per-transfer, for the TRACE line and the incident report. */
+  private txAt = 0;
+  private frameRxChunks = 0;
+  private frameFirstByteMs = -1;
+  /** When the last transfer failed, so the quiet period can be measured. */
+  private lastFailureAt = 0;
+  /** Successful frames at the last DEBUG health line. */
+  private framesAtLastHealthLine = 0;
   /** True once a read reported `done` or threw: the stream can never recover. */
   private streamDead = false;
   /**
@@ -280,6 +348,50 @@ export class WebSerialModbusClient {
         minMessageIntervalMs: this.minMessageIntervalMs,
       },
     );
+  }
+
+  /**
+   * Write one line to the app's log, building it only if anyone will see it.
+   *
+   * The threshold gate belongs here rather than in the log: logSystem() stores
+   * every line and filters at render, so an ungated TRACE line at 10 Hz would
+   * push the 2000-entry ring over in about three minutes and delete the history
+   * a reader at INFO came for. Gated, TRACE costs one comparison per poll until
+   * somebody asks for it.
+   */
+  private log(level: SystemLogLevel, build: () => string): void {
+    if (!passesLevel(level, systemLogLevel())) return;
+    logSystem(level, SOURCE.link, build());
+  }
+
+  /** `1234` -> `1.2 KB`, for lines a human reads at a glance. */
+  private static formatBytes(bytes: number): string {
+    return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  /**
+   * What the link has carried since the last stream error.
+   *
+   * The shared tail of the health line and the incident line, so the two are
+   * directly comparable when reading a log: the last health line before a
+   * failure and the failure itself quote the same quantities.
+   */
+  private epochSummary(): string {
+    const seconds = (Date.now() - this.epochStartedAt) / 1000;
+    const perFrame = this.epochFrames > 0 ? this.epochRxChunks / this.epochFrames : 0;
+    return (
+      `${WebSerialModbusClient.formatBytes(this.epochRxBytes)} in ${this.epochFrames} frames ` +
+      `over ${seconds.toFixed(1)}s, ${this.epochRxChunks} chunks (${perFrame.toFixed(2)}/frame)`
+    );
+  }
+
+  /** Start a fresh epoch. Called on connect and after every stream error. */
+  private resetEpoch(): void {
+    this.epochStartedAt = Date.now();
+    this.epochRxBytes = 0;
+    this.epochRxChunks = 0;
+    this.epochFrames = 0;
+    this.framesAtLastHealthLine = 0;
   }
 
   /**
@@ -380,7 +492,7 @@ export class WebSerialModbusClient {
       stallCreditMs,
       budgetMs: effectiveTimeout + stallCreditMs,
       parkedForMs,
-      rxBytesSinceStreamError: this.rxBytesSinceStreamError,
+      epochRxBytes: this.epochRxBytes,
     });
     const parked =
       parkedForMs >= STUCK_READ_MS ? `, read stuck >${STUCK_READ_MS / 1000}s`
@@ -398,7 +510,7 @@ export class WebSerialModbusClient {
    */
   private withRxVolume(err: unknown): Error {
     const message = err instanceof Error ? err.message : String(err);
-    const bucketKb = Math.round(this.rxBytesSinceStreamError / RX_BYTES_BUCKET) * RX_BYTES_BUCKET / 1024;
+    const bucketKb = Math.round(this.epochRxBytes / RX_BYTES_BUCKET) * RX_BYTES_BUCKET / 1024;
     return new Error(`${message} [rx ~${bucketKb} KB since last stream error]`);
   }
 
@@ -459,10 +571,14 @@ export class WebSerialModbusClient {
     this.pendingRead = null;
     this.streamDead = false;
     this.rxSuspect = false;
-    this.rxBytesSinceStreamError = 0;
     this.lastReadParkedForMs = 0;
+    this.lastFailureAt = 0;
     this.lastReopenAttemptAt = 0;
+    this.resetEpoch();
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
+    this.log('DEBUG', () =>
+      `transport ready: ${this.isUsingPolyfill ? 'WebUSB polyfill' : 'native Web Serial'}, ` +
+      `${this.serialSettings.baudRate}bps, silent interval ${this.minMessageIntervalMs.toFixed(1)}ms`);
 
     return true;
   }
@@ -664,15 +780,19 @@ export class WebSerialModbusClient {
     if (outcome === null) {
       this.lastReadOvershootMs = Math.max(0, Date.now() - armedAt - requestedMs);
       this.lastReadParkedForMs = parkedForMs;
+      this.lastSettledReadIssuedAt = this.pendingReadIssuedAt;
       return null;
     }
 
+    this.lastSettledReadIssuedAt = this.pendingReadIssuedAt;
     if (parkedForMs > PARKED_READ_REPORT_MS) {
-      console.warn(`${this.debugPrefix} parked read settled`, {
-        parkedForMs,
-        ok: outcome.ok,
-        bytes: outcome.ok ? (outcome.result.value?.length ?? 0) : 0,
-      });
+      // A read that comes back after seconds of nothing is the tell for the
+      // hung-transfer theory: it means the transfer was alive but stalled, not
+      // that the device was quiet. Worth a line even at DEBUG.
+      this.log('DEBUG', () =>
+        `read settled after ${(parkedForMs / 1000).toFixed(1)}s parked ` +
+        `(${outcome.ok ? `${outcome.result.value?.length ?? 0} B` : 'error'})`);
+      console.warn(`${this.debugPrefix} parked read settled`, { parkedForMs, ok: outcome.ok });
     }
     this.lastReadOvershootMs = 0;
     this.lastReadParkedForMs = 0;
@@ -686,7 +806,13 @@ export class WebSerialModbusClient {
       this.streamDead = true;
       throw new Error('Stream closed unexpectedly');
     }
-    this.rxBytesSinceStreamError += value?.length ?? 0;
+    const length = value?.length ?? 0;
+    this.epochRxBytes += length;
+    this.epochRxChunks += 1;
+    this.frameRxChunks += 1;
+    if (this.frameFirstByteMs < 0 && length > 0 && this.txAt > 0) {
+      this.frameFirstByteMs = Date.now() - this.txAt;
+    }
     return value ?? new Uint8Array(0);
   }
 
@@ -776,10 +902,23 @@ export class WebSerialModbusClient {
     this.reader = port.readable.getReader();
     this.writer = port.writable.getWriter();
     this.streamDead = false;
-    // A reopened port has fresh streams: whatever the device owed the previous
-    // ones is unreachable now, so there is nothing to fence against.
-    this.rxSuspect = false;
-    this.lastTransferTime = 0;
+    // `rxSuspect` is deliberately left set. The old reasoning was that fresh
+    // streams put whatever the device owed out of reach — true of the stream,
+    // false of the device. It never saw the reopen: if it was mid-response when
+    // the link broke it is still shifting bytes out, and they land in the *new*
+    // stream, where they read as the reply to the next request. Keeping the
+    // fence set means the next transfer waits out the quiet period and drains
+    // first, which is the whole point of RECOVERY_QUIET_MS. Costs one flush
+    // window on a link that really is clean.
+    //
+    // Not zero. Zero reads as "the last frame was in 1970", which skips the
+    // Modbus silent interval entirely and puts the next request on the wire the
+    // instant the port is back — the one thing RTU does not tolerate. The device
+    // never saw the reopen; from its side this is simply the next frame, and it
+    // is owed the same gap as any other. Charging the interval from now also
+    // gives an adapter that has just had DTR dropped and re-asserted a moment to
+    // settle before it is asked for anything.
+    this.lastTransferTime = Date.now();
   }
 
   /**
@@ -803,15 +942,24 @@ export class WebSerialModbusClient {
     if (!this.streamDead) return;
 
     const now = Date.now();
-    if (now - this.lastReopenAttemptAt < REOPEN_THROTTLE_MS) return;
+    if (now - this.lastReopenAttemptAt < REOPEN_THROTTLE_MS) {
+      this.log('DEBUG', () =>
+        `reopen throttled, ${REOPEN_THROTTLE_MS - (now - this.lastReopenAttemptAt)}ms to go`);
+      return;
+    }
     this.lastReopenAttemptAt = now;
 
     console.warn(`${this.debugPrefix} serial stream is dead; reopening port`);
+    this.log('DEBUG', () => 'reopening the port after a dead stream');
     try {
       await this.reopenPort();
       console.info(`${this.debugPrefix} port reopened after dead stream`);
+      this.log('DEBUG', () => `port reopened in ${Date.now() - now}ms`);
     } catch (reopenErr) {
       console.error(`${this.debugPrefix} port reopen failed`, reopenErr);
+      this.log('DEBUG', () =>
+        `port reopen FAILED after ${Date.now() - now}ms: ` +
+        `${reopenErr instanceof Error ? reopenErr.message : String(reopenErr)}`);
     }
   }
 
@@ -857,6 +1005,25 @@ export class WebSerialModbusClient {
       // most a few ms once after a failure.
       if (this.rxSuspect) {
         this.rxSuspect = false;
+        // Silence before the drain, not just a drain. The fence could only ever
+        // sweep up bytes that had already arrived, and after a mid-frame failure
+        // the device is usually still working: it may not have sent its first
+        // byte yet, let alone all 69 of them. Flushing at that moment finds an
+        // empty buffer, declares the line clean, and sends the next request
+        // straight into the answer to the previous one — which arrives looking
+        // exactly like a valid reply. Waiting first is what makes the drain mean
+        // something. See RECOVERY_QUIET_MS.
+        const sinceFailure = Date.now() - this.lastFailureAt;
+        const quietMs = Math.min(RECOVERY_QUIET_MS, Math.max(0, RECOVERY_QUIET_MS - sinceFailure));
+        if (quietMs > 0) {
+          // Fixed wording, with the varying figure left to the console: the
+          // remaining wait differs by a millisecond or two every poll, and in
+          // the log that would break the `(×N)` collapsing and turn a stall into
+          // one line per poll. What matters here is that the hold happened.
+          console.debug(`${this.debugPrefix} holding the line quiet`, { quietMs, sinceFailure });
+          this.log('DEBUG', () => `holding the line quiet up to ${RECOVERY_QUIET_MS}ms before retrying`);
+          await new Promise<void>((resolve) => setBackgroundTimeout(resolve, quietMs));
+        }
         try {
           await this.flushReceiveBuffer(
             this.isUsingPolyfill ? STALE_PREWRITE_FLUSH_MS_POLYFILL : STALE_PREWRITE_FLUSH_MS_NATIVE,
@@ -880,7 +1047,10 @@ export class WebSerialModbusClient {
 
       // Write frame
       console.debug(`${this.debugPrefix} transfer() write start`);
+      this.frameRxChunks = 0;
+      this.frameFirstByteMs = -1;
       await writer.write(frame);
+      this.txAt = Date.now();
       console.debug(`${this.debugPrefix} transfer() write complete`);
 
       // The read deadline starts here, not at mutex acquisition.
@@ -1006,6 +1176,20 @@ export class WebSerialModbusClient {
         readElapsedMs: this.lastTransferTime - readStart,
       });
 
+      this.epochFrames += 1;
+      this.log('TRACE', () =>
+        `rx ${responseArray!.length}B in ${this.frameRxChunks} chunk(s), ` +
+        `first byte +${this.frameFirstByteMs}ms, frame ${this.lastTransferTime - readStart}ms ` +
+        `[epoch ${WebSerialModbusClient.formatBytes(this.epochRxBytes)}/${this.epochFrames}]`);
+      // A periodic line at DEBUG so the volume trajectory is readable without
+      // the per-frame flood TRACE produces. This is the one that answers "how
+      // much had it carried when it died" for a user who cannot leave TRACE on
+      // for a whole run.
+      if (this.epochFrames - this.framesAtLastHealthLine >= HEALTH_LINE_EVERY_FRAMES) {
+        this.framesAtLastHealthLine = this.epochFrames;
+        this.log('DEBUG', () => `link ok: ${this.epochSummary()}`);
+      }
+
       return new DataView(responseArray.buffer);
     } catch (err) {
       if (err instanceof ModbusExceptionError) {
@@ -1025,7 +1209,7 @@ export class WebSerialModbusClient {
         txLength: frame.length,
         elapsedMs: Date.now() - startTime,
         streamDead: this.streamDead,
-        rxBytesSinceStreamError: this.rxBytesSinceStreamError,
+        epochRxBytes: this.epochRxBytes,
         error: err,
       });
       // A stream that just died takes the volume it carried with it into the
@@ -1036,11 +1220,36 @@ export class WebSerialModbusClient {
       // reads are the same 16 KB). Bucketed so the log still collapses repeats.
       const diedNow = this.streamDead && !streamWasDead;
       const rethrown = diedNow ? this.withRxVolume(err) : err;
-      if (diedNow) this.rxBytesSinceStreamError = 0;
+
+      if (diedNow) {
+        // The full incident report, at DEBUG rather than in the thrown message,
+        // because it is long and varies per incident — in the message it would
+        // defeat the log's `(×N)` collapsing and bury the run.
+        //
+        // `issuedBeforeWrite` is the sharp one. The polyfill's ReadableStream
+        // re-pulls as soon as a chunk is consumed, so between polls there is
+        // always a `transferIn` parked on the bulk IN endpoint with no request
+        // outstanding. If the read that died was issued before this request went
+        // out, the transfer failed while the link was *idle* — which is a USB
+        // stack fault and nothing the Modbus layer did. If it was issued after,
+        // the failure belongs to this exchange.
+        const issuedBeforeWrite = this.txAt > 0 && this.lastSettledReadIssuedAt < this.txAt;
+        this.log('DEBUG', () =>
+          `stream died: ${this.epochSummary()}; ` +
+          `failing read was issued ${issuedBeforeWrite ? 'BEFORE' : 'after'} the request, ` +
+          `${Date.now() - this.lastSettledReadIssuedAt}ms ago`);
+        this.resetEpoch();
+      }
+
       // No whole frame was consumed, so the device may still owe a response that
       // would otherwise be handed to the next request. Spent before the next
       // write — see the stale-RX fence above.
       this.rxSuspect = true;
+      // Where the quiet period is measured from: the moment the exchange failed,
+      // not the moment the next one starts. Recovery can take a while, and time
+      // already spent reopening a port is time the device has already had to
+      // finish talking.
+      this.lastFailureAt = Date.now();
       await this.recoverAfterTransferError();
       throw rethrown;
     } finally {
