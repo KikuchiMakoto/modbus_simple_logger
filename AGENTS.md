@@ -5,7 +5,7 @@
 ## プロジェクト概要
 
 - **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4** で構成された Modbus RTU ロガー SPA
-- 通信は **Web Serial API**（非対応環境では `web-serial-polyfill` 経由で WebUSB フォールバック）
+- 通信は **Web Serial API**（非対応環境では自前の WebUSB CDC-ACM 実装 `src/modbus/webusbSerial.ts` でフォールバック）
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
@@ -376,7 +376,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ## 変更時の注意
 
-- 通信方式は「Web Serial API」を基準に記述する（WebUSB は polyfill 経由のフォールバック）
+- 通信方式は「Web Serial API」を基準に記述する（WebUSB は `src/modbus/webusbSerial.ts` のフォールバック）
+- **WebUSB 側で「未完了の `transferIn` を溜める」実装は禁止**。`web-serial-polyfill` は `pull()` が転送を await せず、受信 1 バイトにつき 1 転送を宙に浮かせ、Android の pending URB メモリ上限を数十秒で埋めていた（Polling Rate を下げても比例して延びるだけで直らない）。`webusbSerial.ts` は `pull()` が必ず転送を await し、未完了本数を `BULK_IN_PIPELINE_DEPTH`（8）で構造的に抑える。この不変条件を壊さないこと
 - ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
 - **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
 - **`scattergl` は性能上の選択ではなくデータモデル上の必然**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。scatter トレースは点列を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**scatter 相当のパラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`

@@ -23,8 +23,8 @@
 
 | 機能 | 説明 |
 |------|------|
-| **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境は `web-serial-polyfill` 経由の WebUSB フォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（接続中は固定）と **Save Rate**（いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。選べる範囲は**トランスポート依存**で、Web Serial は Polling 25ms / 50ms / 100ms（既定 100ms）・Save 200ms〜30分、**WebUSB（Android）は Polling 200ms / 500ms（既定 200ms）・Save 1s〜30分**（理由は下記「WebUSB の転送回数上限」）。Save Rate の最小値は必ず最も遅い Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
+| **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境（Android など）は自前の WebUSB CDC-ACM 実装（[`src/modbus/webusbSerial.ts`](src/modbus/webusbSerial.ts)）でフォールバック |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（接続中は固定）と **Save Rate**（いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。選べる範囲は**トランスポート非依存**で、Web Serial / WebUSB（Android）とも Polling 25ms / 50ms / 100ms（既定 100ms）・Save 200ms〜30分（WebUSB が 200ms / 500ms に制限されていた時期があるが、原因だった polyfill のリークを修正して撤廃済み — 下記参照）。Save Rate の最小値は必ず最も遅い Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
@@ -242,29 +242,29 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 </details>
 
 <details>
-<summary>WebUSB の転送回数上限（Android で Polling Rate が 200ms / 500ms しかない理由）</summary>
+<summary>Android/WebUSB で数十秒ごとに通信が落ちていた問題（修正済み）</summary>
 
-Android の Chrome には Web Serial がないため、`web-serial-polyfill` 経由の **WebUSB** で CDC-ACM アダプタを直接叩きます。OS のシリアルドライバが間に入らないので、アダプタのパケット化がそのままアプリに降ってきます。実測では**1バイトにつき USB 転送1回**で、16ch float32 の応答 69 バイトに `transferIn` が 69 往復かかります。
-
-そして Chrome の Android USB スタックは、**約 16,200 転送でストリームを落とします**（実測 16,206 / 16,194、ばらつき 0.1%）。
+Android の Chrome には Web Serial がないため、**WebUSB** で CDC-ACM アダプタを直接叩きます。以前はここに `web-serial-polyfill` を使っていて、数十秒〜数分ごとに必ずこの障害が出ていました。
 
 ```
 ERROR Link: NetworkError: Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.
 ```
 
-復帰には USB インターフェースの再取得が必要ですが、`claimInterface` は**障害の発生から数秒間は拒否されます**（実測 +1.07s / +2.04s で失敗、+3.10s / +4.04s で成功）。この間は計測が止まります。
+原因は polyfill の `UsbEndpointUnderlyingSource.pull()` です。`transferIn` を async IIFE の中で開始しておきながら `undefined` を返すため、**ReadableStream が転送の完了を待ちません**。ストリームは「pull は即座に完了した」と解釈して `desiredSize > 0` の限り pull を続け、結果として**受信 1 バイトにつき `transferIn` を 2 回発行し、1 回だけ回収する**——差の 1 回は永久に宙に浮きます。実装をそのまま回した検証では、2,760 バイトの受信に対し 5,520 転送を発行し 2,760 転送が未完了のまま残りました。
 
-転送回数はアダプタのパケット化で決まるためアプリ側からは減らせません。減らせるのは**単位時間あたりの転送数**、つまりポーリング周期だけです。障害の間隔は次のように直接効きます。
+宙に浮いた転送はカーネルに提出されたままなので、Android の usbfs が保持できる pending URB のメモリ上限に達した時点で落ちます。「約 16,200 転送で落ちる」という実測値は転送回数の上限ではなく、**リークが上限を埋めるまでの本数**でした。`16200 / (frameバイト数 × frame毎秒)` で障害間隔を計算すると実測と一致します。
 
-| Polling Rate | Extended (f32, 69転送/frame) | Normal (i16, 37転送/frame) |
+| Polling Rate | Extended (f32, 69B) 予測/実測 | Normal (i16, 37B) 予測/実測 |
 |---|---|---|
-| 100 ms | 23 秒 | 44 秒 |
-| **200 ms** | **47 秒** | **88 秒** |
-| **500 ms** | **117 秒** | **219 秒** |
+| 100 ms | 23 秒 / 24 秒 | 44 秒 / 44 秒 |
+| 200 ms | 47 秒 / 47 秒 | 88 秒 / 88 秒 |
+| 500 ms | 117 秒 / 117 秒 | 219 秒 / 219 秒 |
 
-100ms 以下は「たまに落ちる」のではなく **23 秒ごとに必ず落ちる**ため、WebUSB では選択肢から外してあります。Save Rate の下限が 1s なのはこれに合わせたもので、最も遅い Polling Rate（500ms）以上でなければ、サンプルしていない行を書こうとすることになるためです。
+**Polling Rate を下げても直らなかったのはこのため**です。リークは時間ではなくバイト数に比例するので、周期を倍にしても同じ障害までの時間が倍になるだけでした。Web Serial（ネイティブ）は正しく backpressure がかかるので、この問題は Android でだけ起きていました。
 
-さらに間隔を延ばしたい場合は **Normal (i16) 精度 + 500ms**（219 秒）が最長です。障害の詳細を追うときは System Log のしきい値を **DEBUG** にすると、`stream died: … USB transfers` 行に転送回数が出ます。
+現在は polyfill をやめ、[`src/modbus/webusbSerial.ts`](src/modbus/webusbSerial.ts) の自前実装に置き換えてあります。`pull()` が開始した転送を必ず await するため、未完了の転送数は構造上 8 本（`BULK_IN_PIPELINE_DEPTH`）を超えません。深さ 8 なのは、1 本ずつ直列に待つと 1 バイト 1 転送のアダプタでは float32 1 フレームに約 104ms かかり 100ms 周期に収まらないためで、8 本並べるとホスト往復遅延が隠れて回線速度律速（約 18ms）になります。
+
+この結果 **WebUSB でも Web Serial と同じ Polling 25/50/100ms・Save 200ms〜 が選べます**。障害を追うときは System Log のしきい値を **DEBUG** にすると `link ok: … USB transfers` 行に転送回数が出ます。ここが五桁に伸び続ける場合は同種のリークを疑ってください。
 </details>
 
 ---
