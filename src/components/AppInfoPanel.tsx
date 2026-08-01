@@ -21,7 +21,6 @@ const LIBRARIES = [
   { name: 'Tailwind CSS', pkg: 'tailwindcss', license: 'MIT' },
   { name: 'Vite', pkg: 'vite', license: 'MIT' },
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
-  { name: 'web-serial-polyfill', pkg: 'web-serial-polyfill', license: 'BSD-3-Clause' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
   { name: 'Wasmoon (Lua)', pkg: 'wasmoon', license: 'MIT' },
   { name: 'Prism', pkg: 'prismjs', license: 'MIT' },
