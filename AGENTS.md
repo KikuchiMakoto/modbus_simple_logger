@@ -55,14 +55,13 @@ src/
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
 │   ├── useScriptRunner.ts           # 言語ごとの Worker 管理（1言語1つ・生成後は保持）+ SAB 先行確保 + 言語別コード永続化
 │   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
-│   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示する3コンポーネントだけが購読する
+│   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示するコンポーネントだけが購読する
 │   └── useKeepAwake.ts              # ランチャーへのスリープ抑制要求（exe 限定）。ページ可視時のみ効く Screen Wake Lock を、最小化中も補う
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
 │   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（ScriptRunner 状態 → System Log 最新1行のロール表示 → 右端＝実測ポーリング周期）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
-│   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・チャート枠・フッターの3面で共有（行は memo 済み）
+│   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・フッターの2面で共有（行は memo 済み）
 │   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）
-│   ├── SystemLogCard.tsx            # ランチャーのチャート枠3番目に入る System Log カード
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／言語セレクタ／実行・停止・Output ログ・API 一覧（UI 名: Script Runner）
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）

@@ -119,7 +119,6 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
-import { SystemLogCard } from './components/SystemLogCard';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
 import { FooterBar } from './components/FooterBar';
@@ -130,7 +129,6 @@ import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
 import { useNotifications } from './hooks/useNotifications';
 import { useKeepAwake } from './hooks/useKeepAwake';
-import { isLauncherServed } from './utils/appMode';
 import { webUsbSerial } from './modbus/webusbSerial';
 
 function isMobileDevice(): boolean {
@@ -2650,35 +2648,19 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        {/* Slot 3 is the launcher's, and only the launcher's. On the web build
-            it stays a plot, so nothing an existing user is looking at moves.
-            The axis selection is still loaded and still saved — it is simply
-            unused here, so switching between the two builds does not cost the
-            user their chart setup.
-
-            Slot 3 is the System Log in the launcher build — what a script
-            printed and what the link did are the other half of what the
-            charts are showing. */}
-        {isLauncherServed ? (
-          <SystemLogCard
-            subtitle={hostScriptStatus}
-            running={scriptRunner.scriptRunning}
-          />
-        ) : (
-          <ChartPanel
-            color="#f472b6"
-            dataPoints={dataBufferRef.current}
-            purgeEpoch={chartEpoch}
-            displayRevision={displayRevision}
-            axisOptions={axisOptions}
-            axisLabels={chartAxisLabels}
-            xAxis={chart3X}
-            yAxis={chart3Y}
-            isDarkMode={isDarkMode}
-            onXAxisChange={setChart3X}
-            onYAxisChange={setChart3Y}
-          />
-        )}
+        <ChartPanel
+          color="#f472b6"
+          dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
+          displayRevision={displayRevision}
+          axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
+          xAxis={chart3X}
+          yAxis={chart3Y}
+          isDarkMode={isDarkMode}
+          onXAxisChange={setChart3X}
+          onYAxisChange={setChart3Y}
+        />
         <ChartPanel
           color="#fbbf24"
           dataPoints={dataBufferRef.current}
