@@ -103,6 +103,39 @@ const STALE_PREWRITE_FLUSH_MS_POLYFILL = 15;
 /** Deadline overshoot beyond this is a blocked main thread, not timer jitter. */
 const TIMER_STALL_THRESHOLD_MS = 25;
 
+// Diagnostics for the Android/WebUSB stall, all read-only: nothing below changes
+// what the client does, only what it says when it fails.
+//
+// The failure being chased is a `transferIn` that neither resolves nor rejects.
+// readChunk() parks a read it gave up waiting for rather than cancelling it (see
+// there for why cancelling is fatal on mobile), so one hung transfer is enough
+// to make every later poll re-await the same never-settling promise. That looks
+// identical, in the log, to a device that has simply gone quiet: both say
+// `Timeout waiting for response (0/2 bytes)`. These tell them apart.
+
+/** A read parked longer than this is worth a console line when it settles. */
+const PARKED_READ_REPORT_MS = 1000;
+
+/**
+ * How long a read must have been parked before the timeout it causes is
+ * reported as stuck rather than merely carried over from the previous poll.
+ *
+ * A read parked across one poll interval is ordinary — it is how a response
+ * that arrives late still gets picked up. One parked for seconds is not.
+ */
+const STUCK_READ_MS = 5000;
+
+/**
+ * Bucket size for the received-byte count quoted on a dead-stream error.
+ *
+ * Quoted coarsely on purpose: the system log collapses consecutive identical
+ * lines into `(×N)`, so an exact byte count would split one incident into N
+ * separate lines and bury the log. Rounded, the same incident stays one line —
+ * and rounding loses nothing here, because the question being asked of it is
+ * "roughly 16 KB again?", not "how many bytes exactly".
+ */
+const RX_BYTES_BUCKET = 4096;
+
 /**
  * Extra window granted alongside the credited stall time, so an already-settled
  * read() can actually be picked up rather than racing the next deadline.
@@ -175,6 +208,15 @@ export class WebSerialModbusClient {
    * blocked main thread from a silent device — see TIMER_STALL_THRESHOLD_MS.
    */
   private lastReadOvershootMs = 0;
+  /** When the read now sitting in `pendingRead` was issued. Diagnostic only. */
+  private pendingReadIssuedAt = 0;
+  /**
+   * How long the read had already been parked when the last deadline expired.
+   * Zero when that read was issued by the transfer that timed out on it.
+   */
+  private lastReadParkedForMs = 0;
+  /** Bytes received since the last dead stream. Diagnostic only. */
+  private rxBytesSinceStreamError = 0;
   /** True once a read reported `done` or threw: the stream can never recover. */
   private streamDead = false;
   /**
@@ -309,11 +351,18 @@ export class WebSerialModbusClient {
   /**
    * Build the read-timeout error, logging what the deadline actually measured.
    *
-   * The message stays exactly as users have seen it — it is what gets shown in
-   * the status bar and the desktop notification — while the numbers that say
-   * *why* it fired go to the console. Without them "(0/2 bytes)" is unfalsifiable
-   * from a bug report: a silent device and a main thread that was blocked
-   * straight through the budget produce the identical string.
+   * The exact numbers that say *why* it fired go to the console; without them
+   * "(0/2 bytes)" is unfalsifiable from a bug report, because a silent device
+   * and a main thread that was blocked straight through the budget produce the
+   * identical string.
+   *
+   * The message itself now carries one bit beyond that: whether the read it gave
+   * up on had been sitting unsettled since an earlier poll. That is the third
+   * way to produce "(0/2 bytes)" and the only one that never recovers on its own
+   * — a `transferIn` that never settles is re-awaited by every later poll — so
+   * distinguishing it matters more than keeping the string byte-identical to
+   * what users have seen. It stays a fixed phrase rather than a duration so the
+   * log can still collapse a run of them into one `(×N)` line.
    */
   private timeoutError(
     buffered: number,
@@ -322,6 +371,7 @@ export class WebSerialModbusClient {
     effectiveTimeout: number,
     stallCreditMs: number,
   ): Error {
+    const parkedForMs = this.lastReadParkedForMs;
     console.warn(`${this.debugPrefix} transfer() read timeout`, {
       buffered,
       atLeast,
@@ -329,8 +379,27 @@ export class WebSerialModbusClient {
       effectiveTimeout,
       stallCreditMs,
       budgetMs: effectiveTimeout + stallCreditMs,
+      parkedForMs,
+      rxBytesSinceStreamError: this.rxBytesSinceStreamError,
     });
-    return new Error(`Timeout waiting for response (${buffered}/${atLeast} bytes)`);
+    const parked =
+      parkedForMs >= STUCK_READ_MS ? `, read stuck >${STUCK_READ_MS / 1000}s`
+      : parkedForMs > 0 ? ', parked read'
+      : '';
+    return new Error(`Timeout waiting for response (${buffered}/${atLeast} bytes${parked})`);
+  }
+
+  /**
+   * Restate `err` with the volume the dead stream carried before it died.
+   *
+   * A new Error rather than a mutated one: `err` may be a DOMException, whose
+   * `message` is read-only, and the WebUSB NetworkError this exists for is
+   * exactly that.
+   */
+  private withRxVolume(err: unknown): Error {
+    const message = err instanceof Error ? err.message : String(err);
+    const bucketKb = Math.round(this.rxBytesSinceStreamError / RX_BYTES_BUCKET) * RX_BYTES_BUCKET / 1024;
+    return new Error(`${message} [rx ~${bucketKb} KB since last stream error]`);
   }
 
   /**
@@ -390,6 +459,8 @@ export class WebSerialModbusClient {
     this.pendingRead = null;
     this.streamDead = false;
     this.rxSuspect = false;
+    this.rxBytesSinceStreamError = 0;
+    this.lastReadParkedForMs = 0;
     this.lastReopenAttemptAt = 0;
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
 
@@ -566,12 +637,14 @@ export class WebSerialModbusClient {
       throw new Error('Device not connected');
     }
     if (!this.pendingRead) {
+      this.pendingReadIssuedAt = Date.now();
       this.pendingRead = reader.read().then(
         (result): ReadOutcome => ({ ok: true, result }),
         (error): ReadOutcome => ({ ok: false, error }),
       );
     }
     const pending = this.pendingRead;
+    const parkedForMs = Date.now() - this.pendingReadIssuedAt;
 
     const requestedMs = Math.max(0, timeoutMs);
     const armedAt = Date.now();
@@ -590,10 +663,19 @@ export class WebSerialModbusClient {
     // lost and the reader stays usable.
     if (outcome === null) {
       this.lastReadOvershootMs = Math.max(0, Date.now() - armedAt - requestedMs);
+      this.lastReadParkedForMs = parkedForMs;
       return null;
     }
 
+    if (parkedForMs > PARKED_READ_REPORT_MS) {
+      console.warn(`${this.debugPrefix} parked read settled`, {
+        parkedForMs,
+        ok: outcome.ok,
+        bytes: outcome.ok ? (outcome.result.value?.length ?? 0) : 0,
+      });
+    }
     this.lastReadOvershootMs = 0;
+    this.lastReadParkedForMs = 0;
     this.pendingRead = null;
     if (!outcome.ok) {
       this.streamDead = true;
@@ -604,6 +686,7 @@ export class WebSerialModbusClient {
       this.streamDead = true;
       throw new Error('Stream closed unexpectedly');
     }
+    this.rxBytesSinceStreamError += value?.length ?? 0;
     return value ?? new Uint8Array(0);
   }
 
@@ -748,10 +831,14 @@ export class WebSerialModbusClient {
     console.debug(`${this.debugPrefix} transfer() mutex acquired`);
 
     const startTime = Date.now();
+    let streamWasDead = this.streamDead;
     try {
       // Inside the mutex so a recovering reopen cannot race a concurrent
       // transfer, and so the readiness check sees the rebuilt streams.
       await this.ensureReadyOrRecover();
+      // A reopen in there may have revived the stream, so what counts as "died
+      // during this transfer" is measured from here, not from before the wait.
+      streamWasDead = this.streamDead;
       const writer = this.writer!;
 
       // Stale-RX fence, deliberately placed before the write rather than after
@@ -937,14 +1024,25 @@ export class WebSerialModbusClient {
         effectiveTimeout: Math.max(timeout, this.minimumReadTimeoutMs(expectedLength)),
         txLength: frame.length,
         elapsedMs: Date.now() - startTime,
+        streamDead: this.streamDead,
+        rxBytesSinceStreamError: this.rxBytesSinceStreamError,
         error: err,
       });
+      // A stream that just died takes the volume it carried with it into the
+      // message. On Android the `transferIn` failure is not timed but *metered*
+      // — it lands after a fixed amount of received data — and that is the one
+      // thing the log otherwise cannot show, because the interval it does show
+      // changes with the response size (44 s of int16 reads and 24 s of float32
+      // reads are the same 16 KB). Bucketed so the log still collapses repeats.
+      const diedNow = this.streamDead && !streamWasDead;
+      const rethrown = diedNow ? this.withRxVolume(err) : err;
+      if (diedNow) this.rxBytesSinceStreamError = 0;
       // No whole frame was consumed, so the device may still owe a response that
       // would otherwise be handed to the next request. Spent before the next
       // write — see the stale-RX fence above.
       this.rxSuspect = true;
       await this.recoverAfterTransferError();
-      throw err;
+      throw rethrown;
     } finally {
       // Always release the mutex
       this.transferMutex.release();
