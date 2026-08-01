@@ -54,7 +54,7 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 // Plot area height. The empty state matches it exactly, so the card does not
 // change size the moment the first sample arrives.
 //
-// Exported because the launcher puts the Script Log and the camera in two of the
+// Exported because the launcher puts the System Log and the camera in two of the
 // four grid slots: those cards are not plots, but they sit in the same row and
 // have to be exactly as tall, or the grid steps.
 export const PLOT_HEIGHT = '240px';

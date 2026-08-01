@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
 import { notify, NOTIFY_TAG } from '../utils/notifications';
+import { logSystem, SOURCE, type SystemLogLevel } from '../utils/systemLog';
 import {
   SCRIPT_LANGUAGES,
   type ScriptLanguageId,
@@ -16,54 +17,19 @@ import {
   type ScriptTab,
 } from '../utils/scriptTabs';
 
-// How many log lines are kept. A `while True:` loop that prints every iteration
-// would grow without bound otherwise; the log is a tail, not a transcript.
-//
-// 100, not the 300 this started at. The cost that matters is not the bytes —
-// it is that every printed line re-renders the panel and re-maps the whole
-// array, on the same main thread the Modbus polling loop runs on, so the tail
-// length is paid per line rather than once. A pane showing this can hold a few
-// lines at a time and the last one is echoed in the status bar; anything a
-// script needs to keep beyond that belongs in Parameter channels or the TSV,
-// both of which are recorded rather than scrolled past.
-const SCRIPT_LOG_MAX = 100;
-
-// Longest single line kept, in characters. The line count above bounds how many
-// entries there are but not how big one can be: `print(huge_list)` is one entry
-// holding the whole thing, and in a loop that is the unbounded case the line cap
-// was supposed to close. Cut well above anything the pane can show, so this only
-// ever fires on output that was never readable there anyway.
-const SCRIPT_LOG_LINE_MAX = 2000;
-
 /**
- * One line of what a script reported.
+ * What a worker's output stream means in log terms.
  *
- * Read in the Script Log window (components/ScriptLogPanel), which replaced the
- * pane inside the Script Runner when the editor took that height back, and in
- * the bottom status bar, which shows the newest line. The recording side is
- * independent of both: every stream is captured, capped and kept here whether or
- * not anything is displaying it.
+ * A script has no way to state a severity — it prints, or it fails — so the
+ * stream it printed on is the only signal there is, and it maps onto exactly two
+ * levels. INFO for output is the point of the default threshold: `print()` is
+ * the run's story, which is what INFO is for. stderr carries the tracebacks.
  */
-export type ScriptLogEntry = {
-  /**
-   * Position in this run's output, from 1. Not displayed — the log is in order
-   * and timestamped, so a counter column only says where the reader is in a list
-   * they can see. It is the entry's identity: stable for the life of a run even
-   * as the tail trims the front of the array, which the array index is not, and
-   * which is what a React key and the log window's expanded set need.
-   */
-  seq: number;
-  /** Epoch ms. */
-  t: number;
-  stream: 'stdout' | 'stderr' | 'system';
-  /**
-   * Name of the script this line came out of — logcat's tag column. Held from
-   * the moment Run is pressed until the next Run, so the lines that arrive after
-   * a script ends ("Stopped", a traceback) still name the script they are about.
-   * Empty before anything has ever been run.
-   */
-  source: string;
-  text: string;
+const STREAM_LEVEL: Record<'stdout' | 'stderr' | 'system', SystemLogLevel> = {
+  stdout: 'INFO',
+  stderr: 'ERROR',
+  /** The runner's own start/stop/notify lines, not the script's. */
+  system: 'INFO',
 };
 
 export type ScriptOutcome = 'idle' | 'running' | 'completed' | 'stopped' | 'error';
@@ -122,16 +88,16 @@ export function useScriptRunner(
       ? 'Idle'
       : 'Unavailable: requires cross-origin isolation (COOP/COEP headers). Reload once after Service Worker installation.',
   );
-  const [scriptLog, setScriptLog] = useState<ScriptLogEntry[]>([]);
   const [scriptRun, setScriptRun] = useState<ScriptRunInfo>(IDLE_RUN);
   const scriptExecutingRef = useRef(false);
-  // Mirrored in refs because worker message handlers run outside React's render
-  // cycle and must never observe a stale render's copy.
-  const scriptLogRef = useRef<ScriptLogEntry[]>([]);
-  /** Lines produced by this run so far — see ScriptLogEntry.seq. */
-  const logSeqRef = useRef(0);
-  /** Script name stamped on new log lines — see ScriptLogEntry.source. */
-  const logSourceRef = useRef('');
+  /**
+   * The tag new lines are filed under — the name of the script that is running.
+   * Held from the moment Run is pressed until the next Run, so the lines that
+   * arrive after a script ends ("Stopped", a traceback) still name the script
+   * they are about. Before anything has ever been run it is the runner itself,
+   * which is what the "requires cross-origin isolation" line comes out as.
+   */
+  const logSourceRef = useRef<string>(SOURCE.runner);
   const scriptRunRef = useRef<ScriptRunInfo>(IDLE_RUN);
   const runIdRef = useRef(0);
   // One worker per language, kept alive once created. Pyodide costs seconds to
@@ -152,29 +118,12 @@ export function useScriptRunner(
   // which must not see the previous render's copy after a tab switch).
   const runningTabIdRef = useRef<string | null>(null);
 
-  const appendLog = useCallback((stream: ScriptLogEntry['stream'], text: string) => {
-    const trimmed = text.replace(/\s+$/, '');
-    if (trimmed === '') return;
-    // Say so rather than silently dropping the tail: a line that ends mid-value
-    // otherwise reads as the script having produced garbage.
-    const capped =
-      trimmed.length > SCRIPT_LOG_LINE_MAX
-        ? `${trimmed.slice(0, SCRIPT_LOG_LINE_MAX)}… (${trimmed.length - SCRIPT_LOG_LINE_MAX} more characters)`
-        : trimmed;
-    logSeqRef.current += 1;
-    const next = [
-      ...scriptLogRef.current,
-      { seq: logSeqRef.current, t: Date.now(), stream, source: logSourceRef.current, text: capped },
-    ];
-    if (next.length > SCRIPT_LOG_MAX) next.splice(0, next.length - SCRIPT_LOG_MAX);
-    scriptLogRef.current = next;
-    setScriptLog(next);
-  }, []);
-
-  const clearScriptLog = useCallback(() => {
-    scriptLogRef.current = [];
-    logSeqRef.current = 0;
-    setScriptLog([]);
+  // Everything a script or the runner says goes into the app's one log, tagged
+  // with the script's name. The trimming, the line cap and the collapsing of
+  // identical consecutive lines all live there now — a `while True:` printing
+  // one unchanging line is the case that used to fill the whole tail with it.
+  const appendLog = useCallback((stream: 'stdout' | 'stderr' | 'system', text: string) => {
+    logSystem(STREAM_LEVEL[stream], logSourceRef.current, text);
   }, []);
 
   // Everything that says "nothing is executing any more". Collected because it
@@ -385,16 +334,13 @@ export function useScriptRunner(
   // rely on the `scriptCode` state having been applied yet.
   const startScriptRunner = useCallback((codeOverride?: string): ScriptRunInfo => {
     if (scriptExecutingRef.current) return scriptRunRef.current;
-    // Each run starts from a clean log: mixing the output of two runs is how a
-    // caller ends up reading a stale error as if it were its own.
-    clearScriptLog();
     const info = beginRun();
     // The tab in front is the one that runs, and it stays the running tab for
     // the whole run even if the user pages over to another one.
     const tab = activeTabOf(tabStateRef.current);
     const language = tab.language;
     // Stamped on every line from here on, including the ones that arrive after
-    // the run ends. Not cleared when it does — see ScriptLogEntry.source.
+    // the run ends. Not cleared when it does — see logSourceRef.
     logSourceRef.current = tab.name;
     try {
       const worker = ensureWorkerReady(language);
@@ -405,6 +351,11 @@ export function useScriptRunner(
       setRunningTabId(tab.id);
       setScriptRunning(true);
       setScriptRunnerStatus('Running');
+      // The log is no longer cleared at the start of a run — it holds the link
+      // and save events either side of it, which a Run has no business
+      // destroying — so this line is what separates one run's output from the
+      // last one's.
+      appendLog('system', `Run started (${SCRIPT_LANGUAGES[language].label})`);
       worker.postMessage({ type: 'run', code: codeOverride ?? tab.code });
       notify(`${SCRIPT_LANGUAGES[language].label} Runner`, 'Script started.', { tag: NOTIFY_TAG.scriptRun });
       return info;
@@ -417,7 +368,7 @@ export function useScriptRunner(
       settleRun('error', text);
       return scriptRunRef.current;
     }
-  }, [ensureWorkerReady, beginRun, clearScriptLog, appendLog, settleRun, markRunFinished]);
+  }, [ensureWorkerReady, beginRun, appendLog, settleRun, markRunFinished]);
 
   const toggleScriptRunner = useCallback(() => {
     if (scriptRunning) {
@@ -593,8 +544,6 @@ export function useScriptRunner(
     setScriptCode,
     scriptRunning,
     scriptRunnerStatus,
-    scriptLog,
-    clearScriptLog,
     scriptRun,
     toggleScriptRunner,
     stopScriptRunner,

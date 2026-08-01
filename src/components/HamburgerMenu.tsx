@@ -28,10 +28,12 @@ const MENU_ITEMS = [
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
   { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
-  // Directly under the runner, because it is the runner's other half: the
+  // Directly under the runner, because it is still the runner's other half: the
   // window where a script is written, and the window where what it said is
-  // read. It was a pane inside that window until the editor needed the height.
-  { key: 'scriptLog', label: 'Script Log', icon: '🧾', wip: false },
+  // read. It was a pane inside that window until the editor needed the height,
+  // and it carries the app's own events — link, save, recording, storage — as
+  // well now, which is why it is no longer named after scripts.
+  { key: 'systemLog', label: 'System Log', icon: '🧾', wip: false },
   // Between the script windows and Remote Monitoring, because that is the order
   // it is reached in: the camera it binds is what the remote viewer shows, so
   // whoever is about to share a screen passes through here on the way.
