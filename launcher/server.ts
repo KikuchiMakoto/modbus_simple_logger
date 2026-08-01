@@ -1,15 +1,7 @@
 // Static file server for the launcher: serves the embedded (built) web app with
-// cross-origin isolation and a hard no-cache policy.
-//
-// Two servers are built from the same assets:
-//   - the app server, on 127.0.0.1, where the hardware-owning host page runs;
-//   - the viewer server (viewerServer.ts), optional and bound to every
-//     interface, where read-only remote monitors connect.
-// They differ only in the runtime marker stamped into index.html and in which
-// WebSocket endpoints they expose, so the static handling below is shared.
+// cross-origin isolation and a hard no-cache policy, on 127.0.0.1 only.
 import { ASSETS, BASE_PATH } from './embedded.generated';
-import { HOST_FEED_PATH_SUFFIX } from './viewerHub';
-import { hostFeed } from './hostFeed';
+import { KEEP_AWAKE_PATH_SUFFIX, keepAwakeFeed } from './keepAwakeFeed';
 
 export { BASE_PATH };
 
@@ -53,37 +45,28 @@ const baseHeaders = (type: string): Record<string, string> => ({
 });
 
 export const INDEX = `${BASE_PATH}index.html`;
-// WebSocket endpoint the host page pushes remote-monitoring frames up. Only
-// exposed on the loopback app server: it is the *source* of the viewer feed and
-// carries the control frames that switch remote monitoring on and off, so it
-// must never be reachable from another machine.
-export const HOST_FEED_PATH = `${BASE_PATH}${HOST_FEED_PATH_SUFFIX}`;
-
-/** Which of the two pages an index.html copy identifies itself as. */
-export type ServedRuntime = 'launcher' | 'viewer';
+// WebSocket endpoint the host page uses to ask the launcher to suppress OS
+// sleep (see keepAwakeFeed.ts). Loopback-only — it must never be reachable
+// from another machine.
+export const HOST_FEED_PATH = `${BASE_PATH}${KEEP_AWAKE_PATH_SUFFIX}`;
 
 // The page tells launcher mode apart from a plain web deployment by this marker
 // and nothing else (see src/utils/appMode.ts). It has to be stamped by whoever
 // serves the page, because the client-side signal it replaced — hostname ===
-// '127.0.0.1' — stops being true the moment a second PC opens the same app over
-// the network.
-//
-// The same marker carries the role: a page served by the viewer server is told
-// it is a viewer, so the role is decided by which port the request arrived on
-// and cannot be changed by editing the URL.
-const runtimeMarker = (runtime: ServedRuntime) => `<meta name="msl-runtime" content="${runtime}">`;
+// '127.0.0.1' — stops being true the moment the page is reached any other way.
+const RUNTIME_MARKER = `<meta name="msl-runtime" content="launcher">`;
 
 // A class stamped onto <html> in addition to the meta. The meta is read by
 // JS (utils/appMode.ts); the class is read by CSS, which cannot select on a
 // meta tag's content. index.css targets this to apply desktop-only rules —
 // currently the body min-width that keeps the exe window's content from
 // collapsing past a readable threshold when the user drags it narrow.
-const runtimeHtmlClass = (runtime: ServedRuntime) => ` class="msl-${runtime}"`;
+const RUNTIME_HTML_CLASS = ' class="msl-launcher"';
 
-// Stamp the marker into the <head> of a served index.html. dist/ on disk stays
-// untouched: only the in-memory copies carry it, so `bun run build` output is
-// still byte-for-byte what GitHub Pages gets.
-const stampRuntimeMarker = (html: Uint8Array, runtime: ServedRuntime): Uint8Array => {
+// Stamp the marker into the <head> of the served index.html. dist/ on disk
+// stays untouched: only the in-memory copy carries it, so `bun run build`
+// output is still byte-for-byte what GitHub Pages gets.
+const stampRuntimeMarker = (html: Uint8Array): Uint8Array => {
   const text = new TextDecoder().decode(html);
   const head = text.indexOf('<head>');
   if (head < 0) throw new Error('Launcher build is incomplete: index.html has no <head>.');
@@ -94,55 +77,42 @@ const stampRuntimeMarker = (html: Uint8Array, runtime: ServedRuntime): Uint8Arra
   const htmlOpen = stamped.match(/<html\b[^>]*>/);
   if (htmlOpen && !/class=/.test(htmlOpen[0])) {
     const idx = htmlOpen.index! + htmlOpen[0].length - 1; // position of the closing '>'
-    stamped = `${stamped.slice(0, idx)}${runtimeHtmlClass(runtime)}${stamped.slice(idx)}`;
+    stamped = `${stamped.slice(0, idx)}${RUNTIME_HTML_CLASS}${stamped.slice(idx)}`;
   }
   const at = stamped.indexOf('<head>') + '<head>'.length;
-  return new TextEncoder().encode(`${stamped.slice(0, at)}${runtimeMarker(runtime)}${stamped.slice(at)}`);
+  return new TextEncoder().encode(`${stamped.slice(0, at)}${RUNTIME_MARKER}${stamped.slice(at)}`);
 };
 
 export type Assets = {
   /** Every embedded file. index.html here is the launcher-stamped copy. */
   bodies: Map<string, Uint8Array>;
-  /** The viewer-stamped index.html — the only asset that differs by role. */
-  viewerIndex: Uint8Array;
 };
 
 // Preload every embedded asset into memory once so responses come from an owned
-// Uint8Array with fully controlled headers. Only index.html is held twice (it is
-// a couple of kB); Pyodide and the fonts are shared between both servers.
+// Uint8Array with fully controlled headers.
 export const loadAssets = async (): Promise<Assets> => {
   const bodies = new Map<string, Uint8Array>();
-  let viewerIndex: Uint8Array | null = null;
   for (const [urlPath, ref] of Object.entries(ASSETS)) {
     const bytes = await Bun.file(ref).bytes();
-    if (urlPath === INDEX) {
-      bodies.set(urlPath, stampRuntimeMarker(bytes, 'launcher'));
-      viewerIndex = stampRuntimeMarker(bytes, 'viewer');
-    } else {
-      bodies.set(urlPath, bytes);
-    }
+    bodies.set(urlPath, urlPath === INDEX ? stampRuntimeMarker(bytes) : bytes);
   }
-  if (!viewerIndex) throw new Error('Launcher build is incomplete: index.html was not embedded.');
-  return { bodies, viewerIndex };
+  return { bodies };
 };
 
 /**
- * Serve an embedded asset for `path`, or null when the path is not a static
+ * Serve an embedded asset for `path`, or a 404 when the path is not a static
  * request this server should answer (the caller has already had its chance to
  * claim WebSocket endpoints).
  */
-export const serveStatic = (assets: Assets, path: string, req: Request, runtime: ServedRuntime): Response => {
+export const serveStatic = (assets: Assets, path: string, req: Request): Response => {
   const notFound = (): Response =>
     new Response('Not Found', { status: 404, headers: baseHeaders('text/plain; charset=utf-8') });
 
-  const send = (urlPath: string): Response => {
-    const body = urlPath === INDEX && runtime === 'viewer' ? assets.viewerIndex : assets.bodies.get(urlPath)!;
-    return new Response(body, { headers: baseHeaders(contentType(urlPath)) });
-  };
+  const send = (urlPath: string): Response =>
+    new Response(assets.bodies.get(urlPath)!, { headers: baseHeaders(contentType(urlPath)) });
 
   // Built by hand rather than with Response.redirect(): that returns a response
-  // with immutable headers (the viewer server appends Set-Cookie), and it would
-  // drop the query string, which is where the viewer's token lives.
+  // with immutable headers, and it would drop the query string.
   if (path === '/') {
     const location = `${BASE_PATH}${new URL(req.url).search}`;
     return new Response(null, { status: 302, headers: { Location: location } });
@@ -167,39 +137,37 @@ type SocketRole = { role: 'feed' };
 
 export const createServer = async (assets: Assets) => {
   return Bun.serve<SocketRole, {}>({
-    // 127.0.0.1 only — never bind a public interface. Remote monitoring is
-    // served by a separate server (viewerServer.ts) that exposes strictly less.
+    // 127.0.0.1 only — never bind a public interface.
     hostname: '127.0.0.1',
     port: 0,
-    // The monitoring uplink is idle whenever nothing is being plotted; without
+    // The keep-awake socket is idle whenever nothing is measuring; without
     // this Bun would close it after 120s.
     idleTimeout: 0,
     fetch(req, srv) {
       const path = decodeURIComponent(new URL(req.url).pathname);
 
-      // Remote-monitoring uplink from the host page. First page wins: a second
-      // window (or a stray tab on the same origin) is refused rather than
-      // displacing the live connection, because exactly one page owns the
-      // hardware.
+      // Keep-awake uplink from the host page. First page wins: a second window
+      // (or a stray tab on the same origin) is refused rather than displacing
+      // the live connection, because exactly one page owns the hardware.
       if (path === HOST_FEED_PATH) {
-        if (hostFeed.connected) return new Response('Feed already connected', { status: 409 });
+        if (keepAwakeFeed.connected) return new Response('Feed already connected', { status: 409 });
         if (srv.upgrade(req, { data: { role: 'feed' } })) return undefined;
         return new Response('Expected a WebSocket upgrade', { status: 426 });
       }
 
-      return serveStatic(assets, path, req, 'launcher');
+      return serveStatic(assets, path, req);
     },
     websocket: {
       open(ws) {
-        hostFeed.attach(ws);
+        keepAwakeFeed.attach(ws);
       },
       message(_ws, message) {
         if (typeof message === 'string') {
-          hostFeed.handleMessage(message);
+          keepAwakeFeed.handleMessage(message);
         }
       },
       close(ws) {
-        hostFeed.detach(ws);
+        keepAwakeFeed.detach(ws);
       },
     },
   });

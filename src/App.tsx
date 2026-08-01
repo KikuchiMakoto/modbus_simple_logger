@@ -63,7 +63,6 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
   rawToDisplayValue,
-  sanitizeVoltageConfig,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -97,7 +96,6 @@ import {
   postFailure,
   reportError,
   SOURCE,
-  systemLogSnapshot,
 } from './utils/systemLog';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import { runAtPriority } from './utils/taskPriority';
@@ -126,23 +124,13 @@ import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
 import { FooterBar } from './components/FooterBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
-import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
-import type { SystemLogEntry } from './utils/systemLog';
 import { useNotifications } from './hooks/useNotifications';
-import {
-  useViewerHost,
-  useViewerClient,
-  type ViewerHostHandle,
-  type ViewerSample,
-  type ViewerStatePayload,
-  VIEWER_SYSTEM_LOG_TAIL,
-} from './hooks/useViewerFeed';
-import { RemoteViewerPanel } from './components/RemoteViewerPanel';
-import { isLauncherMode, isLauncherServed, isViewerMode } from './utils/appMode';
+import { useKeepAwake } from './hooks/useKeepAwake';
+import { isLauncherServed } from './utils/appMode';
 import { webUsbSerial } from './modbus/webusbSerial';
 
 function isMobileDevice(): boolean {
@@ -653,23 +641,6 @@ function App() {
   const [actualPollIntervalMs, setActualPollIntervalMs] = useState(0);
   const voltageConfigRef = useRef<VoltageMode[]>(voltageConfig);
 
-  // Remote monitoring (see hooks/useViewerFeed.ts). Held in a ref because the
-  // publish calls happen inside the chart-flush path, whose useCallback is
-  // deliberately dependency-free: routing them through a ref keeps this feature
-  // from re-creating the hottest callback in the file. The hook itself is called
-  // further down, once the values it reports on exist.
-  const viewerHostRef = useRef<ViewerHostHandle | null>(null);
-  const [remoteViewerPanelOpen, setRemoteViewerPanelOpen] = useState(false);
-  // A viewer renders the host's serial line; it has no port of its own to
-  // describe, and the local DEFAULT_SERIAL_SETTINGS would be a fiction.
-  const [remoteSerialLabel, setRemoteSerialLabel] = useState('');
-  // The host's System Log, mirrored for chart slot 3 and the footer line. A
-  // viewer runs no script and owns no serial port, so this is the only thing
-  // either of those could ever show.
-  const [remoteSystemLog, setRemoteSystemLog] = useState<SystemLogEntry[]>([]);
-  const [remoteScriptStatus, setRemoteScriptStatus] = useState('');
-  const [remoteScriptRunning, setRemoteScriptRunning] = useState(false);
-
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
       setCalibrationPanelOpen(true);
@@ -689,8 +660,6 @@ function App() {
       setScriptRunnerPanelOpen(true);
     } else if (item === 'systemLog') {
       setSystemLogPanelOpen(true);
-    } else if (item === 'remoteViewer') {
-      setRemoteViewerPanelOpen(true);
     }
   };
 
@@ -734,8 +703,7 @@ function App() {
   // silently works, or it is silently unavailable, and nothing has promised
   // the user that it will be there.
   useEffect(() => {
-    // Viewer windows mirror a host's data and never own a save file.
-    if (isViewerMode || recoveryPromptStarted) return;
+    if (recoveryPromptStarted) return;
     recoveryPromptStarted = true;
 
     const run = async () => {
@@ -965,25 +933,11 @@ function App() {
     pendingDataPoints.current = [];
     const buffer = dataBufferRef.current;
 
-    // What remote viewers are shown: exactly the points this host decided to
-    // plot, not every captured point. During a save that means the decimated
-    // stream, so the feed's bandwidth is bounded by the chart budget rather than
-    // by the poll rate — a 50 Hz capture does not become a 50 Hz socket.
-    const published: DataPoint[] = [];
     // Whether the chart buffer actually gained anything. While saving it very
     // often does not — see the redraw arming at the bottom.
     let bufferChanged = false;
 
-    if (isViewerMode) {
-      bufferChanged = true;
-      // A viewer's points arrive already decimated by the host and already
-      // bounded by the hub's backlog, so there is nothing to decide here: keep
-      // the most recent chart budget and drop the rest. Notably this skips the
-      // IndexedDB write below — a monitor is not a recorder, and the complete
-      // record lives on the host's TSV.
-      for (const p of pointsToAdd) buffer.push(p);
-      if (buffer.length > CHART_MAX_POINTS) buffer.splice(0, buffer.length - CHART_MAX_POINTS);
-    } else if (tsvWriterRef.current) {
+    if (tsvWriterRef.current) {
       // Saving: keep the chart bounded by downsampling the WHOLE capture
       // (save-start → now) to ~CHART_MAX_POINTS. Add 1 of every `stride` raw
       // points, and when the buffer doubles, re-decimate by 2 and double the
@@ -992,7 +946,6 @@ function App() {
       for (const p of pointsToAdd) {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
-          published.push(p);
           bufferChanged = true;
         }
         saveRawCounterRef.current++;
@@ -1022,7 +975,6 @@ function App() {
       // decimation — every point the chart is fed is drawn.
       bufferChanged = true;
       for (const p of pointsToAdd) buffer.push(p);
-      published.push(...pointsToAdd);
       if (buffer.length > NON_SAVING_CHART_PREVIEW_POINTS) {
         buffer.splice(0, buffer.length - NON_SAVING_CHART_PREVIEW_POINTS);
       }
@@ -1048,14 +1000,6 @@ function App() {
           console.error('Error trimming data points:', err);
         });
       }
-    }
-
-    // Push to remote viewers, if any. publishSamples short-circuits while remote
-    // monitoring is off, so this costs one branch on the normal path.
-    if (published.length > 0) {
-      viewerHostRef.current?.publishSamples(
-        published.map((p) => [p.seq, p.timestamp, Array.from(p.aiRaw), Array.from(p.aiPhysical), Array.from(p.param)]),
-      );
     }
 
     // Redraws are data-driven AND rate-limited, and it takes both to be right.
@@ -1202,180 +1146,26 @@ function App() {
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
 
-  // --- Remote monitoring (desktop exe only) ------------------------------
-  //
-  // Host side. The per-sample feed is tapped off the chart flush above; what is
-  // left is the slow-moving half — labels, calibration, voltage modes and the
-  // header's status line — which is republished on a timer rather than on every
-  // change. A second's latency on a label is invisible, and a timer cannot be
-  // forgotten the way an extra publish call at each of a dozen setState sites
-  // would eventually be.
-  const viewerHost = useViewerHost();
-  viewerHostRef.current = viewerHost;
-
-  // What the System Log window puts in its subtitle, shared with slot 3 and
-  // with the snapshot sent to viewers so all three say the same thing. The log
-  // itself covers the whole app now; this line still names the run, because a
-  // tail left open across runs would otherwise not say which one it is of.
+  // What the System Log window puts in its subtitle, shared with slot 3. The
+  // log itself covers the whole app now; this line still names the run,
+  // because a tail left open across runs would otherwise not say which one it
+  // is of.
   const hostScriptStatus = scriptRunner.runningTab
     ? `${scriptRunner.runningTab.name} — ${scriptRunner.scriptRunning ? 'Running' : scriptRunner.scriptRun.outcome}`
     : scriptRunner.scriptRunning
       ? 'Running'
       : scriptRunner.scriptRun.outcome;
 
-  // Rebuilt every render (see viewerStateRef below) so the timer below always reads
-  // current values without owning them as dependencies.
-  const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
-  viewerStateRef.current = () => ({
-    aiLabels: Array.from({ length: AI_CHANNELS }, (_, i) => aiFreeLabels[i] ?? ''),
-    aoLabels: Array.from({ length: AO_CHANNELS }, (_, i) => aoFreeLabels[i] ?? ''),
-    paramLabels: Array.from({ length: PARAM_CHANNELS }, (_, i) => paramFreeLabels[i] ?? ''),
-    voltageConfig: voltageConfig.slice(0, AI_CHANNELS),
-    calibration: aiCalibration.slice(0, AI_CHANNELS).map(({ a, b, c }) => ({ a, b, c })),
-    aoMilliVolts: aoChannels.map((ch) => ch.physical),
-    paramValues: [...paramValues],
-    connected,
-    saving: activeSaveFilename !== '',
-    filename: activeSaveFilename,
-    saveElapsedMs,
-    savePointCount,
-    pollingIntervalMs: pollingRate.valueMs,
-    saveIntervalMs: saveRate.valueMs,
-    actualPollIntervalMs,
-    precision: resolvedPrecision,
-    serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
-    // The tail only. A viewer's chart slot shows about a screenful, and sending
-    // the whole log every second would put a session's entire output on the wire
-    // once a second to redraw the same last few lines. Unfiltered by level: the
-    // viewer applies its own threshold, which is that machine's setting.
-    systemLog: systemLogSnapshot().slice(-VIEWER_SYSTEM_LOG_TAIL),
-    scriptStatus: hostScriptStatus,
-    scriptRunning: scriptRunner.scriptRunning,
-  });
-
-  useEffect(() => {
-    if (isViewerMode) return;
-    const timer = window.setInterval(() => {
-      viewerHostRef.current?.publishState(viewerStateRef.current());
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   // Sleep suppression while there is something to lose by sleeping: a live
   // acquisition, or a script driving outputs. The page's own Screen Wake Lock
   // (requestWakeLock) covers the display while the window is visible; this asks
   // the launcher process to hold the *system* awake, which is the part a
   // minimised window cannot do for itself. Outside the exe the call is a no-op.
+  const { setKeepAwake } = useKeepAwake();
   const keepAwakeWanted = acquiring || scriptRunner.scriptRunning;
-  const setKeepAwake = viewerHost.setKeepAwake;
   useEffect(() => {
     setKeepAwake(keepAwakeWanted);
   }, [keepAwakeWanted, setKeepAwake]);
-
-  // Viewer side. Received samples are pushed through the same buffer and flush
-  // the acquisition loop uses, so the charts and channel cards on a monitor are
-  // drawn by exactly the code that draws them on the host — there is no second
-  // rendering path to keep in step.
-  const ingestRemoteSamples = useCallback(
-    (samples: ViewerSample[]) => {
-      if (samples.length === 0) return;
-      for (const [seq, timestamp, raw, phy, param] of samples) {
-        pendingDataPoints.current.push({
-          seq,
-          timestamp,
-          aiRaw: Float32Array.from(raw),
-          aiPhysical: Float32Array.from(phy),
-          param: Float32Array.from(param),
-        });
-      }
-      // Only the newest sample reaches the channel cards; the rest exist to fill
-      // the chart. Physical values come from the host as sent — recomputing them
-      // from the viewer's own calibration would show a different number from the
-      // one the operator is looking at.
-      const [, , lastRaw, lastPhy] = samples[samples.length - 1];
-      aiRawSourceRef.current = [...lastRaw];
-      setAiChannels((prev) =>
-        prev.map((ch, idx) => {
-          const rawValue = lastRaw[idx] ?? ch.raw;
-          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-          return {
-            ...ch,
-            raw: rawValue,
-            physical: lastPhy[idx] ?? ch.physical,
-            status: getAiStatus(rawValue),
-            voltage,
-            microStrain,
-          };
-        }),
-      );
-      flushPendingDataPoints();
-    },
-    [flushPendingDataPoints],
-  );
-
-  const ingestRemoteState = useCallback((state: ViewerStatePayload) => {
-    // Every setter is a no-op when the value is unchanged, because this runs
-    // once a second and React would otherwise re-render the whole grid on each
-    // tick regardless of whether anything moved.
-    const replaceIfChanged = <T,>(prev: T, next: T): T =>
-      JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
-
-    setAiFreeLabels((prev) => replaceIfChanged(prev, state.aiLabels));
-    setAoFreeLabels((prev) => replaceIfChanged(prev, state.aoLabels));
-    setParamFreeLabels((prev) => replaceIfChanged(prev, state.paramLabels));
-    // Sanitized, not cast: the host may be running a different version of this
-    // app and sending a mode this build does not know.
-    setVoltageConfig((prev) => replaceIfChanged(prev, sanitizeVoltageConfig(state.voltageConfig)));
-    setAiCalibration((prev) => replaceIfChanged(prev, state.calibration));
-    setParamValues((prev) => replaceIfChanged(prev, state.paramValues));
-    setAoChannels((prev) =>
-      prev.map((ch, idx) => {
-        const physical = state.aoMilliVolts[idx] ?? ch.physical;
-        return physical === ch.physical ? ch : { ...ch, raw: physical, physical };
-      }),
-    );
-    setConnected(state.connected);
-    setActiveSaveFilename(state.filename);
-    setSaveElapsedMs(state.saveElapsedMs);
-    setSavePointCount(state.savePointCount);
-    setActualPollIntervalMs(state.actualPollIntervalMs ?? 0);
-    setRemoteSerialLabel(state.serial);
-    // Absent from a host running an older build, which is why it defaults
-    // rather than being read straight through.
-    setRemoteSystemLog(state.systemLog ?? []);
-    setRemoteScriptStatus(state.scriptStatus ?? '');
-    setRemoteScriptRunning(state.scriptRunning === true);
-    // Mirror the host's resolved register map. Without this the viewer's
-    // resolvedPrecision stays at its 'normal' default and a host in Extended
-    // mode prints its Raw without toFixed(3), dropping the decimal part that
-    // is the whole reason the mode exists. The ref is the on-wire mirror that
-    // poll-side code reads; the viewer never polls, but keeping them in step
-    // is cheaper than reasoning about which one each consumer reads.
-    setResolvedPrecision((prev) => (prev === state.precision ? prev : state.precision));
-    resolvedPrecisionRef.current = state.precision;
-    setPollingRate((prev) =>
-      prev.valueMs === state.pollingIntervalMs
-        ? prev
-        : POLLING_OPTIONS.find((option) => option.valueMs === state.pollingIntervalMs) ?? prev,
-    );
-    setSaveRate((prev) =>
-      prev.valueMs === state.saveIntervalMs
-        ? prev
-        : SAVE_RATE_OPTIONS.find((option) => option.valueMs === state.saveIntervalMs) ?? prev,
-    );
-  }, []);
-
-  const ingestRemoteReset = useCallback(() => {
-    pendingDataPoints.current = [];
-    dataBufferRef.current = [];
-    setDisplayRevision((v) => v + 1);
-  }, []);
-
-  const viewerClient = useViewerClient({
-    onState: ingestRemoteState,
-    onSamples: ingestRemoteSamples,
-    onReset: ingestRemoteReset,
-  });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
   // returned — NOT Date.now() from in here. This function runs from a promise
@@ -1431,7 +1221,7 @@ function App() {
 
   /**
    * The display side of a poll: channel cards, and — when `plot` is set — the
-   * chart buffer, IndexedDB and the remote viewer feed.
+   * chart buffer and IndexedDB.
    *
    * Both are on the poll clock, not the save rate. Only the TSV follows "Save
    * every"; a chart that advanced one point per half hour would make a
@@ -1580,8 +1370,8 @@ function App() {
     }
   }, [pruneFailuresInWindow, writeAoBlockOnce]);
 
-  // Direct assignment during render, like viewerStateRef below: an
-  // effect would leave the first AO change of the session with no writer.
+  // Direct assignment during render: an effect would leave the first AO
+  // change of the session with no writer.
   requestAoWriteRef.current = () => {
     void doAoWriteAsync();
   };
@@ -1942,7 +1732,6 @@ function App() {
 
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
-      viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
       // The one place a full plot rebuild is free: no measurement is running
       // yet, and the charts are empty. Bounding WebGL/regl accumulation per
@@ -2099,7 +1888,6 @@ function App() {
       setActualPollIntervalMs(0);
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
-      viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
       console.info('[App] handleDisconnect data/session cleanup complete');
     } catch (err) {
@@ -2359,7 +2147,6 @@ function App() {
 
         await dataStorage.clearAllData();
         dataBufferRef.current = [];
-        viewerHostRef.current?.publishReset();
         // Restart the whole-capture downsampling from this save start.
         saveDecimationStrideRef.current = 1;
         saveRawCounterRef.current = 0;
@@ -2443,7 +2230,6 @@ function App() {
 
     await dataStorage.clearAllData();
     dataBufferRef.current = [];
-    viewerHostRef.current?.publishReset();
     setDisplayRevision((v) => v + 1);
 
     setStatus('Stopped saving', 'save');
@@ -2485,13 +2271,7 @@ function App() {
                   None of them is something to act on while a run is in flight
                   (they are all locked once connected), and the header is
                   sticky, so every line here is a line the channel grid never
-                  gets back. A viewer has no local link at all: what it shows
-                  is the host's, which no panel of its own can report. */}
-              {isViewerMode && (
-                <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
-                  {remoteSerialLabel || 'Waiting for the host window…'}
-                </p>
-              )}
+                  gets back. */}
               <div
                 role="status"
                 aria-live="polite"
@@ -2535,37 +2315,7 @@ function App() {
                 becomes the only item on its own line and would otherwise sit at
                 the left edge, away from the window controls it belongs with. */}
             <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-              {/* The theme toggle's home is the Menu panel's header. A viewer
-                  has no menu button (see below), so it keeps one here rather
-                  than losing light/dark entirely — a monitor is exactly the
-                  window someone leaves on a wall display and wants dimmed. */}
-              {isViewerMode && <ThemeToggle isDarkMode={isDarkMode} onToggle={toggleTheme} />}
-              {/* A viewer gets no controls at all — not disabled ones. Every
-                  action here (connect, save, and everything behind the menu)
-                  acts on hardware this machine does not have, so offering them
-                  greyed out would only invite the question of how to enable
-                  them. The badge says why they are missing. The restriction
-                  itself is enforced by the transport, not by this branch: see
-                  launcher/viewerHub.ts. */}
-              {isViewerMode ? (
-                <span
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                    viewerClient.hostGone
-                      ? 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-amber-300'
-                      : viewerClient.connected
-                        ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-500/60 dark:bg-emerald-500/10 dark:text-emerald-300'
-                        : 'border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
-                  }`}
-                >
-                  {viewerClient.hostGone
-                    ? 'Monitor - host window closed'
-                    : viewerClient.connected
-                      ? 'Monitor (read-only)'
-                      : 'Monitor - reconnecting…'}
-                </span>
-              ) : (
-                <>
-                  {/* Connect is a button; Disconnect is a swipe. They are not
+              {/* Connect is a button; Disconnect is a swipe. They are not
                       the same kind of action: connecting is recoverable by
                       clicking again, while disconnecting mid-run drops the link
                       a save is being written from, and the two sit at the same
@@ -2688,8 +2438,6 @@ function App() {
                       <line x1="3" y1="18" x2="21" y2="18" />
                     </svg>
                   </button>
-                </>
-              )}
             </div>
           </header>
         </div>
@@ -2742,7 +2490,6 @@ function App() {
                     value={aiFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    readOnly={isViewerMode}
                     className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
@@ -2815,7 +2562,6 @@ function App() {
                     value={aoFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    readOnly={isViewerMode}
                     className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
@@ -2860,7 +2606,6 @@ function App() {
                   value={paramFreeLabels[idx] ?? ''}
                   onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
                   placeholder="Label"
-                  readOnly={isViewerMode}
                   className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
@@ -2911,17 +2656,13 @@ function App() {
             unused here, so switching between the two builds does not cost the
             user their chart setup.
 
-            Slot 3 is the System Log in the launcher build. A viewer runs no
-            script and owns no serial port, so the entries come over the feed
-            from the host — which is the point: what a script printed and what
-            the link did are the other half of what the charts are showing,
-            and that is as true for someone watching remotely as for the
-            person at the machine. */}
+            Slot 3 is the System Log in the launcher build — what a script
+            printed and what the link did are the other half of what the
+            charts are showing. */}
         {isLauncherServed ? (
           <SystemLogCard
-            remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-            subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
-            running={isViewerMode ? remoteScriptRunning : scriptRunner.scriptRunning}
+            subtitle={hostScriptStatus}
+            running={scriptRunner.scriptRunning}
           />
         ) : (
           <ChartPanel
@@ -2960,7 +2701,6 @@ function App() {
         onSelectItem={handleMenuSelect}
         isDarkMode={isDarkMode}
         onToggleTheme={toggleTheme}
-        showRemoteViewer={viewerHost.status !== null}
       />
 
       <ModbusConfigPanel
@@ -3052,38 +2792,19 @@ function App() {
       <SystemLogPanel
         open={systemLogPanelOpen}
         onClose={() => setSystemLogPanelOpen(false)}
-        remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-        subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
+        subtitle={hostScriptStatus}
       />
 
-      <RemoteViewerPanel
-        open={remoteViewerPanelOpen}
-        onClose={() => setRemoteViewerPanelOpen(false)}
-        status={viewerHost.status}
-        onEnabledChange={viewerHost.setEnabled}
-      />
-
-      {/* One strip, on every build. A viewer gets the log line without the
-          runner badge: it has no menu, so Script Runner is unreachable there and
-          a badge reporting its state would describe a feature that window does
-          not offer — but it can still lose its feed, and the log line is what
-          says so. */}
+      {/* One strip, on every build. */}
       <FooterBar
-        remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-        // The host's own measurement, or the host's as relayed, depending on
-        // which window this is — the same value the header used to print.
         pollIntervalMs={actualPollIntervalMs}
-        runner={
-          isViewerMode
-            ? null
-            : {
-                running: scriptRunner.scriptRunning,
-                outcome: scriptRunner.scriptRun.outcome,
-                status: scriptRunner.scriptRunnerStatus,
-                languageLabel: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label,
-                scriptName: scriptRunner.statusTabName,
-              }
-        }
+        runner={{
+          running: scriptRunner.scriptRunning,
+          outcome: scriptRunner.scriptRun.outcome,
+          status: scriptRunner.scriptRunnerStatus,
+          languageLabel: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label,
+          scriptName: scriptRunner.statusTabName,
+        }}
       />
     </div>
   );

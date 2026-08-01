@@ -39,8 +39,7 @@ function MoonIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
 }
 
 /**
- * Light/dark switch. Its home is the Menu panel's header; the app header still
- * renders one in viewer mode, which has no menu to reach.
+ * Light/dark switch. Its home is the Menu panel's header.
  */
 export function ThemeToggle({ isDarkMode, onToggle }: { isDarkMode: boolean; onToggle: () => void }) {
   return (

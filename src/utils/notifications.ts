@@ -20,7 +20,7 @@ import { readJsonStorage, writeJsonStorage } from './cookies';
 
 const STORAGE_KEY = 'notificationsEnabled';
 
-/** Notification API present at all (absent on a plain-http LAN viewer page). */
+/** Notification API present at all (absent on a plain-http page). */
 export const notificationsSupported =
   typeof window !== 'undefined' && 'Notification' in window;
 

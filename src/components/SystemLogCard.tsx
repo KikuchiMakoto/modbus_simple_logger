@@ -1,4 +1,4 @@
-// The System Log, in chart slot 3 on the launcher and on a viewer.
+// The System Log, in chart slot 3 on the launcher.
 //
 // Why here rather than only in its window: on the desktop build a script is
 // usually what is driving the run, and its output — together with whatever the
@@ -6,21 +6,15 @@
 // showing. Four plots and a log the user has to remember to open is four views
 // of the numbers and none of the reason they are moving.
 //
-// On the host it is the same log as the window's, not a copy — both render
-// SystemLogBody over the same entries — so opening the window shows the same
-// lines. On a viewer the entries arrive over the feed; a viewer runs no script
-// and owns no serial port, so without that they would be permanently empty.
+// It is the same log as the window's, not a copy — both render SystemLogBody
+// over the same entries — so opening the window shows the same lines.
 import { PLOT_HEIGHT } from './ChartPanel';
 import { SystemLogBody, SystemLogCopyButton, SystemLogLevelSelect } from './SystemLogBody';
-import type { SystemLogEntry } from '../utils/systemLog';
 
 export function SystemLogCard({
-  remoteEntries,
   subtitle,
   running,
 }: {
-  /** A viewer's copy of the host's log. Omitted on the host, which has its own. */
-  remoteEntries?: SystemLogEntry[];
   subtitle: string;
   running: boolean;
 }) {
@@ -44,12 +38,12 @@ export function SystemLogCard({
           {/* The same threshold the window uses — it is one setting for the app,
               so changing it here changes what the window shows too. */}
           <SystemLogLevelSelect className="py-0 text-[0.7rem]" />
-          <SystemLogCopyButton remoteEntries={remoteEntries} />
+          <SystemLogCopyButton />
         </span>
       </div>
       {/* Fixed height rather than flex-1: in the window the box grows to fill
           the frame, but here it has to match the plots beside it exactly. */}
-      <SystemLogBody remoteEntries={remoteEntries} style={{ height: PLOT_HEIGHT }} />
+      <SystemLogBody style={{ height: PLOT_HEIGHT }} />
     </section>
   );
 }

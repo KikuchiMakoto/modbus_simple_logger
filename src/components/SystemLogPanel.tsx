@@ -16,18 +16,14 @@
 // log on the launcher and the two must not be able to drift apart.
 import { FloatingWindow } from './FloatingWindow';
 import { SystemLogBody, SystemLogCopyButton, SystemLogLevelSelect } from './SystemLogBody';
-import type { SystemLogEntry } from '../utils/systemLog';
 
 export function SystemLogPanel({
   open,
   onClose,
-  remoteEntries,
   subtitle,
 }: {
   open: boolean;
   onClose: () => void;
-  /** A viewer's copy of the host's log. Omitted on the host, which has its own. */
-  remoteEntries?: SystemLogEntry[];
   /** What the runner is doing, so a tail left open still says which run it is of. */
   subtitle: string;
 }) {
@@ -46,13 +42,13 @@ export function SystemLogPanel({
       headerActions={
         <>
           <SystemLogLevelSelect />
-          <SystemLogCopyButton remoteEntries={remoteEntries} />
+          <SystemLogCopyButton />
         </>
       }
     >
       {/* min-h-0 flex-1 is what makes the scroll box fill the window and stop
           there; the chart-slot copy gives it a fixed height instead. */}
-      <SystemLogBody remoteEntries={remoteEntries} className="min-h-0 flex-1" />
+      <SystemLogBody className="min-h-0 flex-1" />
     </FloatingWindow>
   );
 }

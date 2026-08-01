@@ -26,7 +26,7 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // number and that one draw on the same unmeasured budget.
 export const CHART_MAX_POINTS = 2048;
 // How often a polled sample is fed to the chart buffer (and, while not saving,
-// to IndexedDB and the remote viewer feed). Applied as a poll-count stride, so
+// to IndexedDB). Applied as a poll-count stride, so
 // it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
 // 50 ms, every 5th at 20 ms.
 //

@@ -56,7 +56,7 @@ src/
 │   ├── useScriptRunner.ts           # 言語ごとの Worker 管理（1言語1つ・生成後は保持）+ SAB 先行確保 + 言語別コード永続化
 │   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
 │   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示する3コンポーネントだけが購読する
-│   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
+│   └── useKeepAwake.ts              # ランチャーへのスリープ抑制要求（exe 限定）。ページ可視時のみ効く Screen Wake Lock を、最小化中も補う
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
 │   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（ScriptRunner 状態 → System Log 最新1行のロール表示 → 右端＝実測ポーリング周期）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
@@ -67,16 +67,14 @@ src/
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
-│   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー（ビューアのみアプリヘッダーにも出す）
+│   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー
 │   ├── UiScaleControl.tsx           # UI 拡大率の [-] [100%] [+]。Menu パネルのヘッダー
 │   ├── CalibrationPanel.tsx         # Input Calib Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── InputCalibratorPanel.tsx     # Input Calibrator（実測最小二乗 / スペック計算）。CH00-15 を1ウィンドウで扱い、HX711/ADS1115 の別は ch 番号から決まる
 │   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
 │   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
 │   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
-│   ├── HamburgerMenu.tsx            # スライドインメニュー（Remote Monitoring 項目は exe 限定で表示）
-│   ├── RemoteViewerPanel.tsx        # リモート監視の公開モード切替＋閲覧 URL / QR 表示（exe 限定）
-│   ├── QrCode.tsx                   # QR をインライン SVG で描画（qrcode-generator・1 path に集約）
+│   ├── HamburgerMenu.tsx            # スライドインメニュー
 │   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Tester の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
@@ -93,7 +91,7 @@ src/
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し、各チャート右上のバッジと AppInfoPanel（全 renderer 文字列）が表示
     ├── backgroundTimer.ts           # timerWorker の主スレッド側（setBackgroundTimeout / Interval / clearBackgroundTimer）
     ├── notifications.ts             # Web Notification のゲート（トグル永続化＋許可判定）と notify()
-    ├── appMode.ts                   # 実行形態の判定（web / launcher / viewer）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
+    ├── appMode.ts                   # 実行形態の判定（web / launcher）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
     ├── cookies.ts                   # 設定の永続化（localStorage 本体・Cookie は旧値の読込移行とフォールバックのみ）
     ├── uiScale.ts                   # UI 拡大率（#root の CSS zoom）。localStorage 永続・共有ストア。UiScaleControl が操作し FloatingWindow が座標補正に使う
@@ -162,7 +160,6 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 表示は**フッター右端**の `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗はヘッダーの点数カウンタが示す
     - **sticky ヘッダーから外した**（v4.x）。sticky ヘッダーの幅は全セッションぶんチャンネルグリッドから引かれる一方、この値を見るのは限られた場面。フッターなら削るのは元から truncate 済みのログ行だけで済む
     - **ブレークポイントで隠さないこと**。この値はアプリ内の他のどこにも出ておらず、幅が最も無い構成（スマホ + WebUSB。Connection Config も Script Runner も開けない）がまさに他に答えるものが無い場面。実測 52px、横スクロールは 320px でも発生しない
-  - ViewerStatePayload は `pollingIntervalMs` と `saveIntervalMs` の両方を返す（ビューアは両方を自分の選択肢へ引き当てる）
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ）
   - **AI 側の上限はポーリング回数に比例させる**（`INPUT_READ_MAX_FAILURE_RATIO` = 10%、下限 `INPUT_READ_MAX_FAILURES_PER_WINDOW` = 10回）。固定10回はポーリング周期が保存周期に縛られていた時代の設計で、遅い設定なら10回貯まるのに数分かかった。10〜40Hz 固定になった今では**完全に死んだデバイスで1秒**で発火し、以後ウィンドウから失敗が抜けるまで全読取りをスキップする＝最大1分の空白、200ms 保存なら300行の欠落。**「応答しない」は回数ではなく割合**である。10% / 100ms なら 60回 ＝ 完全断で6秒後にバックオフ、数%のフレーム落ちでは発火しない（v4.1 で顕在化し修正）
@@ -262,31 +259,9 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - ポートが埋まっていても**それが自分たちのロックか確認してから諦める**（`LOCK_MARKER` を返すかどうか）。無関係なソフトが 8764 を握っているだけで起動不能になる方が、二重起動より重大な障害のため
 - ロックは**他の一切より先に取る**（サーバー bind もブラウザ起動もしない状態で判定する）
 - **スリープ抑制は launcher プロセスの `SetThreadExecutionState`（`bun:ffi` で kernel32 を直接呼ぶ）**。`ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED` を立て、解除は `ES_CONTINUOUS` 単体。実行状態はスレッド単位なので、**プロセスが生きている限り生きている launcher の主スレッドから呼ぶこと**
-- **要求を出すのはページ**（`__feed` の `keepawake` フレーム。`acquiring || scriptRunning` で判定）。launcher 側の常時 ON にしないこと — アプリを開いているだけのノート PC を一晩中起こしておくことになる。ページが切れたら `hostFeed.detach` で必ず解除し、再接続時はページが状態を送り直す（`keepAwakeRef`）
+- **要求を出すのはページ**（`__feed` の `keepawake` フレーム、`hooks/useKeepAwake.ts` 経由。`acquiring || scriptRunning` で判定）。launcher 側の常時 ON にしないこと — アプリを開いているだけのノート PC を一晩中起こしておくことになる。ページが切れたら `keepAwakeFeed.detach` で必ず解除し、再接続時はページが状態を送り直す（`keepAwakeRef`）
 - ページ側の Wake Lock（`requestWakeLock`）は**表示中しか効かない**（非表示になるとブラウザが解放し、戻しても自動復帰しない）ため、`visibilitychange` で取り直している。最小化状態を守れるのは exe 版の OS 要求だけ、という役割分担
 - Windows 専用。Linux の抑制はセッションのインヒビタ（logind / GNOME / KDE）依存になるため実装しない（exe は Windows 成果物）
-
-### リモート監視（`launcher/viewerServer.ts` + `viewerHub.ts` + `hostFeed.ts` + `useViewerFeed.ts`）
-- **デスクトップ版（exe）限定・既定 OFF**。ホストページの Remote Monitoring パネルのトグルで起動し、他 PC のブラウザから**閲覧のみ**できる
-- **サーバーは2本に分ける**。アプリサーバー（`127.0.0.1`・ランダムポート）はハードウェアを持つホストページ用で `__feed`（監視アップリンク＋公開トグル）を持つ。ビューアサーバー（`:8766`）は静的アセットと push 専用の `__viewer` しか持たない。**アプリサーバーは 127.0.0.1 のままにすること**
-- **公開方法は2モード**（`ViewerMode`）。`lan` は `0.0.0.0` を bind して LAN から直接（インターネット不要）、`tunnel` は `127.0.0.1` のみ bind し Cloudflare Quick Tunnel（`tunnel.ts`）が HTTPS で公開する。**tunnel モードでは LAN に何も listen していない**（cloudflared がローカルに繋ぐだけ）。モード切替は必ずサーバーを作り直すこと（bind 先が違うため使い回せない）
-- **read-only はトランスポートの性質であって UI の性質ではない**。ビューアが受け取るバンドルはホストと同一の JavaScript なので、ボタンを隠すことは根拠にならない。`viewerServer.ts` の `websocket.message` は**意図的に空**で、ビューアが送るフレームは一切パースされない。ここを実装で埋めないこと
-- **アクセス範囲は CIDR で先に切る**（`viewerServer.ts` の `ALLOWED_CIDRS`・モード別）。`tunnel` はループバックのみで、範囲外はパスに関係なく 403（ポートの背後に何があるか漏らさないため）。**`lan` は IPv4 を全許可（`0.0.0.0/0`）**：大学・研究室ネットは各台がグローバル IP を持ち `157.82.159.64/26` のような小さいサブネットに切られていることがあり、Tailscale の仮想 NIC は CGNAT の /32 として見えるため、**自ホストの NIC からサブネットを導出しても全ピアを弾いてしまう**。実利用ネットで誤判定するレンジチェックは、無いより悪い（守っていないのに守っているように読める上、機能が黙って壊れる）。この モードの境界はトークンであって IP ではない。したがって `lanViewerUrls()` もフィルタせず、全 NIC の IPv4 を並べる（APIPA `169.254.0.0/16` のみ除外＝そもそも到達不能）
-- **`?k=` トークンは全パスを守る**（HTML も含む）。tunnel モードでは URL が公開インターネット上にあるため、無権限の訪問者に「これが Modbus ロガーである」ことすら見せない。ただしトークンが URL に要るのは**最初の1リクエストだけ**で、以降は `HttpOnly` Cookie（`msl_viewer`）が代理する — 全アセットに `?k=` を付けるにはバンドル内の URL を書き換える必要があり、ページ内にトークンを埋めれば DOM から読めるものになってしまう。Cookie は tunnel モードでのみ `Secure`（LAN は平文 HTTP なので付けると落とされる）。トークンはプロセス起動ごとに再生成され、古いリンクと古い QR は自然に失効する
-- **`serveStatic` の `/` リダイレクトに `Response.redirect()` を使わないこと**。返るレスポンスはヘッダーが immutable で `Set-Cookie` を追加できず、かつクエリを落とすためトークンが消える
-- **ホストは pull されない**。送信はチャート flush（`flushPendingDataPoints`）の副作用で、送るのは**実際にプロットした点だけ**（Save 中は間引き後）。したがって帯域はサンプリングレートではなくチャート予算で決まり、100Hz 計測が 100Hz のソケットにならない。ビューアが増えても取得ループの負荷は変わらない
-- **トンネルは Cloudflare Quick Tunnel**（`tunnel.ts`）。cloudflared のバイナリは `bun build --compile` で exe に埋め込むため、実行 PC に何もインストールされていなくても動く。**Tailscale は採用不可** — `tailscale.exe` は単体では動作せず `tailscaled` デーモン＋TUN ドライバ＋アカウントログインが必要で、同梱＝インストーラ同梱になる。cloudflared の Quick Tunnel はアカウント不要なので「QR を撮れば開く」が成立する
-- **cloudflared はビルド時に取得しハッシュ検証する**（`fetch-cloudflared.ts`）。バージョンと SHA256 を固定すること: 「latest」を引くと同一コミットのビルドが再現しなくなり、**埋め込んで実行するバイナリ**をネットワーク任せにすることになる。取得は `build.ts` の先頭で行う（`tunnel.ts` の静的 import がビルド時にファイルの存在を要求するため）
-- **埋め込みバイナリは temp へ実体化してから spawn する**。コンパイル済み exe の中では仮想パスであり、そのままでは exec できない。ファイル名にバージョンを含めて、古いビルドの残骸を拾わないようにすること
-- **コンソールアプリを spawn するときは必ず `windowsHide: true`**（`tunnel.ts`・`main.ts` の `fatal()`）。ランチャーは GUI サブシステム（`build.ts` が PE を patch）なので、コンソールサブシステムの子プロセスを起こすと Windows が**空のターミナルウィンドウを表示する**。見た目の問題では済まず、**そのウィンドウを閉じると cloudflared が死んでリンクが黙って切れる** — 利用者にはアプリの一部だと分からないため説明もできない。検証は「GUI サブシステムの親から、コンソールを継承しない形で（Explorer 経由で）起動し、可視トップレベルウィンドウの増減を見る」こと。親をターミナルから起動すると**子が親のコンソールを継承してしまい再現しない**
-- **cloudflared が自分で死んだら公開状態を畳んで page に伝える**（`onUnexpectedExit` → `main.ts` の `onTunnelLost`）。URL も QR も死んでいるのに「running」を表示し続けるのは、止まったと言うより悪い。意図的な `stop()` と外部要因の死は区別すること（`stopping` フラグ）
-- Quick Tunnel は**アカウント無し・稼働保証無し・毎回ランダムなホスト名**。最後の性質はここでは利点で、トークンと同じく古いリンクを自動失効させる。UI にはこの制約を明示すること
-- ラベル・キャリブレーション・電圧モード・ヘッダー状態は**1秒周期でまるごと再送**（差分を取らない）。この頻度で差分計算をするより安く、途中参加のビューアが1フレームで完全な状態を得られる
-- 途中参加用に `viewerHub` が直近 2048 点（`CHART_MAX_POINTS` と同値）のバックログを保持する。**ビューアのチャートは「直近 N 点」でホストの「全区間を間引いた図」とは一致しない** — 完全な記録はホストが書く TSV であり、この差は仕様
-- ビューア側の受信は**ホストと同じ `pendingDataPoints` → `flushPendingDataPoints` を通す**（描画経路を二重に持たない）。`flushPendingDataPoints` の viewer 分岐は IndexedDB 書込みを行わない（監視は記録ではない）
-- **ビューアでは設定を永続化しない**（`utils/cookies.ts` の `writeJsonStorage` が `isViewerMode` で no-op）。ホストのラベル・キャリブレーションが毎秒流れてくるため、閲覧している PC 自身のロガー設定を上書きしてしまう。ゲートは各呼び出し側ではなくこの1箇所に置くこと
-  - **例外は「その画面の見え方」だけ**（テーマ・UI 拡大率）。これらは `writeLocalPreference` を使いビューアでも保存する — ホストのフィードが一切書かない値であり、監視用の空きモニタこそ拡大率やテーマを直したい場所だから。**計測に関わる値をこちらへ移してはならない**
-- **ホストから来た `voltageConfig` は `sanitizeVoltageConfig()` を通す**（`as VoltageMode[]` のキャストで受けない）。ホストが別バージョンの本アプリであることは普通にあり、この build に無いモードが届くと `rawToDisplayValue()` が `undefined` を返して次のフレームでチャンネルグリッドごと落ちる
 
 ### データ保存
 - **IndexedDB**: セッション中の全データポイントを蓄積（`keepLatestPoints` で自動トリム）
@@ -396,8 +371,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
 - **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
-- **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe と cloudflared バイナリ（54MB）は**コミットしない**
-- **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isViewerMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため、**別 PC から LAN アドレスで開いた瞬間に web 版と誤認して Service Worker を登録し**、no-store ヘッダーで排除したはずのキャッシュ層を復活させる。マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
+- **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe バイナリは**コミットしない**
+- **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）
 - **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと。**UI のドロップダウンの中身**（`POLLING_OPTIONS`・`SAVE_RATE_OPTIONS`・`BAUD_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照

@@ -1,11 +1,10 @@
 // Single-instance lock for the desktop exe.
 //
 // Two copies of the launcher are never useful and are actively harmful: only
-// one of them can own the viewer port (viewerServer.ts picks a winner), only one can
-// own the browser profile directory's main process, and — the reason this
-// matters most — each one opens its own app window while exactly one serial
-// port exists. Double-clicking the exe again while it is running is an
-// accident, not a request for a second logger.
+// one of them can own the browser profile directory's main process, and — the
+// reason this matters most — each one opens its own app window while exactly
+// one serial port exists. Double-clicking the exe again while it is running is
+// an accident, not a request for a second logger.
 //
 // The lock is a loopback TCP listener rather than a lock file: the OS releases
 // it when the process dies, however it dies, so a crash or a kill from Task

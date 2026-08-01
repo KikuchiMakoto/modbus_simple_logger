@@ -8,8 +8,6 @@ type HamburgerMenuProps = {
   onSelectItem: (item: string) => void;
   isDarkMode: boolean;
   onToggleTheme: () => void;
-  /** Remote monitoring is likewise launcher-only. */
-  showRemoteViewer?: boolean;
 };
 
 const MENU_ITEMS = [
@@ -34,7 +32,6 @@ const MENU_ITEMS = [
   // and it carries the app's own events — link, save, recording, storage — as
   // well now, which is why it is no longer named after scripts.
   { key: 'systemLog', label: 'System Log', icon: '🧾', wip: false },
-  { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
 ];
@@ -45,13 +42,7 @@ export function HamburgerMenu({
   onSelectItem,
   isDarkMode,
   onToggleTheme,
-  showRemoteViewer = false,
 }: HamburgerMenuProps) {
-  const items = MENU_ITEMS.filter((item) => {
-    if (item.key === 'remoteViewer') return showRemoteViewer;
-    return true;
-  });
-
   return (
     <SlidePanel
       open={open}
@@ -72,7 +63,7 @@ export function HamburgerMenu({
     >
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
-          {items.map((item) => (
+          {MENU_ITEMS.map((item) => (
             <li key={item.key}>
               <button
                 type="button"

@@ -25,7 +25,6 @@ const LIBRARIES = [
   { name: 'Wasmoon (Lua)', pkg: 'wasmoon', license: 'MIT' },
   { name: 'Prism', pkg: 'prismjs', license: 'MIT' },
   { name: 'react-simple-code-editor', pkg: 'react-simple-code-editor', license: 'MIT' },
-  { name: 'qrcode-generator', pkg: 'qrcode-generator', license: 'MIT' },
   { name: 'Pyodide', pkg: 'pyodide', license: 'MPL-2.0' },
 ].map((lib) => ({ ...lib, version: DEP_VERSIONS[lib.pkg] ?? 'unknown' }));
 

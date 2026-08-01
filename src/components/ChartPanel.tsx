@@ -208,7 +208,7 @@ function ChartPanelComponent({
     // Pre-shifting the plotted value into a "local epoch" is the standard fix:
     // Plotly then renders local wall-clock while thinking it is UTC. Only the
     // copy handed to Plotly moves — DataPoint.timestamp stays true epoch-ms for
-    // the TSV, IndexedDB and the viewer feed, which must not be shifted.
+    // the TSV and IndexedDB, which must not be shifted.
     //
     // One offset for the whole buffer, taken from its newest point rather than
     // per point, to keep the allocation out of this loop. A session spanning a

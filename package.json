@@ -1,6 +1,6 @@
 {
   "name": "modbus_simple_logger",
-  "version": "5.8",
+  "version": "5.9",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "bunx vite preview",
     "basic:check": "bun run src/basic/checks.ts",
     "lua:check": "bun run src/lua/checks.ts",
-    "launcher:dev": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/fetch-cloudflared.ts && bun run launcher/main.ts",
+    "launcher:dev": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/main.ts",
     "launcher:build": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/build.ts"
   },
   "dependencies": {

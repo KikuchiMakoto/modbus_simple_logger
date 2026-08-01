@@ -13,7 +13,7 @@
 // rolls, and the record it rolled off is in the System Log window rather than
 // behind a × that threw it away.
 import { useState } from 'react';
-import { useSystemLogSource, useVisibleSystemLog } from '../hooks/useSystemLog';
+import { useSystemLogEntries, useVisibleSystemLog } from '../hooks/useSystemLog';
 import { levelTextClass } from './SystemLogBody';
 import type { ScriptOutcome } from '../hooks/useScriptRunner';
 import type { SystemLogEntry } from '../utils/systemLog';
@@ -100,27 +100,11 @@ function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
 }
 
 export function FooterBar({
-  remoteEntries,
   pollIntervalMs,
   runner,
 }: {
-  /**
-   * A viewer's copy of the host's log. Omitted on the host, which reads its own
-   * — the bar shows the newest line that passes the threshold, either way.
-   */
-  remoteEntries?: SystemLogEntry[];
-  /**
-   * Measured poll interval in ms, or 0 when nothing is polling. On a viewer this
-   * is the host's, arriving over the feed — the machine showing it never polls
-   * anything itself.
-   */
+  /** Measured poll interval in ms, or 0 when nothing is polling. */
   pollIntervalMs: number;
-  /**
-   * The script runner's state, or null on a viewer — which has no menu, so the
-   * runner is unreachable there and a badge reporting its state would describe
-   * a feature that window does not offer. The log line still shows: a viewer can
-   * lose its feed, and nothing else on that window would say so.
-   */
   runner: {
     running: boolean;
     outcome: ScriptOutcome;
@@ -128,9 +112,9 @@ export function FooterBar({
     languageLabel: string;
     /** The script the runner is pointed at — the running one, or the tab in front. */
     scriptName: string;
-  } | null;
+  };
 }) {
-  const visible = useVisibleSystemLog(useSystemLogSource(remoteEntries));
+  const visible = useVisibleSystemLog(useSystemLogEntries());
   const line = visible[visible.length - 1] ?? null;
   const badge = runner ? (runner.running ? OUTCOME_BADGE.running : OUTCOME_BADGE[runner.outcome]) : null;
   const lineColor = line ? levelTextClass(line.level) : 'text-slate-500 dark:text-slate-400';

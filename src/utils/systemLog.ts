@@ -195,8 +195,7 @@ export const systemLogLevel = (): SystemLogLevel => threshold;
 export const setSystemLogLevel = (level: SystemLogLevel): void => {
   if (level === threshold) return;
   threshold = level;
-  // A "how this screen reads" preference, like theme and UI scale — so a viewer
-  // keeps its own choice rather than having it discarded by the host-feed guard.
+  // A "how this screen reads" preference, like theme and UI scale.
   writeLocalPreference(LEVEL_STORAGE_KEY, level);
   emitNow();
 };
