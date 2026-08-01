@@ -24,7 +24,7 @@
 | 機能 | 説明 |
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境は `web-serial-polyfill` 経由の WebUSB フォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（25ms / 50ms / 100ms、既定 100ms、接続中は固定）と **Save Rate**（200ms〜30分、既定 1s、いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（接続中は固定）と **Save Rate**（いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。選べる範囲は**トランスポート依存**で、Web Serial は Polling 25ms / 50ms / 100ms（既定 100ms）・Save 200ms〜30分、**WebUSB（Android）は Polling 200ms / 500ms（既定 200ms）・Save 1s〜30分**（理由は下記「WebUSB の転送回数上限」）。Save Rate の最小値は必ず最も遅い Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
@@ -239,6 +239,32 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 `ModemManager` を使っている場合は `sudo systemctl stop ModemManager.service` も実行してください。
+</details>
+
+<details>
+<summary>WebUSB の転送回数上限（Android で Polling Rate が 200ms / 500ms しかない理由）</summary>
+
+Android の Chrome には Web Serial がないため、`web-serial-polyfill` 経由の **WebUSB** で CDC-ACM アダプタを直接叩きます。OS のシリアルドライバが間に入らないので、アダプタのパケット化がそのままアプリに降ってきます。実測では**1バイトにつき USB 転送1回**で、16ch float32 の応答 69 バイトに `transferIn` が 69 往復かかります。
+
+そして Chrome の Android USB スタックは、**約 16,200 転送でストリームを落とします**（実測 16,206 / 16,194、ばらつき 0.1%）。
+
+```
+ERROR Link: NetworkError: Failed to execute 'transferIn' on 'USBDevice': A transfer error has occurred.
+```
+
+復帰には USB インターフェースの再取得が必要ですが、`claimInterface` は**障害の発生から数秒間は拒否されます**（実測 +1.07s / +2.04s で失敗、+3.10s / +4.04s で成功）。この間は計測が止まります。
+
+転送回数はアダプタのパケット化で決まるためアプリ側からは減らせません。減らせるのは**単位時間あたりの転送数**、つまりポーリング周期だけです。障害の間隔は次のように直接効きます。
+
+| Polling Rate | Extended (f32, 69転送/frame) | Normal (i16, 37転送/frame) |
+|---|---|---|
+| 100 ms | 23 秒 | 44 秒 |
+| **200 ms** | **47 秒** | **88 秒** |
+| **500 ms** | **117 秒** | **219 秒** |
+
+100ms 以下は「たまに落ちる」のではなく **23 秒ごとに必ず落ちる**ため、WebUSB では選択肢から外してあります。Save Rate の下限が 1s なのはこれに合わせたもので、最も遅い Polling Rate（500ms）以上でなければ、サンプルしていない行を書こうとすることになるためです。
+
+さらに間隔を延ばしたい場合は **Normal (i16) 精度 + 500ms**（219 秒）が最長です。障害の詳細を追うときは System Log のしきい値を **DEBUG** にすると、`stream died: … USB transfers` 行に転送回数が出ます。
 </details>
 
 ---
