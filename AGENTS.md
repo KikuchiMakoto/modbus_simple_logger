@@ -59,7 +59,7 @@ src/
 │   └── useViewerFeed.ts             # リモート監視のページ側（exe 限定）。ホスト送信フックと閲覧側受信フックの2本
 ├── components/
 │   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
-│   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（左端＝録画中の REC ランプ、次に ScriptRunner 状態、右＝System Log 最新1行のロール表示）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
+│   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（左端＝録画中の REC ランプ → ScriptRunner 状態 → System Log 最新1行のロール表示 → 右端＝実測ポーリング周期）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
 │   ├── RecLamp.tsx                  # 点滅する REC ランプ（FooterBar と CameraCard が共有。入れ物のスタイルは呼び出し側が決める）
 │   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・チャート枠・フッターの3面で共有（行は memo 済み）
 │   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）

@@ -103,6 +103,7 @@ function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
 export function FooterBar({
   remoteEntries,
   recording,
+  pollIntervalMs,
   runner,
 }: {
   /**
@@ -123,6 +124,12 @@ export function FooterBar({
    * Null on a viewer, which cannot record and is not told whether the host is.
    */
   recording: { fileName: string } | null;
+  /**
+   * Measured poll interval in ms, or 0 when nothing is polling. On a viewer this
+   * is the host's, arriving over the feed — the machine showing it never polls
+   * anything itself.
+   */
+  pollIntervalMs: number;
   /**
    * The script runner's state, or null on a viewer — which has no menu, so the
    * runner is unreachable there and a badge reporting its state would describe
@@ -247,6 +254,24 @@ export function FooterBar({
             />
           </div>
         </div>
+        {/* The measured poll interval, last on the bar and out of the header
+            entirely. It answers one question — is the link keeping up — and it
+            is a question almost nobody running a measurement asks, while it sat
+            in a sticky header where its width came out of the channel grid for
+            the whole session. Here it costs nothing anybody else was using: the
+            log line beside it is `flex-1` and simply gets that much narrower.
+
+            Right-hand end rather than beside the other chips, because it is a
+            number that ticks. Sitting still at the edge, it can be checked when
+            it is wanted and ignored when it is not; between REC and the log
+            line it would be movement in the middle of the bar.
+
+            Dropped below `md`, where the bar is 24px tall: the message is what
+            the bar is for, and this is the item here with the least claim on a
+            phone's width. */}
+        <span className="hidden shrink-0 tabular-nums text-slate-400 dark:text-slate-500 md:inline">
+          Polling: {pollIntervalMs > 0 ? `${pollIntervalMs} ms` : '-'}
+        </span>
       </div>
     </>
   );

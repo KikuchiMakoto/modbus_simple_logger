@@ -637,10 +637,15 @@ function App() {
   // nothing else, whereas a missing TSV row is missing data.
   const plotStrideRef = useRef(1);
   const pollsSincePlotRef = useRef(0);
-  // Measured poll interval, for the header's parenthetical. Taken from the poll
-  // loop rather than from the recorded points, which at the slow save rates are
-  // a different and much rarer clock: the header answers "is the link keeping
-  // up", and that question is about the wire.
+  // Measured poll interval, for the footer's right-hand readout. Taken from the
+  // poll loop rather than from the recorded points, which at the slow save rates
+  // are a different and much rarer clock: the readout answers "is the link
+  // keeping up", and that question is about the wire.
+
+  // No nominal printed alongside it: the wire rate is a fixed constant rather
+  // than something the user chose, so the target would just be a reminder of
+  // what 100 is. What reaches the file is the Save Rate, whose progress is the
+  // header's point count.
   const recentPollTimestampsRef = useRef<number[]>([]);
   const lastPollRatePublishRef = useRef(0);
   const [actualPollIntervalMs, setActualPollIntervalMs] = useState(0);
@@ -1763,7 +1768,7 @@ function App() {
       enqueueDisplayUpdate(timestamp, aiRaw, aiPhysical, param, plot);
       if (record) enqueueSaveUpdate(timestamp, aiRaw, aiPhysical, param);
 
-      // Measured poll interval for the header. Sampled here, at the top of the
+      // Measured poll interval for the footer. Sampled here, at the top of the
       // loop, rather than downstream of the display queue: the number answers
       // "is the link keeping up", so it must not fold in how long the chart
       // took to accept the point.
@@ -2602,26 +2607,37 @@ function App() {
                 aria-live="polite"
                 className="flex flex-wrap items-baseline gap-x-3 gap-y-0 text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400"
               >
+                {/* Two items, in the order they are asked about: how much has
+                    been written, and what it is called.
+
+                    The filename is last, where it used to be first. These are
+                    read by position — the eye goes to where the number was last
+                    time — and the filename is the only thing here whose width
+                    jumps, from `-` to whatever the user picked, at the exact
+                    moment a save begins. In front, it moved every readout
+                    beside it; behind them, nothing it does can. The REC lamp
+                    (which sat between the two) and the measured poll rate are
+                    both in the footer now for the same reason: a sticky header
+                    spends its width for the whole session, and neither was
+                    worth a permanent bite out of the channel grid. */}
+                {/* Dashes, not 00:00:00 / # 0, until a save is actually running.
+                    A zeroed clock is a reading — it says a save is open and has
+                    recorded nothing, which is a fault worth panicking about —
+                    where dashes say there is nothing to read yet. `-` is what
+                    the footer's poll readout uses for the same thing, and in
+                    Iosevka the dashes occupy the digits' width exactly, so the
+                    row does not step when the clock starts.
+
+                    This is also the state after Stop Save: the counters are
+                    cleared with the writer, so the alternative was showing a
+                    zeroed total for a run that had just written 40 000 rows. */}
+                <span className="tabular-nums">
+                  {activeSaveFilename === ''
+                    ? 'Total: --:--:-- / # -'
+                    : `Total: ${formatElapsedTime(saveElapsedMs)} / # ${savePointCount}`}
+                </span>
                 <span className="font-semibold text-slate-700 dark:text-slate-300">
                   File: {activeSaveFilename || '-'}
-                </span>
-                {/* The REC lamp used to sit here, between File: and Total:.
-                    These three are read by position — the eye goes to where the
-                    number was last time — and a badge that appears in the middle
-                    of them moved two of the three sideways every time a
-                    recording started or stopped. It is in the footer now, which
-                    is a fixed strip of fixed height and cannot push anything. */}
-                <span className="tabular-nums">
-                  Total: {formatElapsedTime(saveElapsedMs)} / # {savePointCount}
-                </span>
-                {/* Measured only, no nominal alongside it: the wire rate is now
-                    a fixed constant rather than something the user chose, so
-                    printing the target next to it would just be a reminder of
-                    what 100 is. What this answers is whether the link is
-                    keeping up. What reaches the file is the Save Rate, and its
-                    progress is the count to the left. */}
-                <span className="tabular-nums">
-                  Polling: {actualPollIntervalMs > 0 ? `${actualPollIntervalMs} ms` : '-'}
                 </span>
               </div>
             </div>
@@ -3192,6 +3208,9 @@ function App() {
         // Null on a viewer without a branch of its own: a viewer cannot start a
         // recording, so this is always '' there.
         recording={activeRecordingFilename === '' ? null : { fileName: activeRecordingFilename }}
+        // The host's own measurement, or the host's as relayed, depending on
+        // which window this is — the same value the header used to print.
+        pollIntervalMs={actualPollIntervalMs}
         runner={
           isViewerMode
             ? null
