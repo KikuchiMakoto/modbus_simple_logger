@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isLauncherMode, isViewerMode, viewerToken } from '../utils/appMode';
-import { STREAM_MAX_BUFFERED_BYTES } from '../constants';
 import type { SystemLogEntry } from '../utils/systemLog';
 import type { ModbusPrecision } from '../types';
 
@@ -118,14 +117,6 @@ export type ViewerHostHandle = {
   publishState: (state: ViewerStatePayload) => void;
   /** The host cleared its chart; viewers must drop their backlog too. */
   publishReset: () => void;
-  /**
-   * Push one camera still. Binary, so it is told apart from every frame above
-   * by its type rather than by a field — which is what let the camera join this
-   * socket without changing the JSON protocol at all.
-   */
-  publishMedia: (frame: ArrayBuffer) => void;
-  /** The host stopped sending stills. */
-  publishMediaEnd: () => void;
   /** How many viewers are attached, or 0. Streaming is skipped when nobody is watching. */
   viewerCount: number;
 };
@@ -236,21 +227,6 @@ export const useViewerHost = (): ViewerHostHandle => {
     send({ type: 'reset' });
   }, [send]);
 
-  const publishMedia = useCallback((frame: ArrayBuffer) => {
-    const socket = socketRef.current;
-    if (!runningRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
-    // Checked here as well as in the launcher's hub: if the loopback socket is
-    // backing up, the encoder is outrunning the transport and queueing more of
-    // it only grows a buffer in the page that the acquisition loop shares.
-    if (socket.bufferedAmount > STREAM_MAX_BUFFERED_BYTES) return;
-    socket.send(frame);
-  }, []);
-
-  const publishMediaEnd = useCallback(() => {
-    if (!runningRef.current) return;
-    send({ type: 'media-end' });
-  }, [send]);
-
   return {
     status,
     setEnabled,
@@ -258,8 +234,6 @@ export const useViewerHost = (): ViewerHostHandle => {
     publishSamples,
     publishState,
     publishReset,
-    publishMedia,
-    publishMediaEnd,
     viewerCount: status?.viewers ?? 0,
   };
 };
@@ -268,10 +242,6 @@ export type ViewerClientCallbacks = {
   onState: (state: ViewerStatePayload) => void;
   onSamples: (samples: ViewerSample[]) => void;
   onReset: () => void;
-  /** One camera still, still wrapped in its header (see utils/mediaFrame.ts). */
-  onMedia?: (frame: ArrayBuffer) => void;
-  /** The host stopped sending, or went away. */
-  onMediaEnd?: () => void;
 };
 
 export type ViewerClientHandle = {
@@ -300,9 +270,6 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
     const connect = () => {
       if (closed) return;
       const socket = new WebSocket(socketUrl('__viewer', token ? `?k=${encodeURIComponent(token)}` : ''));
-      // Without this a binary frame arrives as a Blob, and MediaSource would
-      // need an async read per fragment — latency spent for nothing.
-      socket.binaryType = 'arraybuffer';
       current = socket;
 
       socket.onopen = () => {
@@ -311,12 +278,7 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
         setHostGone(false);
       };
       socket.onmessage = (event) => {
-        // A still is the only binary frame on this socket, so the split is by
-        // type and the JSON path below is untouched by its existence.
-        if (typeof event.data !== 'string') {
-          callbacksRef.current.onMedia?.(event.data as ArrayBuffer);
-          return;
-        }
+        if (typeof event.data !== 'string') return;
         let frame: {
           type?: string;
           state?: ViewerStatePayload;
@@ -337,17 +299,10 @@ export const useViewerClient = (callbacks: ViewerClientCallbacks): ViewerClientH
           case 'reset':
             callbacksRef.current.onReset();
             break;
-          case 'media-end':
-            callbacksRef.current.onMediaEnd?.();
-            break;
           case 'host-gone':
             // Keep what is on screen — the last minute of a measurement is
             // still worth reading — but stop implying it is live.
             setHostGone(true);
-            // The picture is the exception: a frozen last still of the rig is
-            // not "the last minute still worth reading", it is an image that
-            // looks live and is not.
-            callbacksRef.current.onMediaEnd?.();
             break;
           default:
             break;

@@ -50,8 +50,7 @@ export function RemoteViewerPanel({
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
           <p className="font-semibold">Let others watch this screen</p>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            They see the channels, charts and — if one is bound — the camera. They cannot
-            connect, save, or change anything.
+            They see the channels and charts. They cannot connect, save, or change anything.
           </p>
 
           <div className="mt-3 space-y-1.5">

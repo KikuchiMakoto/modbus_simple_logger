@@ -82,16 +82,6 @@ import {
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import {
-  hasBoundDevice,
-  loadRecordingConfig,
-  saveRecordingConfig,
-  type RecordingConfig,
-} from './utils/recordingConfig';
-import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
-import { useCameraFeed } from './hooks/useCameraFeed';
-import { useMediaStreamHost } from './hooks/useMediaStreamHost';
-import { useRemoteVideo } from './hooks/useRemoteVideo';
-import {
   discardRecoveredRun,
   downloadRecoveredRun,
   formatRunSize,
@@ -131,8 +121,6 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
-import { RecordingConfigPanel } from './components/RecordingConfigPanel';
-import { CameraCard } from './components/CameraCard';
 import { SystemLogCard } from './components/SystemLogCard';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
@@ -533,12 +521,6 @@ function App() {
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [systemLogPanelOpen, setSystemLogPanelOpen] = useState(false);
-  const [recordingConfigPanelOpen, setRecordingConfigPanelOpen] = useState(false);
-  const [recordingConfig, setRecordingConfig] = useState<RecordingConfig>(() =>
-    loadRecordingConfig(),
-  );
-  /** Name of the video being written, or '' when nothing is recording. */
-  const [activeRecordingFilename, setActiveRecordingFilename] = useState('');
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -709,8 +691,6 @@ function App() {
       setSystemLogPanelOpen(true);
     } else if (item === 'remoteViewer') {
       setRemoteViewerPanelOpen(true);
-    } else if (item === 'recordingConfig') {
-      setRecordingConfigPanelOpen(true);
     }
   };
 
@@ -881,10 +861,6 @@ function App() {
   useEffect(() => {
     writeJsonStorage('param_collapsed', paramCollapsed);
   }, [paramCollapsed]);
-
-  useEffect(() => {
-    saveRecordingConfig(recordingConfig);
-  }, [recordingConfig]);
 
   const handleAiFreeLabelChange = useCallback((idx: number, value: string) => {
     setAiFreeLabels((prev) => {
@@ -1237,34 +1213,6 @@ function App() {
   const viewerHost = useViewerHost();
   viewerHostRef.current = viewerHost;
 
-  // --- Camera / microphone capture ---------------------------------------
-  //
-  // One device, one stream, four consumers (this panel's preview, the chart
-  // slot on the launcher, the file recorder and the remote publisher). The
-  // device is opened only while one of them is actually looking, so a bound
-  // camera costs nothing until it is used — and it is frozen while recording,
-  // because re-opening it mid-run would cut the recording in half.
-  const cameraWanted =
-    !isViewerMode &&
-    hasBoundDevice(recordingConfig) &&
-    (recordingConfigPanelOpen || isLauncherMode || activeRecordingFilename !== '');
-  const cameraFeed = useCameraFeed({
-    config: recordingConfig,
-    active: cameraWanted,
-    locked: activeRecordingFilename !== '',
-  });
-  const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
-  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
-
-  // Host side of remote video. A second encoder, so it only runs when somebody
-  // is actually attached — see useMediaStreamHost.
-  useMediaStreamHost({
-    stream: cameraFeed.stream,
-    viewerCount: viewerHost.status?.viewers ?? 0,
-    publishMedia: viewerHost.publishMedia,
-    publishMediaEnd: viewerHost.publishMediaEnd,
-  });
-
   // What the System Log window puts in its subtitle, shared with slot 3 and
   // with the snapshot sent to viewers so all three say the same thing. The log
   // itself covers the whole app now; this line still names the run, because a
@@ -1423,16 +1371,10 @@ function App() {
     setDisplayRevision((v) => v + 1);
   }, []);
 
-  // Viewer side of the host's camera. Inert on the host itself, where onMedia
-  // is never called.
-  const remoteVideo = useRemoteVideo();
-
   const viewerClient = useViewerClient({
     onState: ingestRemoteState,
     onSamples: ingestRemoteSamples,
     onReset: ingestRemoteReset,
-    onMedia: remoteVideo.onMedia,
-    onMediaEnd: remoteVideo.onMediaEnd,
   });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
@@ -2371,83 +2313,6 @@ function App() {
     }
   };
 
-  /**
-   * Start recording, from the button in Recording Config.
-   *
-   * Deliberately not tied to Start Save any more. Recording is most often
-   * wanted for remote monitoring — watching a rig for an hour with no TSV run
-   * in progress at all — and binding it to the save made that impossible while
-   * also forcing the video into the downloads folder, because Start Save's own
-   * picker had already spent the click's user activation. A button of its own
-   * carries its own activation, which is what lets the folder be chosen.
-   */
-  const handleStartRecording = async () => {
-    if (videoRecorderRef.current) return;
-
-    const stream = cameraFeed.stream;
-    if (!stream) {
-      postFailure(
-        'ERROR',
-        'recording',
-        cameraFeed.error
-          ? `Recording not started: ${cameraFeed.error}`
-          : 'Recording not started: no camera or microphone is bound.',
-      );
-      return;
-    }
-
-    try {
-      // The save dialog opens inside this call, on this click — the only place
-      // it can, since a file picker needs a user gesture.
-      const recorder = await createVideoRecorder({
-        stream,
-        config: recordingConfig,
-        onError: (message, severity) => {
-          if (severity === 'warning') {
-            console.warn('Recording warning:', message);
-            // A dropped frame or a re-negotiated bitrate: the recording is
-            // still running, so this must not read as a failure — which is what
-            // it had to do, or say nothing at all, before there were levels.
-            logSystem('WARN', SOURCE.recording, message);
-            return;
-          }
-          console.error('Recording error:', message);
-          postFailure('ERROR', 'recording', message);
-        },
-      });
-      // Cancelled the save dialog. Nothing was started and nothing is said.
-      if (!recorder) return;
-      videoRecorderRef.current = recorder;
-      setActiveRecordingFilename(recorder.getFileName());
-      setRecordingStartedAt(Date.now());
-      setStatus(`Recording to ${recorder.getFileName()}`, 'recording');
-      clearStatusSource('recording');
-    } catch (err) {
-      reportError('recording', err, 'Recording failed to start');
-    }
-  };
-
-  const handleStopRecording = async () => {
-    const recorder = videoRecorderRef.current;
-    if (!recorder) return;
-    videoRecorderRef.current = null;
-    const fileName = recorder.getFileName();
-    setActiveRecordingFilename('');
-    setRecordingStartedAt(null);
-
-    try {
-      const bytes = await recorder.stop();
-      if (bytes === 0) {
-        postFailure('ERROR', 'recording', 'Recording produced no data.');
-        return;
-      }
-      setStatus(`Saved ${fileName}`, 'recording');
-      clearStatusSource('recording');
-    } catch (err) {
-      reportError('recording', err, 'Failed to finish the recording');
-    }
-  };
-
   const handleStartSave = async () => {
     // Re-entry guard: a second Start (double-click, or a click racing the file
     // picker) would create a second writer that overwrites tsvWriterRef and
@@ -3040,20 +2905,18 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        {/* Slots 3 and 4 are the launcher's, and only the launcher's. On the web
-            build these stay plots, so nothing an existing user is looking at
-            moves. The axis selections for both are still loaded and still saved
-            — they are simply unused here, so switching between the two builds
-            does not cost the user their chart setup.
+        {/* Slot 3 is the launcher's, and only the launcher's. On the web build
+            it stays a plot, so nothing an existing user is looking at moves.
+            The axis selection is still loaded and still saved — it is simply
+            unused here, so switching between the two builds does not cost the
+            user their chart setup.
 
-            Slot 3 is the System Log in both. A viewer runs no script and owns
-            no serial port, so the entries come over the feed from the host —
-            which is the point: what a script printed and what the link did are
-            the other half of what the charts are showing, and that is as true
-            for someone watching remotely as for the person at the machine.
-
-            Slot 4 is the camera in both, from different sources — the local
-            device on the host, the host's stream on a viewer. */}
+            Slot 3 is the System Log in the launcher build. A viewer runs no
+            script and owns no serial port, so the entries come over the feed
+            from the host — which is the point: what a script printed and what
+            the link did are the other half of what the charts are showing,
+            and that is as true for someone watching remotely as for the
+            person at the machine. */}
         {isLauncherServed ? (
           <SystemLogCard
             remoteEntries={isViewerMode ? remoteSystemLog : undefined}
@@ -3075,29 +2938,19 @@ function App() {
             onYAxisChange={setChart3Y}
           />
         )}
-        {isLauncherServed ? (
-          <CameraCard
-            feed={cameraFeed}
-            recording={activeRecordingFilename !== ''}
-            remote={isViewerMode}
-            snapshotUrl={remoteVideo.snapshotUrl}
-            lastFrameAt={remoteVideo.lastFrameAt}
-          />
-        ) : (
-          <ChartPanel
-            color="#fbbf24"
-            dataPoints={dataBufferRef.current}
-            purgeEpoch={chartEpoch}
-            displayRevision={displayRevision}
-            axisOptions={axisOptions}
-            axisLabels={chartAxisLabels}
-            xAxis={chart4X}
-            yAxis={chart4Y}
-            isDarkMode={isDarkMode}
-            onXAxisChange={setChart4X}
-            onYAxisChange={setChart4Y}
-          />
-        )}
+        <ChartPanel
+          color="#fbbf24"
+          dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
+          displayRevision={displayRevision}
+          axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
+          xAxis={chart4X}
+          yAxis={chart4Y}
+          isDarkMode={isDarkMode}
+          onXAxisChange={setChart4X}
+          onYAxisChange={setChart4Y}
+        />
       </div>
       </div>
 
@@ -3186,19 +3039,6 @@ function App() {
         onClose={() => setManualPanelOpen(false)}
       />
 
-      <RecordingConfigPanel
-        open={recordingConfigPanelOpen}
-        onClose={() => setRecordingConfigPanelOpen(false)}
-        config={recordingConfig}
-        onConfigChange={setRecordingConfig}
-        feed={cameraFeed}
-        locked={activeRecordingFilename !== ''}
-        activeFileName={activeRecordingFilename}
-        recordingStartedAt={recordingStartedAt}
-        onStartRecording={handleStartRecording}
-        onStopRecording={handleStopRecording}
-      />
-
       <ScriptRunnerPanel
         open={scriptRunnerPanelOpen}
         onClose={() => setScriptRunnerPanelOpen(false)}
@@ -3230,9 +3070,6 @@ function App() {
           says so. */}
       <FooterBar
         remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-        // Null on a viewer without a branch of its own: a viewer cannot start a
-        // recording, so this is always '' there.
-        recording={activeRecordingFilename === '' ? null : { fileName: activeRecordingFilename }}
         // The host's own measurement, or the host's as relayed, depending on
         // which window this is — the same value the header used to print.
         pollIntervalMs={actualPollIntervalMs}

@@ -71,9 +71,6 @@ export type SystemLogSource = string;
 export const SOURCE = {
   link: 'Link',
   save: 'Save',
-  // Separate from `save` on purpose: a recording failure never means the TSV is
-  // in trouble, and sharing a tag would let one look like the other.
-  recording: 'Recording',
   calibration: 'Calibration',
   storage: 'Storage',
   app: 'App',

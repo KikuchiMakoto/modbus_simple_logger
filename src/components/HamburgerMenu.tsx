@@ -34,10 +34,6 @@ const MENU_ITEMS = [
   // and it carries the app's own events — link, save, recording, storage — as
   // well now, which is why it is no longer named after scripts.
   { key: 'systemLog', label: 'System Log', icon: '🧾', wip: false },
-  // Between the script windows and Remote Monitoring, because that is the order
-  // it is reached in: the camera it binds is what the remote viewer shows, so
-  // whoever is about to share a screen passes through here on the way.
-  { key: 'recordingConfig', label: 'Recording Config', icon: '🎥', wip: false },
   { key: 'remoteViewer', label: 'Remote Monitoring', icon: '📡', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
