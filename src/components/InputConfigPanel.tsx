@@ -7,8 +7,7 @@ const HX711_MODES = new Set<string>([
 ]);
 
 const ADS1115_MODES = new Set<string>([
-  'ads1115_10v', 'ads1115_6144mv', 'ads1115_4096mv',
-  'ads1115_2048mv', 'ads1115_1024mv', 'ads1115_512mv', 'ads1115_256mv',
+  'ads1115_6144mv', 'ads1115_12288mv',
 ]);
 
 type InputConfigPanelProps = {

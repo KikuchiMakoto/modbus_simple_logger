@@ -52,24 +52,14 @@ export type ModbusPrecision = 'normal' | 'extended';
 export type VoltageMode =
   | 'hx711_mv_per_v'
   | 'hx711_micro_strain'
-  | 'ads1115_10v'
   | 'ads1115_6144mv'
-  | 'ads1115_4096mv'
-  | 'ads1115_2048mv'
-  | 'ads1115_1024mv'
-  | 'ads1115_512mv'
-  | 'ads1115_256mv';
+  | 'ads1115_12288mv';
 
 export const VOLTAGE_MODES: { value: VoltageMode; label: string; unit: string }[] = [
   { value: 'hx711_mv_per_v', label: 'HX711 (mV/V)', unit: 'mV/V' },
   { value: 'hx711_micro_strain', label: 'HX711 (με)', unit: 'με' },
-  { value: 'ads1115_10v', label: 'ADS1115 (10 V)', unit: 'V' },
   { value: 'ads1115_6144mv', label: 'ADS1115 (6.144 V)', unit: 'V' },
-  { value: 'ads1115_4096mv', label: 'ADS1115 (4.096 V)', unit: 'V' },
-  { value: 'ads1115_2048mv', label: 'ADS1115 (2.048 V)', unit: 'V' },
-  { value: 'ads1115_1024mv', label: 'ADS1115 (1.024 V)', unit: 'V' },
-  { value: 'ads1115_512mv', label: 'ADS1115 (512 mV)', unit: 'mV' },
-  { value: 'ads1115_256mv', label: 'ADS1115 (256 mV)', unit: 'mV' },
+  { value: 'ads1115_12288mv', label: 'ADS1115 (12.288 V)', unit: 'V' },
 ];
 
 export const DEFAULT_VOLTAGE_CONFIG: VoltageMode[] = Array.from({ length: 16 }, (_, i) =>
