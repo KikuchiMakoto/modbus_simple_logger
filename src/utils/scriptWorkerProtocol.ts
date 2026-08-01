@@ -3,9 +3,9 @@
 // Extracted from pyodideWorker/useScriptRunner when BASIC and Lua joined
 // Python: the runtimes have nothing in common, but the *contract* is identical
 // — receive shared buffers, run a string, report what happened, and ask the main
-// thread to perform the side effects a worker cannot (AO writes, tare,
-// notifications). Keeping that contract in one file is what lets
-// useScriptRunner treat all three the same and swap one worker for another.
+// thread to perform the side effects a worker cannot (AO writes, tare). Keeping
+// that contract in one file is what lets useScriptRunner treat all three the
+// same and swap one worker for another.
 //
 // The instrument API is deliberately split the same way in every language:
 //   - reads are synchronous, straight out of the SharedArrayBuffers the polling
@@ -41,8 +41,7 @@ export type ScriptWorkerResponse =
   | { type: 'error'; message: string; traceback?: string }
   /** Volts. Routed through the main thread's AO write path, never direct. */
   | { type: 'set_ao'; ch: number; data: number }
-  | { type: 'set_ai_tare'; ch: number }
-  | { type: 'notify'; message: string };
+  | { type: 'set_ai_tare'; ch: number };
 
 /**
  * Interrupt buffer states. One byte, shared, polled by the runtime.

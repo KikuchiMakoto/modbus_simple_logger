@@ -43,10 +43,10 @@ export const readJsonStorage = <T extends JsonValue>(key: string): T | null => {
   // The cookie lifeboat. This read used to be missing, which made the fallback
   // write-only: writeRaw() parks a value in a cookie when localStorage throws,
   // but every caller that reads through this function looked only at
-  // localStorage — so UI scale, the ScriptRunner code and its backup, the
-  // collapsed-section flags and the notification toggle were all lost on reload
-  // in exactly the situation the fallback exists for (a browser with site data
-  // blocked for the origin, or Safari private mode at its quota).
+  // localStorage — so UI scale, the ScriptRunner code and its backup, and the
+  // collapsed-section flags were all lost on reload in exactly the situation
+  // the fallback exists for (a browser with site data blocked for the origin,
+  // or Safari private mode at its quota).
   const cookie = readCookieRaw(key);
   return cookie === null ? null : parseJson<T>(cookie);
 };

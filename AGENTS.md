@@ -43,7 +43,6 @@ src/
 │   ├── useTheme.ts                  # テーマ管理（localStorage 永続化）
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
 │   ├── useScriptRunner.ts           # Pyodide Worker 管理（生成後は保持）+ SAB 先行確保 + タブ永続化
-│   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
 │   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示するコンポーネントだけが購読する
 │   └── useKeepAwake.ts              # ランチャーへのスリープ抑制要求（exe 限定）。ページ可視時のみ効く Screen Wake Lock を、最小化中も補う
 ├── components/
@@ -54,7 +53,7 @@ src/
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ（タブ切替）／実行・停止・Output ログ・API 一覧（UI 名: Script Runner。言語は Python 固定でセレクタ無し）
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
-│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
+│   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
 │   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー
 │   ├── UiScaleControl.tsx           # UI 拡大率の [-] [100%] [+]。Menu パネルのヘッダー
 │   ├── CalibrationPanel.tsx         # Input Calib Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
@@ -69,7 +68,7 @@ src/
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── calibrationExport.ts         # キャリブレーションの JSON 入出力
-    ├── systemLog.ts                 # アプリ唯一のログのモジュールレベルストア（log4j 6段階・同一文言の畳み込み・100ms コアレス発火・2000行/2000文字・ERROR/FATAL は notify() へ転送）
+    ├── systemLog.ts                 # アプリ唯一のログのモジュールレベルストア（log4j 6段階・同一文言の畳み込み・100ms コアレス発火・2000行/2000文字）
     ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
     ├── opfsRecoveryShared.ts        # OPFS ミラーの命名規約（Worker と主スレッドで共有）
@@ -78,7 +77,6 @@ src/
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
     ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し、各チャート右上のバッジと AppInfoPanel（全 renderer 文字列）が表示
     ├── backgroundTimer.ts           # timerWorker の主スレッド側（setBackgroundTimeout / Interval / clearBackgroundTimer）
-    ├── notifications.ts             # Web Notification のゲート（トグル永続化＋許可判定）と notify()
     ├── appMode.ts                   # 実行形態の判定（web / launcher）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
     ├── cookies.ts                   # 設定の永続化（localStorage 本体・Cookie は旧値の読込移行とフォールバックのみ）
@@ -178,14 +176,6 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - id は自前カウンタで、ブラウザのタイマーハンドルとは別空間。**`window.clearTimeout` に渡さないこと**（必ず `clearBackgroundTimer`）
 - exe 版はさらにブラウザ起動フラグ（`launcher/browser.ts`）で抑制自体を無効化している。**フラグと Worker は独立した対策で、片方だけでは全ケースを覆えない**ため両方残すこと
 
-### 通知（`utils/notifications.ts` + `useNotifications.ts`）
-- 通知の可否は**モジュールレベルの1箇所**（`utils/notifications.ts` の `enabled` + 許可状態）で判定する。`notify()` は Worker のメッセージハンドラなど React の外から呼ばれるため、React state をゲートにしないこと
-- 対象は ScriptRunner の開始 / 停止 / 完了 / エラーと、スクリプトの `SetNotify(msg)`、およびアプリの ERROR / FATAL。**通知した内容は必ず System Log にも書く**（通知 OFF や許可なしでも情報が消えないように）
-- **許可要求は起動時に1回**（`useNotifications` の effect、トグル ON かつ `permission === 'default'` のときだけ）。計測は「開始したら人が離れる」使い方なので、失敗した瞬間に許可ダイアログを出しても誰も答えられない。拒否された場合はトグルを自動で OFF にして、UI と実態を合わせる
-- **通知は tag で潰す**（`NOTIFY_TAG`）。`while True:` の中の `SetNotify()` でデスクトップが埋まらないようにするため。連投は「最新1件が残る」挙動になる
-- 表示経路は SW 登録があれば `registration.showNotification`、無ければ `new Notification`（Android は前者必須、launcher は SW 非登録なので必ず後者）
-- UI は **Application Info パネルのトグル1つだけ**。通知専用パネルやメニュー項目を作らないこと（設定が1個しかない）
-
 ### UI 拡大率（`utils/uiScale.ts`）
 - **OS のスケーリング倍率はブラウザから取得できない**。唯一の候補である `devicePixelRatio` は「OS のスケーリング」「ブラウザ自身のズーム」「パネルの物理 DPI」の3つを掛けた値であり、1.25 が Windows 125% なのか Chrome 125% なのか 1.25x パネルなのか区別できない。**ここから自動で拡大率を決めてはならない** — ブラウザが既に OS スケーリングを反映している環境（＝ほぼ全て）で二重適用になる。倍率はユーザーが選ぶ（**Menu パネルのヘッダー**の `[-] [100%] [+]`、50〜200% の 11 段）
 - **置き場所は Menu のヘッダー**（v4.1〜。以前は Application Info の中）。テーマトグルと並ぶ。理由は2つ — 「見ながら合わせる」設定なのに、開くとページが隠れるパネルの奥にあっては使えない。もう1つは Menu の行はすべて「パネルを開く」動作なので、その場で値を変える操作は行ではなくヘッダーに置くのが筋。ヘッダーには説明を置く余地が無いが、`[-] [%] [+]` は説明不要で、押せば結果がその場で見える
@@ -204,7 +194,7 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 
 - **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイル**。実行系が増えても契約だけ揃えれば `useScriptRunner` は同一に扱える、という前提で作られている（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）
 - **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
-- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `SetNotify` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであってPython ライブラリの呼び出しではない、という判断。BASIC/Lua と綴りを揃えていた名残でもある）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
+- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであってPython ライブラリの呼び出しではない、という判断。BASIC/Lua と綴りを揃えていた名残でもある）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
 - **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。1エントリの Record になっているが、`ScriptLanguageId` を型として保つのは `scriptTabs.ts` の永続化コードが `isScriptLanguageId` で古い `'basic'`/`'lua'` の保存値を弾くため。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
 - **Worker は生成後、保持し続ける**。Pyodide は起動に数秒かかるので、都度破棄すると次に開いたときに壊れて見える
 - **Stop は「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること
@@ -218,7 +208,6 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
 - **SAB は Worker 生成と切り離して mount 時に先行確保する**（`useScriptRunner` の `ensureShares()`）。SAB は Worker 専用のデータ経路ではなく、ポーリングループが毎周期書き込み、Worker が同じメモリを読み書きするため。Worker（重い方）の遅延生成は維持
 - `SetAo()` でメインスレッドへ AO 制御命令を postMessage
-- `SetNotify(msg)` は `{ type: 'notify' }` を送るだけで、通知するかどうかはメインスレッドが決める（上記「通知」）。Worker から `Notification` を触らないこと
 - `SharedArrayBuffer` による割込み停止（`interruptBuffer[0] = 2`）
 - **COOP/COEP ヘッダー必須**（`SharedArrayBuffer` 利用のため）
 - Worker init 失敗時は `initPromise` をリセットし再試行可能。メインスレッドは `init` を Worker 生成時に1度しか送らないため、Worker 側は `initArgs` を保持して `run` 受信時に**自力で再 init する**
@@ -255,7 +244,7 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
   - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
 - **復旧ファイル名は `<stem>_recovered<ext>`**（`recoveredDownloadName()`、v4.1〜）。元の名前のまま返してはならない — 復旧ファイルは「その run が本来出すはずだったファイル」ではなく**クラッシュが残した残骸**であり、ページが死んだ時点でバッファに載っていた行を欠いている可能性がある。元の名前でダウンロードフォルダに置くと正常な保存と見分けが付かず、**そもそも run が失敗したこと自体に気付けない**。OPFS 側のエントリ名は `buildRecoveryName()` のまま（あちらはパースされる名前、こちらは人間だけが読む名前）
 - **2つの `confirm()` で Cancel の意味は逆**（v4.1〜）。1つ目（提示）の Cancel は**ミラーを削除する** — 名前・開始時刻・サイズを見た上で「要らない」と答えたのだから、起動の度に同じ死んだ run を出し続けるのはデータ保護ではなく催促である。2つ目（削除確認）の Cancel は**保持する** — こちらの Cancel は「ダウンロードが届いていない」の意であり、消せば救出対象そのものを壊す。**この非対称を「一貫性」を理由に揃えてはならない**。どちらもダイアログ本文に Cancel の挙動を明記すること
-- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`notificationsEnabled`・`scriptRunnerCode`（Python。旧 `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage` は BASIC/Lua 撤去で書込みが無くなった死んだキーとして残置）・`scriptRunnerTabs`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
+- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`scriptRunnerCode`（Python。旧 `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage` / `notificationsEnabled` は BASIC/Lua・通知機能の撤去で書込みが無くなった死んだキーとして残置）・`scriptRunnerTabs`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
   - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・スクリプトのコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため

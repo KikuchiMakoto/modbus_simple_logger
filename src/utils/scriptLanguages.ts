@@ -60,10 +60,6 @@ const INSTRUMENT_API: ScriptApiDoc[] = [
     name: 'SetParam(ch, val)',
     desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.',
   },
-  {
-    name: 'SetNotify(msg)',
-    desc: 'Raise an OS notification (needs Notifications on in the menu). Always written to Output.',
-  },
   { name: 'Elapsed()', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
 ];
 

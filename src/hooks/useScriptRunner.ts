@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
-import { notify, NOTIFY_TAG } from '../utils/notifications';
 import { logSystem, SOURCE, type SystemLogLevel } from '../utils/systemLog';
 import {
   SCRIPT_LANGUAGES,
@@ -28,7 +27,7 @@ import {
 const STREAM_LEVEL: Record<'stdout' | 'stderr' | 'system', SystemLogLevel> = {
   stdout: 'INFO',
   stderr: 'ERROR',
-  /** The runner's own start/stop/notify lines, not the script's. */
+  /** The runner's own start/stop lines, not the script's. */
   system: 'INFO',
 };
 
@@ -220,14 +219,12 @@ export function useScriptRunner(
     // entry point and emits it, so the path cannot come from the table in
     // scriptLanguages.ts.
     const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
-    const runnerName = SCRIPT_LANGUAGES[language].label;
     worker.onmessage = (event: MessageEvent) => {
       const message = event.data as
         | { type: 'set_ao'; ch: number; data: number }
         | { type: 'set_ai_tare'; ch: number }
         | { type: 'status'; message: string }
         | { type: 'output'; stream: 'stdout' | 'stderr'; text: string }
-        | { type: 'notify'; message: string }
         | { type: 'done'; message?: string }
         | { type: 'interrupted'; message?: string }
         | { type: 'error'; message: string; traceback?: string };
@@ -239,24 +236,16 @@ export function useScriptRunner(
         setScriptRunnerStatus(message.message);
       } else if (message.type === 'output') {
         appendLog(message.stream, message.text);
-      } else if (message.type === 'notify') {
-        // set_notify(msg). Logged first: the log is the record, the toast is
-        // only the interruption, and the user may have turned it off.
-        appendLog('system', `notify: ${message.message}`);
-        notify(`${runnerName} Runner`, message.message, { tag: NOTIFY_TAG.scriptMessage });
       } else if (message.type === 'done') {
         markRunFinished();
         setScriptRunnerStatus(message.message ?? 'Completed');
         appendLog('system', message.message ?? 'Completed');
-        notify(`${runnerName} Runner`, 'Script completed.', { tag: NOTIFY_TAG.scriptRun });
         settleRun('completed');
       } else if (message.type === 'interrupted') {
         // This is the worker CONFIRMING a Stop that stopScriptRunner already
         // reported the moment it was requested — so the end of the run has
         // normally been recorded once already, and recording it again wrote
-        // "Stopped" into the log twice for one press. (The notification did not
-        // double up only because both carry the same tag and the second
-        // replaced the first.)
+        // "Stopped" into the log twice for one press.
         //
         // Still guarded on the flag rather than dropped outright: a worker that
         // stops on its own, with no local Stop ahead of it, is the case this
@@ -266,16 +255,12 @@ export function useScriptRunner(
         setScriptRunnerStatus(message.message ?? 'Stopped');
         if (wasRunning) {
           appendLog('system', message.message ?? 'Stopped');
-          notify(`${runnerName} Runner`, 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
           settleRun('stopped');
         }
       } else if (message.type === 'error') {
         markRunFinished();
         setScriptRunnerStatus(`Error: ${message.message}`);
         appendLog('stderr', message.traceback ?? message.message);
-        // Sticky: a run that died is the one event worth leaving on screen
-        // until someone actually looks at it.
-        notify(`${runnerName} Runner error`, message.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
         settleRun('error', message.message, message.traceback ?? null);
       }
     };
@@ -283,7 +268,6 @@ export function useScriptRunner(
       markRunFinished();
       setScriptRunnerStatus(`Error: ${event.message}`);
       appendLog('stderr', event.message);
-      notify(`${runnerName} Runner error`, event.message, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', event.message);
     };
 
@@ -320,7 +304,6 @@ export function useScriptRunner(
       // back at all (Pyodide was still booting). The answer that does arrive
       // sees scriptExecutingRef already false and stays quiet, so one press
       // writes one line.
-      notify('Script Runner', 'Script stopped.', { tag: NOTIFY_TAG.scriptRun });
       settleRun('stopped');
     }
   }, [appendLog, settleRun, markRunFinished]);
@@ -352,14 +335,12 @@ export function useScriptRunner(
       // last one's.
       appendLog('system', `Run started (${SCRIPT_LANGUAGES[language].label})`);
       worker.postMessage({ type: 'run', code: codeOverride ?? tab.code });
-      notify(`${SCRIPT_LANGUAGES[language].label} Runner`, 'Script started.', { tag: NOTIFY_TAG.scriptRun });
       return info;
     } catch (err) {
       const text = (err as Error).message;
       markRunFinished();
       setScriptRunnerStatus(`Error: ${text}`);
       appendLog('stderr', text);
-      notify('Script Runner error', text, { tag: NOTIFY_TAG.scriptRun, sticky: true });
       settleRun('error', text);
       return scriptRunRef.current;
     }

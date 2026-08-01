@@ -19,7 +19,6 @@
 // from a previous session shown at startup is worse than no error, and the
 // durable record already exists in the console and in the TSV.
 import { readJsonStorage, writeLocalPreference } from './cookies';
-import { notify } from './notifications';
 
 /**
  * log4j's ladder, and used with log4j's meanings:
@@ -128,9 +127,6 @@ const LINE_MAX = 2000;
  * delayed; only bursts are collapsed into 10 Hz.
  */
 const FLUSH_MS = 100;
-
-/** Collapses with the 'msl-script-*' tags in notifications.ts's NOTIFY_TAG family. */
-const NOTIFY_TAG_APP_ERROR = 'msl-app-error';
 
 const LEVEL_STORAGE_KEY = 'systemLogLevel';
 
@@ -250,9 +246,7 @@ export const logWarn = (source: SystemLogSource, text: string): void =>
 
 /**
  * Report a failure at ERROR, and remember that this source is failing so its
- * recovery can be logged. Notifies, since this is the only channel that reaches
- * a user who walked away from a run that is now failing — but only on a new
- * line, not on every repeat of one already said.
+ * recovery can be logged.
  */
 export const postFailure = (
   level: 'ERROR' | 'FATAL',
@@ -260,18 +254,10 @@ export const postFailure = (
   message: string,
 ): void => {
   const tag = SOURCE[source];
-  const before = entries[entries.length - 1];
   logSystem(level, tag, message);
-  const after = entries[entries.length - 1];
   // ERROR is a state a later success can clear; FATAL (data loss) is not, so it
   // never marks the source as merely "failing".
   if (level === 'ERROR') failing.add(tag);
-  // Unchanged head means the post collapsed into a repeat — already announced.
-  if (after === before || after?.repeats !== 1) return;
-  notify(level === 'FATAL' ? 'Data loss' : 'Logger error', after.text, {
-    tag: NOTIFY_TAG_APP_ERROR,
-    sticky: true,
-  });
 };
 
 /**
