@@ -43,11 +43,6 @@ export type SerialSettings = {
   parity: SerialParity;
 };
 
-/**
- * The register map in use on the wire — a fixed user choice made in
- * Connection Config, not something probed or resolved at connect time.
- */
-export type ModbusPrecision = 'normal' | 'extended';
 
 export type VoltageMode =
   | 'hx711_mv_per_v'

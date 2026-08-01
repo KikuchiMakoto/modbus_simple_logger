@@ -9,7 +9,7 @@
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
-- Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python**（Pyodide）のみ。かつては BASIC / Lua も選べたが撤去済み）
+- Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python**（Pyodide）のみ）
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
 - Wake Lock API による計測中の画面スリープ抑止
 
@@ -58,7 +58,7 @@ src/
 │   ├── UiScaleControl.tsx           # UI 拡大率の [-] [100%] [+]。Menu パネルのヘッダー
 │   ├── CalibrationPanel.tsx         # Input Calib Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── InputCalibratorPanel.tsx     # Input Calibrator（実測最小二乗 / スペック計算）。CH00-15 を1ウィンドウで扱い、HX711/ADS1115 の別は ch 番号から決まる
-│   ├── ModbusConfigPanel.tsx        # シリアル・精度・サンプリング設定ウィンドウ（UI 名: Connection Config）
+│   ├── ModbusConfigPanel.tsx        # 固定リンク設定（slave id/シリアル/精度/ポーリング）の読み取り専用表示（UI 名: Connection Config）。設定は不可 — 変更する画面ではない
 │   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
 │   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
@@ -93,7 +93,7 @@ public/
 ### Modbus 通信（`webserialClient.ts`）
 - `AsyncMutex` で転送の排他制御
 - CRC16 検証（純粋関数 `utils/crc16.ts`、`buffer`/`modbus-serial` 依存なし）
-- 最小メッセージ間隔 = `max(精度モードの基準値, 5文字時間)`（基準値は Normal: 10ms / Extended: 1ms。5文字時間はボーレート・データビット・パリティ・ストップビットから算出）
+- 最小メッセージ間隔 = `max(10ms, 5文字時間)`（5文字時間はボーレート・データビット・パリティ・ストップビットから算出。10ms は固定の基準値）
 - 転送エラー後の受信バッファフラッシュ（`flushReceiveBuffer`）
 - タイムアウト時の Reader リカバリ（cancel → releaseLock → reacquire）
 - サポート Function Code: 1, 3, 4, 5, 6, 15, 16
@@ -104,11 +104,11 @@ USB Serial変換IC（CH340, FT232等）経由で UART→ModbusRTU を受信す�
 USBパケット遅延・詰まりによる通信エラーを防ぐため、**Modbus RTU フレーム送信間に
 最低10msの間隔が必須**。
 
-- `webserialClient.ts` の `transfer()` 内の `minMessageIntervalMs` がこれを担保（`calculateMinInterval()` = 基準値 Normal 10ms / Extended 1ms と 5文字時間の大きい方）
+- `webserialClient.ts` の `transfer()` 内の `minMessageIntervalMs` がこれを担保（`calculateMinInterval()` = 基準値 10ms と 5文字時間の大きい方）
 - **この制約をアプリケーション層で再実装してはならない**（`transfer()` が単一責任）
 - `constants.ts` に追加の Wait 定数を定義しないこと（`transfer()` の待機と二重になる）
 - AO書込みを非ブロック化する場合も、`transfer()` の `AsyncMutex` により AI/AO 送信間の最低間隔が自動保証される
-- **「出力直後の InputRegisters 読みを少し遅らせる」も `transfer()` が既に担保している**。参照実装（`DigitShowModbusDoc.cpp`）の `sleep_time_after_cmd_ms`（非 usb_cdc_direct で 10ms / direct で 0）に対応するのが `minMessageIntervalMs`（Normal 10ms / Extended = 5文字時間 ≒ 1.3ms@38400)。**アプリ側に「書込み後ウェイト」を足さないこと** — 二重待機になるだけで、片方だけ直すと必ず食い違う
+- **「出力直後の InputRegisters 読みを少し遅らせる」も `transfer()` が既に担保している**。参照実装（`DigitShowModbusDoc.cpp`）の `sleep_time_after_cmd_ms`（非 usb_cdc_direct で 10ms / direct で 0）に対応するのが `minMessageIntervalMs`（固定 10ms）。**アプリ側に「書込み後ウェイト」を足さないこと** — 二重待機になるだけで、片方だけ直すと必ず食い違う
 
 ### AO 出力（`App.tsx` の `doAoWriteAsync`）
 - **AO の変更は即時送信**。`applyAoRawValues`（`SetAo` の唯一の着地点）が `requestAoWriteRef.current()` で書込みを起こす。ポーリング周期末尾まで待たせていた頃は、制御ループが1コマンドあたり最大1周期（既定 200ms、遅いサンプリングでは数分）の死に時間を払っていた — 実際の転送は数 ms なのに
@@ -117,35 +117,33 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - ループを回す条件は「**直前の転送中に**新しい変更が来たこと」だけにすること。失敗した書込みは値が「変更済み」のまま残るため、これを条件にすると死んだデバイスへ延々と再送する
 - `pollOnce` 末尾の `doAoWriteAsync()` は**取りこぼしの拾い直し**（リトライ制限に当たっていた変更）であって主経路ではない
 
-### 精度モード（`App.tsx` の `modbusPrecision`）
-- Precision の選択肢は **Normal(i16t) / Extended(f32t)** の2つのみ、既定は **Normal**。ユーザーが明示的に選んだ固定値であり、自動判定・プローブは存在しない（v5.8 で `probeExtendedPrecision`/Auto を撤去）
-- `ModbusPrecision` 型が唯一の型（`'normal' | 'extended'`）。「ユーザー設定」と「実際に線上で使う地図」を分ける必要が無いため、二重の型・二重の state（旧 `resolvedPrecision`）は持たないこと
-- ポーリングループは `modbusPrecisionRef`（`modbusPrecision` を鏡写しする ref）を読む。React state を直接読めないクロージャのためだけの ref であり、値の由来は常に `modbusPrecision` 一つ
-- 決まったモードは**ヘッダーと接続ステータスに必ず出す**（`i16t` / `f32t`）
+### 精度モード（固定・Normal(i16t) のみ）
+- 線上のレジスタマップは **Normal(i16t) の1通りだけ**。ユーザーが選ぶものではない
+- 接続ステータスには `i16t` を出す（`App.tsx` の `PRECISION_LABEL` 定数、値は常に `'i16t'`）
 
 ### ポーリング（`App.tsx`）
-- **通信レートと記録レートは独立した2つの設定**（v4.1〜）。**この2つを再び1つのレートに戻さないこと**
-  - **Polling Rate**（Connection Config、`POLLING_OPTIONS` = 25ms / 50ms / 100ms、既定 100ms）＝ 線上のポーリング周期。`setBackgroundTimeout` 再帰スケジュール。**接続中は変更不可**（`disabled={connected}`）— ループのスケジュール・読取りタイムアウト・リトライ予算がすべてここから導かれ、記録締切が乗るサンプルグリッド自体も動くため
+- **通信レートと記録レートは独立した2つの設定**。**この2つを1つのレートに統合しないこと**
+  - **Polling Rate**＝線上のポーリング周期。**固定 100ms**（`App.tsx` の `DEFAULT_POLLING_RATE_MS` 定数）。`setBackgroundTimeout` 再帰スケジュール。ループのスケジュール・読取りタイムアウト・リトライ予算はすべてここから導かれ、記録締切が乗るサンプルグリッド自体もここに乗る
   - **Save Rate**（Start Save の横、`SAVE_RATE_OPTIONS` = **200ms〜30分**、既定 1s）＝ **TSV へ書く周期だけ**。「N回に1回書く」で実現する。**接続中・保存中も変更可**（締切を張り直すだけで済む）
-  - **チャート・IndexedDB・ビューア配信は保存周期ではなくポーリング側**。ただし**入力レートは `CHART_INPUT_INTERVAL_MS`(100ms) 固定**で、ポーリング回数のストライド（100ms→毎回 / 50ms→2回に1回 / 25ms→4回に1回、`plotStrideRef`）で落とす
+  - **チャート・IndexedDB は保存周期ではなくポーリング側**。ただし**入力レートは `CHART_INPUT_INTERVAL_MS`(100ms) 固定**で、ポーリング回数のストライド（`plotStrideRef`）で落とす。Polling Rate は 100ms 固定なので、両方が同じ 100ms でストライドは常に1（毎回）
     - 保存周期に合わせない理由：30分周期のログで画面が30分に1点しか動かなければ計測を見ていられない
     - ポーリングに追従させない理由：**チャートの入力レートが固定なら、負荷も軸も間引き計算も1つの前提の上に乗る**。入力 10Hz に対し再描画は `CHART_REDRAW_INTERVAL_MS`(500ms) = **2fps** なので、1回の描画に5点ぶん入る計算で、それ以上の点は個別には見えない — バッファ churn と、速いポーリング時は Modbus 転送の合間に挟まる間引き作業が増えるだけ。入力レートを再描画レートまで落とさないのは、チャートが**間引き前の点列**を持っていることに意味があるため（軸を Raw/Phy/Parameter に切り替えても再取得が要らない）。ポーリングを制御ループのために上げても表示コストが付いてこない、という性質がここで効く
     - **ストライドは締切ではなく単純なカウンタ**。読取り失敗で1回飛んでも 10Hz のトレースの位相が 100ms ずれるだけで、TSV の1行欠落とは重みが違う
-  - **20ms は実機で保たなかったので 25ms にした**（v4.1 の実測）。Normal 精度では 1 サイクルの下限が「フレーム時間 + `minMessageIntervalMs`(最低 10ms)」で、38400bps・AI 16ch の i16 読みなら 11.7ms + 10ms ≒ 22ms — 20ms は構造的に入らない。25ms も余裕は数 ms しかない**最も端の設定**であり、遅いボーレートや応答の遅いデバイスでは保たない。読取りタイムアウトの下限 100ms も守れていないが、これは両者共通で 20/25 の差の原因ではない
+  - （履歴）Polling Rate がまだ選択肢だった頃、20ms は実機で保たなかったため候補は 25ms が最速だった（v4.1 の実測）。1 サイクルの下限が「フレーム時間 + `minMessageIntervalMs`(最低 10ms)」で、38400bps・AI 16ch の i16 読みなら 11.7ms + 10ms ≒ 22ms のため。**固定 100ms の現行構成ではこの余裕は問題にならない** — 25/50ms の速い側の選択肢を再び足す場合はこの制約が再び効く
   - **理由は FB 制御**。AO を叩くスクリプトは polling が更新した AI 値を読む。ここを保存周期に縛ると、「ディスクには1分に1点で十分だが制御は速く回したい」という真っ当な要求が「1分に1回しか入力が更新されない制御ループ」になる。ファイルサイズと制御品質は別の関心事
   - **Save Rate の下限 200ms はポーリングレートと無関係の固定値**。これ以上速く書いても読み返す人はおらず、行あたりのコストだけが計測ループの真ん中に落ちる。**この下限が最も速いポーリング周期より遅いことが、2つのリストを互いに独立にしている** — 200ms より遅いポーリングを足すならクランプが要る。**置き場所を Connection Config に戻さないこと** — ポーリングはデバイスに対して一度決めるもの、保存周期は計測ごとに選ぶもの
   - **記録の判定はポーリング回数のカウンタではなく「次に記録すべき時刻」(`nextRecordAtRef`)**。読み取り失敗やファイルピッカー中はポーリング自体が飛ぶため、カウンタ方式だと以降の全行の位相がずれ、失敗した回がたまたま N 回目だと**その行が丸ごと落ちる**。時刻締切なら遅れは最大1ポーリング周期で、位相は自動的に復帰する。判定は締切の半ポーリング周期手前から（締切に一番近いポーリングを選ぶため。1周期未満なので連続2回が同時に due になることはない）
   - 締切を **0 へリセット**（＝「次のポーリングを即記録」）するのは **計測開始時・切断時・保存開始/停止時・Save Rate 変更時**の4系統だけ
     - **`scheduleImmediatePoll` でリセットしてはならない**。これは `visibilitychange` からも呼ばれるため、30分保存中にユーザーが10回タブを切り替えると10行の余計な行が中途半端な位置に入る。締切は絶対時刻なので**凍結明けは放っておけば「期限切れ」として catch-up 節が張り直す** — 手当ては要らない（v4.1 で混入し修正）
     - **保存開始のリセットは `tsvWriterRef.current = writer` の直前に置く**。他のリセット群と一緒に上へ動かしてはならない — 間に `await dataStorage.clearAllData()` があり、ポーリング周期より長く掛かりうる。その隙間に来たポーリングがリセットを消費して締切を1保存周期ぶん進めてしまい、しかも `enqueueSaveUpdate` はまだ writer が無いので書かない。結果として**このリセットが防ごうとしている遅延（30分周期なら1行目が30分後）がそのまま再発する**（v4.1 で混入し修正）
-  - 保存周期がポーリング周期の整数倍でない組み合わせでは、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**。なお**現行の選択肢では起こらない** — ポーリングは 25/50/100ms、保存は下限 200ms でどれも全ポーリング周期の整数倍になっている。どちらかのリストに整数倍でない値を足すときに効いてくる話として残してある
-  - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。25/50/100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
+  - 保存周期がポーリング周期の整数倍でない組み合わせでは、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**。なお**現行の選択肢では起こらない** — ポーリングは固定 100ms、保存は下限 200ms でどれも全ポーリング周期の整数倍になっている。Save Rate に整数倍でない値を足すときに効いてくる話として残してある
+  - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。固定 100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
   - 表示は**フッター右端**の `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗はヘッダーの点数カウンタが示す
     - **sticky ヘッダーから外した**（v4.x）。sticky ヘッダーの幅は全セッションぶんチャンネルグリッドから引かれる一方、この値を見るのは限られた場面。フッターなら削るのは元から truncate 済みのログ行だけで済む
     - **ブレークポイントで隠さないこと**。この値はアプリ内の他のどこにも出ておらず、幅が最も無い構成（スマホ + WebUSB。Connection Config も Script Runner も開けない）がまさに他に答えるものが無い場面。実測 52px、横スクロールは 320px でも発生しない
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ）
-  - **AI 側の上限はポーリング回数に比例させる**（`INPUT_READ_MAX_FAILURE_RATIO` = 10%、下限 `INPUT_READ_MAX_FAILURES_PER_WINDOW` = 10回）。固定10回はポーリング周期が保存周期に縛られていた時代の設計で、遅い設定なら10回貯まるのに数分かかった。10〜40Hz 固定になった今では**完全に死んだデバイスで1秒**で発火し、以後ウィンドウから失敗が抜けるまで全読取りをスキップする＝最大1分の空白、200ms 保存なら300行の欠落。**「応答しない」は回数ではなく割合**である。10% / 100ms なら 60回 ＝ 完全断で6秒後にバックオフ、数%のフレーム落ちでは発火しない（v4.1 で顕在化し修正）
+  - **AI 側の上限はポーリング回数に比例させる**（`INPUT_READ_MAX_FAILURE_RATIO` = 10%、下限 `INPUT_READ_MAX_FAILURES_PER_WINDOW` = 10回）。固定10回はポーリング周期が保存周期に縛られていた時代の設計で、遅い設定なら10回貯まるのに数分かかった。10Hz 固定（現行の Polling Rate = 100ms）になった今では**完全に死んだデバイスで1秒**で発火し、以後ウィンドウから失敗が抜けるまで全読取りをスキップする＝最大1分の空白、200ms 保存なら300行の欠落。**「応答しない」は回数ではなく割合**である。10% / 100ms なら 60回 ＝ 完全断で6秒後にバックオフ、数%のフレーム落ちでは発火しない（v4.1 で顕在化し修正）
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
 - **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
   - 非保存時: 直近 `NON_SAVING_CHART_PREVIEW_POINTS`(768) 点のスライディングプレビュー（間引き無し・全点描画）。チャート入力レートが 100ms 固定なので **768 点 = 約77秒**であり、時間窓と同義。**点数で持つのは時刻窓より素直だから** — 切り捨てが splice 1回で済み、時計も走査も要らない。さらにフィードが止まったとき、時刻窓は勝手に空になって「最後にいくつだったか」すら消えるが、点数窓は次のデータが押し出すまで直近77秒を保持する
@@ -168,8 +166,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 逆に**画面表示だけのタイマーは `window.setTimeout` のままにする**（保存経過時間、コピー完了表示、チャート再描画デバウンス、パネルの開閉アニメ）。見ていない画面の時計が止まっても誰も困らず、Worker 往復を足す意味がない
 - **判定基準は「見ていない間に走りうるか」であって「計測ループの一部か」ではない**（v4.1 の棚卸しで2件漏れが見つかった）:
   - `webserialClient.ts` の `settleWithin()`（切断手順の各ステップ 1.5s ガード）。切断はユーザーがボタンを押すものだけではない — **ケーブルを抜けば `disconnect` イベントで走り**、それは最小化中にも起きる。`window` タイマーのままだと 1.5s が抑制後の1分に化ける
-  - 残す判断をしたもの: `tsvExport.ts` の close タイムアウト（ハングした worker に対する最後の安全網であり、延びても壊れるものが無い）、ビューアの再接続バックオフ（そもそも指数バックオフで秒〜分のオーダー）
-  - **例外として要検討で残っているもの**: `App.tsx` のリモートビューア向け全状態再送（1s、`window.setInterval`）。ホストウィンドウが見られていない間こそ動くべきもので、上の基準からすると Worker タイマーにすべき側。実害は「ホスト最小化中にビューアの全状態同期が 1s から最大 1分 に延びる」で、差分更新は別経路なので致命ではないが、**基準に合っていないことを承知で残してある**
+  - 残す判断をしたもの: `tsvExport.ts` の close タイムアウト（ハングした worker に対する最後の安全網であり、延びても壊れるものが無い）
 - 仕組みはタイマーの**スケジュールだけ**を専用 Worker が持つ形（Worker のタイマーは抑制対象外）。コールバックは従来どおり主スレッドで走る。**ブラウザにページごと凍結された場合は救えない** — そこはスリープ抑制（下記）と Wake Lock の担当
 - **バックエンドは可視状態で切り替える**（`pageVisible()`）。表示中は `window` タイマー（そもそも抑制されないので Worker 往復は純粋な損）、非表示になったら Worker。**この分岐を「常に Worker」に単純化しないこと** — `readChunk()` はフレーム1本につき USB チャンク数だけタイマーを取り直すため、20Hz では毎秒 60〜120 往復になり、実測で 20Hz が 16Hz まで落ちた（v3.17 の回帰）。非表示へ遷移した時点で生存中の `window` タイマーは Worker へ移し替える（delay は振り直しになるので、遷移1回につき最大1周期ぶん遅れる）
 - Worker が落ちた場合は全 live タイマーを `window` タイマーへ張り直す（`fallBackToWindowTimers`）。残り時間は分からないので**元の delay で再スタート**する。1回遅れる方が、ループが二度と回らないより遥かにマシという判断
@@ -187,14 +184,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 
 ### ScriptRunner（`pyodideWorker.ts`）
 
-Python (Pyodide) だけが残っている。かつては BASIC（`basicWorker.ts` + `src/basic/`）と
-Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だったが、いずれも撤去済み
-（`bun run basic:check` / `bun run lua:check` も消えた）。以下はその名残で、Python 1言語に
-なっても崩さなくてよい設計:
+ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が増えても崩れない設計:
 
 - **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイル**。実行系が増えても契約だけ揃えれば `useScriptRunner` は同一に扱える、という前提で作られている（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）
 - **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
-- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであってPython ライブラリの呼び出しではない、という判断。BASIC/Lua と綴りを揃えていた名残でもある）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
+- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではない、という判断）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
 - **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。1エントリの Record になっているが、`ScriptLanguageId` を型として保つのは `scriptTabs.ts` の永続化コードが `isScriptLanguageId` で古い `'basic'`/`'lua'` の保存値を弾くため。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
 - **Worker は生成後、保持し続ける**。Pyodide は起動に数秒かかるので、都度破棄すると次に開いたときに壊れて見える
 - **Stop は「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること
@@ -232,7 +226,7 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 - **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
   - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
-  - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は Normal（i16）では `toString()` の整数、Extended（f32）では init の `aiRawAsFloat` により浮動小数フォーマッタを通す
+  - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は常に `toString()` の整数（i16 レジスタなので）
   - `Float32Array` / `number[]` の両方を受け付ける
 - **OPFS クラッシュリカバリ**（`utils/opfsRecoveryShared.ts` + `opfsRecovery.ts` + `tsvWriterWorker.ts`）: ピッカーで選んだファイルは `FileSystemWritableFileStream` がスワップファイルへ溜め、`close()` で初めて実体へ swing する。つまり **Stop Save まで対象ファイルは 0 バイト**で、途中でクラッシュすると全損する。そこで全行を OPFS へも同期追記する（`createSyncAccessHandle()` は OPFS 限定・Worker 限定・スワップ無し・追記可能）
   - **ダーティビットは「ミラーファイルが存在すること」そのもの**。別フラグは持たない — クラッシュとは2つの書込みが食い違いうる瞬間そのものであり、この機能が絶対に許容できないのは「別の run の名前や時刻を持つ復旧ファイル」だから。メタデータ（元ファイル名・開始時刻）も**ミラー自身のファイル名にエンコードする**（サイドカーや localStorage にしない）。正常な Stop Save が消すので、起動時に残っているものは定義上「終わらなかった run」
@@ -246,7 +240,7 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 - **2つの `confirm()` で Cancel の意味は逆**（v4.1〜）。1つ目（提示）の Cancel は**ミラーを削除する** — 名前・開始時刻・サイズを見た上で「要らない」と答えたのだから、起動の度に同じ死んだ run を出し続けるのはデータ保護ではなく催促である。2つ目（削除確認）の Cancel は**保持する** — こちらの Cancel は「ダウンロードが届いていない」の意であり、消せば救出対象そのものを壊す。**この非対称を「一貫性」を理由に揃えてはならない**。どちらもダイアログ本文に Cancel の挙動を明記すること
 - **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`scriptRunnerCode`（Python。旧 `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage` / `notificationsEnabled` は BASIC/Lua・通知機能の撤去で書込みが無くなった死んだキーとして残置）・`scriptRunnerTabs`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
   - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・スクリプトのコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
-  - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
+  - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
 ### PWA / Service Worker
@@ -279,8 +273,7 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 | `AI_CHANNELS` | 16 | AI チャネル数 |
 | `AO_CHANNELS` | 8 | AO チャネル数（GP8403） |
 | `PARAM_CHANNELS` | 16 | Parameter（スクラッチ値）チャネル数 |
-| `AI_START_REGISTER` | 0 | AI Input Register 開始アドレス（Normal） |
-| `AI_FLOAT_START_REGISTER` | 5000 | AI Input Register 開始アドレス（Extended） |
+| `AI_START_REGISTER` | 0 | AI Input Register 開始アドレス |
 | `AO_START_REGISTER` | 0 | AO Holding Register 開始アドレス |
 | `RETRY_DELAY_MS` | 10 | Modbus 通信リトライ前の待機時間 |
 | `INPUT_READ_RETRY_WINDOW_MS` | 60000 | AI 読取りリトライ制限の評価ウィンドウ |
@@ -304,11 +297,8 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 | `CHANNEL_CARD_MIN_INTERVAL_MS` | 100 | AI チャネルカードの state 更新下限。ポーリングがこれより速いときだけ絞りが効く |
 | `READOUT_PUBLISH_INTERVAL_MS` | 250 | 実測レート・保存点数を React へ渡す間隔 |
 | `INPUT_READ_MAX_FAILURE_RATIO` | 0.1 | AI 読取り失敗予算をポーリング頻度に比例させる係数（下限は `INPUT_READ_MAX_FAILURES_PER_WINDOW`） |
-| `PRECISION_PROBE_TIMEOUT_MS` | 100 | 精度プローブ1回の読取りタイムアウト |
-| `PRECISION_PROBE_ATTEMPTS` | 3 | 精度プローブの試行回数（全滅で初めて Normal） |
-| `PRECISION_PROBE_CHANNELS` | 2 | 精度プローブで読む先頭チャネル数 |
 
-**UI の選択肢配列はこの表とファイルの対象外**: `POLLING_OPTIONS` / `DEFAULT_POLLING_RATE_MS` / `SAVE_RATE_OPTIONS` / `DEFAULT_SAVE_RATE_MS` / `BAUD_OPTIONS` / `AO_FULL_SCALE_MV` は `App.tsx` にある。`constants.ts` は「挙動を決めるチューニング値」を持つ場所で、ドロップダウンの中身は UI の一部として使う側に置いてある。下の「定数の一元化」ルールはこの区別を前提にしている。
+**UI の選択肢配列はこの表とファイルの対象外**: `DEFAULT_POLLING_RATE_MS`（Connection Config 表示用の固定値。選択肢は無い） / `SAVE_RATE_OPTIONS` / `DEFAULT_SAVE_RATE_MS` / `AO_FULL_SCALE_MV` は `App.tsx` にある。`constants.ts` は「挙動を決めるチューニング値」を持つ場所で、ドロップダウンの中身は UI の一部として使う側に置いてある。下の「定数の一元化」ルールはこの区別を前提にしている。
 
 ## 変更時の注意
 
@@ -326,7 +316,7 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 - **プリキャッシュ注入**（`vite.config.ts` の `precache-manifest` プラグイン）: ビルド時に `dist` の全アセットを走査し `dist/sw.js` の `PRECACHE_MANIFEST` / `CACHE_VERSION` / `APP_VERSION` を置換。`sw.js` 側のプレースホルダ（`const PRECACHE_MANIFEST = [];` / `const CACHE_VERSION = 'dev';` / `const APP_VERSION = '';`）の文字列を変更するとマッチしなくなり**オフライン動作や更新プロンプトのバージョン表示が壊れる**ため注意。アセット追加時は手書き不要（自動で含まれる）
 - **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
 - **依存ライブラリのバージョン表示は自動生成**（`vite.config.ts` の `DEP_VERSIONS` → `VITE_DEP_VERSIONS`）: `package.json` の `dependencies`/`devDependencies` 全件について **`node_modules/<name>/package.json` の実インストール版**を JSON で注入する（`^19.2.8` のようなレンジではなく実際にバンドルされた版が出る）。`AppInfoPanel.tsx` の `LIBRARIES` は**表示名・パッケージ名・ライセンスのみ**を持ち、バージョンを直書きしないこと。ライブラリ追加時は 1 行足すだけでよく、バージョン更新時の同期作業は不要
-- **Prism のグラマーは必要な分だけ個別 import すること**（`utils/prism.ts`、現在は `prism-python` のみ。`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。かつて BASIC 用に `prism-vbnet` も入れていたが、それは `Prism.languages.extend('basic', …)` 経由で `prism-basic` に依存しており、import 順を誤ると**モジュール評価時に throw してアプリ全体が起動しなかった**（エディタだけの問題では済まない）。BASIC 撤去で両方消えたので今この順序問題は無いが、**言語を増やす際は依存する他のグラマーが無いか確認すること**。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
+- **Prism のグラマーは必要な分だけ個別 import すること**（`utils/prism.ts`、現在は `prism-python` のみ。`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。グラマーによっては他のグラマーへの依存があり、import 順を誤ると**モジュール評価時に throw してアプリ全体が起動しなくなる**ことがある（エディタだけの問題では済まない）。**言語を増やす際は依存する他のグラマーが無いか確認すること**。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
 - **エディタの Tab/undo は react-simple-code-editor 側の実装を使う**（`components/CodeEditor.tsx`）。v5.0 まで App.tsx に自前の Tab インデント handler があったが、ライブラリ内蔵と同等（2スペース・選択範囲対応）でありながら**ライブラリの undo スタックを迂回して Ctrl+Z を壊す**ため削除した。外から `onKeyDown` で `preventDefault()` するとライブラリ側の処理が丸ごと止まる仕様なので、キー処理を足すときはこの点に注意
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
@@ -337,10 +327,10 @@ Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だった
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）
-- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと。**UI のドロップダウンの中身**（`POLLING_OPTIONS`・`SAVE_RATE_OPTIONS`・`BAUD_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
+- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと。**UI のドロップダウンの中身**（`SAVE_RATE_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
-- **AI Raw の表示桁は精度モードで変える**: Extended(f32t) は `toFixed(3)`、Normal(i16t) は整数そのまま。f32 レジスタを読みながら `Math.trunc()` していた頃は、そのモードの存在理由である小数部を表示だけ捨てていた（TSV には常に入っている）
+- **AI Raw の表示桁は整数のまま**（i16t の1通りしかないので）
 - **配色ルール（重要）**: 基調は **緑（emerald）とグレー（slate）**。状態を伝える必要が無い新規 UI 要素は、この2色だけで組む。
   - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
   - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）

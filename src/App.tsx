@@ -15,7 +15,6 @@ import {
   PollingRateOption,
   DataPoint,
   SerialSettings,
-  ModbusPrecision,
   VoltageMode,
   DEFAULT_VOLTAGE_CONFIG,
 } from './types';
@@ -24,7 +23,6 @@ import {
   AO_CHANNELS,
   PARAM_CHANNELS,
   AI_START_REGISTER,
-  AI_FLOAT_START_REGISTER,
   AO_START_REGISTER,
   RETRY_DELAY_MS,
   INPUT_READ_RETRY_WINDOW_MS,
@@ -144,24 +142,6 @@ const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 // meter can never disagree with what the hardware will actually accept.
 const AO_FULL_SCALE_MV = 10000;
 
-/**
- * How fast the Modbus loop runs, on a transport that can keep up.
- *
- * Deliberately short: this is the rate a feedback script's inputs are refreshed
- * at, and on Web Serial there is no reason to want it slower — a run that only
- * needs a sample a minute on disk still wants a control loop that sees fresh
- * data. How much of it is kept is SAVE_RATE_OPTIONS.
- */
-const POLLING_OPTIONS: PollingRateOption[] = [
-  // 25 ms, not 20: 20 ms was tried on the bench and did not hold rate, 25 ms
-  // does. It is still the setting nearest the edge — the read timeout has a
-  // 100 ms floor it cannot honour, so what keeps it working is the device
-  // answering well inside the cycle rather than anything this code enforces.
-  { label: '25 ms', valueMs: 25 },
-  { label: '50 ms', valueMs: 50 },
-  { label: '100 ms', valueMs: 100 },
-];
-
 // One list for both transports. WebUSB was held to 200-500 ms for a while
 // because the link died every 24 s at 100 ms — that turned out to be a leak in
 // `web-serial-polyfill`, which orphaned one `transferIn` per byte received until
@@ -216,25 +196,18 @@ const SAVE_RATE_OPTIONS: PollingRateOption[] =
 // floor and a whole multiple of every Web Serial poll rate.
 const DEFAULT_SAVE_RATE_MS = 1000;
 
-const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
-const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
-const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
-const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
-const PRECISION_OPTIONS: { label: string; value: ModbusPrecision }[] = [
-  { label: 'Normal(i16t)', value: 'normal' },
-  { label: 'Extended(f32t)', value: 'extended' },
-];
-
-const PRECISION_LABEL: Record<ModbusPrecision, string> = {
-  normal: 'i16t',
-  extended: 'f32t',
-};
-const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
+// The link's serial framing is fixed — one configuration, not a user choice.
+// Connection Config (ModbusConfigPanel) displays these as read-only text.
+const FIXED_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
   dataBits: 8,
   stopBits: 1,
   parity: 'none',
 };
+const FIXED_SLAVE_ID = 1;
+// The register map on the wire is always 16-bit int (i16t) Input Registers;
+// the 32-bit float (f32t) "Extended" mode has been removed.
+const PRECISION_LABEL = 'i16t';
 
 const computeSensorValues = (raw: number, idx: number) => {
   if (idx < 8) {
@@ -417,18 +390,14 @@ function App() {
     chart4X, setChart4X, chart4Y, setChart4Y,
   } = useChartAxes(axisOptionKeys);
 
-  const [slaveId, setSlaveId] = useState(1);
-  const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
-  // The register map to use on the wire, picked explicitly by the user.
-  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecision>('normal');
-  // Mirrors modbusPrecision for the polling loop, which keeps a closure alive
-  // across renders and cannot read React state directly.
-  const modbusPrecisionRef = useRef<ModbusPrecision>('normal');
-  // Two independent rates: how fast the link is polled, and how much of that is
-  // kept. See POLLING_OPTIONS / SAVE_RATE_OPTIONS.
-  const [pollingRate, setPollingRate] = useState<PollingRateOption>(
-    POLLING_OPTIONS.find((p) => p.valueMs === DEFAULT_POLLING_RATE_MS)!,
-  );
+  // The link is one fixed configuration (slave id, serial framing, register
+  // map, poll rate) — see FIXED_SLAVE_ID / FIXED_SERIAL_SETTINGS /
+  // DEFAULT_POLLING_RATE_MS above. None of it is user-settable, so none of it
+  // needs to be reactive state.
+  const slaveId = FIXED_SLAVE_ID;
+  const serialSettings = FIXED_SERIAL_SETTINGS;
+  // Two independent rates: how fast the link is polled (fixed), and how much
+  // of that is kept (still user-selectable). See SAVE_RATE_OPTIONS.
   const [saveRate, setSaveRate] = useState<PollingRateOption>(
     SAVE_RATE_OPTIONS.find((p) => p.valueMs === DEFAULT_SAVE_RATE_MS)!,
   );
@@ -556,7 +525,7 @@ function App() {
   // The Modbus poll interval on the wire — NOT the save rate. Everything that
   // has to fit inside one transfer cycle (read timeouts, the retry budget, the
   // channel-card publish floor) is measured against this.
-  const pollIntervalRef = useRef(pollingRate.valueMs);
+  const pollIntervalRef = useRef(DEFAULT_POLLING_RATE_MS);
   // The recording side: the selected save interval, and the capture time the
   // next recorded sample is due at (0 = record the very next successful poll).
   //
@@ -573,7 +542,7 @@ function App() {
   // poll rate. A plain counter, not a deadline like the save path above: a poll
   // lost to a failed read shifts the phase of a 10 Hz chart trace by 100 ms and
   // nothing else, whereas a missing TSV row is missing data.
-  const plotStrideRef = useRef(1);
+  const plotStrideRef = useRef(Math.max(1, Math.round(CHART_INPUT_INTERVAL_MS / DEFAULT_POLLING_RATE_MS)));
   const pollsSincePlotRef = useRef(0);
   // Measured poll interval, for the footer's right-hand readout. Taken from the
   // poll loop rather than from the recorded points, which at the slow save rates
@@ -722,22 +691,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    pollIntervalRef.current = pollingRate.valueMs;
-    plotStrideRef.current = Math.max(1, Math.round(CHART_INPUT_INTERVAL_MS / pollingRate.valueMs));
-    pollsSincePlotRef.current = 0;
-  }, [pollingRate.valueMs]);
-
-  useEffect(() => {
     saveIntervalRef.current = saveRate.valueMs;
     // Re-arm rather than carry the old phase over: a change to the save rate
     // should take effect on the next poll, not once the deadline left over from
     // the previous rate expires (up to half an hour away).
     nextRecordAtRef.current = 0;
   }, [saveRate.valueMs]);
-
-  useEffect(() => {
-    modbusPrecisionRef.current = modbusPrecision;
-  }, [modbusPrecision]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -1366,9 +1325,7 @@ function App() {
       );
     } else {
       try {
-        aiSourceValues = modbusPrecisionRef.current === 'extended'
-          ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
-          : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
+        aiSourceValues = await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
       } catch (readError) {
         inputReadFailureTimestampsRef.current.push(Date.now());
         const normalizedReadError =
@@ -1377,9 +1334,7 @@ function App() {
           console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
-            aiSourceValues = modbusPrecisionRef.current === 'extended'
-              ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
-              : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
+            aiSourceValues = await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
           } catch (retryReadError) {
             inputReadFailureTimestampsRef.current.push(Date.now());
             firstError = new Error(
@@ -1538,7 +1493,7 @@ function App() {
 
       if (pollTimer.current === undefined) return;
 
-      const pollIntervalMs = pollingRate.valueMs;
+      const pollIntervalMs = DEFAULT_POLLING_RATE_MS;
       idealScheduleRef.current += pollIntervalMs;
       const now = Date.now();
       if (idealScheduleRef.current < now - pollIntervalMs) {
@@ -1554,7 +1509,7 @@ function App() {
         void runPollingLoop();
       }, delay);
     }
-  }, [pollOnce, pollingRate.valueMs]);
+  }, [pollOnce]);
 
   const scheduleImmediatePoll = useCallback(() => {
     if (pollTimer.current !== undefined) {
@@ -1654,7 +1609,6 @@ function App() {
     console.info('[App] handleConnect start', {
       slaveId,
       serialSettings,
-      modbusPrecision,
       connected,
     });
     // Fence off anything still owed to a previous session, so a straggler cannot
@@ -1682,7 +1636,6 @@ function App() {
         slaveId,
         serialSettings,
         serial,
-        modbusPrecision === 'extended',
         shouldUsePolyfill,
       );
       pendingClient = client;
@@ -1701,9 +1654,6 @@ function App() {
         throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
       }
 
-      client.setPrecisionMode(modbusPrecision === 'extended');
-      modbusPrecisionRef.current = modbusPrecision;
-
       clientRef.current = client;
       pendingClient = null;
       outputHoldingFailureTimestampsRef.current = [];
@@ -1716,7 +1666,7 @@ function App() {
       // that no longer exists.
       clearStatusSource('link');
       setStatus(
-        `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL[modbusPrecision]}`,
+        `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL}`,
         'link',
       );
       await requestWakeLock();
@@ -2059,7 +2009,6 @@ function App() {
           // polling schedule has drifted; resync from now.
           idealScheduleRef.current = 0;
         },
-        modbusPrecision === 'extended',
       );
       try {
         const startedAt = Date.now();
@@ -2413,11 +2362,9 @@ function App() {
                   <div className="flex justify-between items-center leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {/* Extended reads float32 registers, so truncating the
-                          readout to an integer threw away the only thing that
-                          mode is for. Normal carries int16 counts, where a
-                          decimal point would be noise. */}
-                      {modbusPrecision === 'extended' ? ch.raw.toFixed(3) : ch.raw}
+                      {/* i16t Input Registers, so raw is an integer count —
+                          a decimal point here would be noise. */}
+                      {ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
@@ -2606,22 +2553,7 @@ function App() {
       <ModbusConfigPanel
         open={modbusConfigPanelOpen}
         onClose={() => setModbusConfigPanelOpen(false)}
-        slaveId={slaveId}
-        onSlaveIdChange={setSlaveId}
-        serialSettings={serialSettings}
-        onSerialSettingsChange={setSerialSettings}
-        modbusPrecision={modbusPrecision}
-        onModbusPrecisionChange={setModbusPrecision}
-        baudOptions={BAUD_OPTIONS}
-        dataBitsOptions={DATA_BITS_OPTIONS}
-        stopBitsOptions={STOP_BITS_OPTIONS}
-        parityOptions={PARITY_OPTIONS}
-        precisionOptions={PRECISION_OPTIONS}
         transportLabel={serialTransportLabel}
-        pollingRate={pollingRate}
-        onPollingRateChange={setPollingRate}
-        pollingOptions={POLLING_OPTIONS}
-        connected={connected}
       />
 
       <CalibrationPanel

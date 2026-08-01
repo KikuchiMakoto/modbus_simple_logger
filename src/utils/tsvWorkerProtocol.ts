@@ -15,13 +15,6 @@ export interface TsvInitMessage {
   aoChannels: number;
   paramChannels: number;
   physicalPrecision: number;
-  /**
-   * When true, AI raw values are emitted with the float formatter
-   * (parseFloat(v.toFixed(physicalPrecision)).toString()) instead of
-   * v.toString(). Set this when the Modbus precision mode is "extended"
-   * (32-bit float Input Registers); leave false for "normal" (16-bit int).
-   */
-  aiRawAsFloat: boolean;
   /** Buffered-row count that triggers a flush (0 disables the row-count flush). */
   flushMaxRows: number;
 }

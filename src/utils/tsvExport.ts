@@ -145,8 +145,6 @@ class TsvWorkerWriter implements TsvSink {
  *   On Android the picker is a separate system activity that backgrounds — and
  *   may freeze — the page for as long as it is open, so callers use this to
  *   bracket work that must not be in flight meanwhile.
- * @param aiRawAsFloat - When true, AI raw columns use the float formatter
- *   (used in Modbus extended precision mode). Default false (int output).
  * @returns TsvSink instance (header already written)
  * @throws Error if File System Access API is not supported, the user cancels,
  *   or the worker fails to open the file
@@ -160,7 +158,6 @@ export async function createTsvWriter(
   flushMaxRows: number = 0,
   onError: TsvNoticeHandler = () => {},
   onPickerSettled: () => void = () => {},
-  aiRawAsFloat: boolean = false,
 ): Promise<TsvSink> {
   if (!('showSaveFilePicker' in window)) {
     throw new Error('File System Access API not supported in this browser');
@@ -197,7 +194,6 @@ export async function createTsvWriter(
     aoChannels,
     paramChannels,
     physicalPrecision,
-    aiRawAsFloat,
     flushMaxRows,
   };
 

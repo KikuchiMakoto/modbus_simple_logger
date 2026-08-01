@@ -18,7 +18,6 @@ let writeBuffer: string[] = [];
 // does not stall every later flush.
 let flushChain: Promise<void> = Promise.resolve();
 let physicalPrecision = 3;
-let aiRawAsFloat = false;
 let flushMaxRows = 0;
 let aiChannels = 0;
 let aoChannels = 0;
@@ -215,7 +214,6 @@ self.onmessage = async (event: MessageEvent<TsvWorkerRequest>) => {
     switch (msg.type) {
       case 'init': {
         physicalPrecision = msg.physicalPrecision;
-        aiRawAsFloat = msg.aiRawAsFloat;
         flushMaxRows = msg.flushMaxRows;
         aiChannels = msg.aiChannels;
         aoChannels = msg.aoChannels;
@@ -235,7 +233,7 @@ self.onmessage = async (event: MessageEvent<TsvWorkerRequest>) => {
         assertLength('AO raw', msg.aoRaw.length, aoChannels);
         assertLength('AI voltage', msg.aiVoltage.length, aiChannels);
         assertLength('Parameter values', msg.param.length, paramChannels);
-        const row = formatTsvRow(msg.timestamp, msg.aiRaw, msg.aiPhysical, msg.aoRaw, msg.aiVoltage, msg.param, physicalPrecision, aiRawAsFloat);
+        const row = formatTsvRow(msg.timestamp, msg.aiRaw, msg.aiPhysical, msg.aoRaw, msg.aiVoltage, msg.param, physicalPrecision);
         writeBuffer.push(row);
         if (mirror) {
           mirrorBuffer.push(row);

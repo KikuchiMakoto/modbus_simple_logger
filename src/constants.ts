@@ -3,7 +3,6 @@ export const AO_CHANNELS = 8;
 export const PARAM_CHANNELS = 16;
 
 export const AI_START_REGISTER = 0;
-export const AI_FLOAT_START_REGISTER = 5000;
 export const AO_START_REGISTER = 0;
 
 // IndexedDB retention while NOT saving (session FIFO store, independent of the

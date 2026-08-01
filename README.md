@@ -24,7 +24,7 @@
 | 機能 | 説明 |
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境（Android など）は自前の WebUSB CDC-ACM 実装（[`src/modbus/webusbSerial.ts`](src/modbus/webusbSerial.ts)）でフォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（接続中は固定）と **Save Rate**（いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。選べる範囲は**トランスポート非依存**で、Web Serial / WebUSB（Android）とも Polling 25ms / 50ms / 100ms（既定 100ms）・Save 200ms〜30分（WebUSB が 200ms / 500ms に制限されていた時期があるが、原因だった polyfill のリークを修正して撤廃済み — 下記参照）。Save Rate の最小値は必ず最も遅い Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートは常に 100ms 固定。Normal（i16、既定）/ Extended（f32）の2精度モードを明示的に選択 |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（固定 100ms）と **Save Rate**（いつでも変更可、200ms〜30分）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。トランスポート非依存（Web Serial / WebUSB とも同じ 100ms、WebUSB が 200ms / 500ms に制限されていた時期があるが、原因だった polyfill のリークを修正して撤廃済み — 下記参照）。Save Rate の最小値は Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートも常に 100ms。リンク設定（slave id 1、38400bps 8N1、Normal(i16t) 精度、100ms ポーリング）は固定の1通りのみで、Connection Config はその確認用の読み取り専用表示 |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |
@@ -46,8 +46,7 @@
 
 ## スクリプト言語
 
-ScriptRunner が実行するのは **Python（Pyodide）** だけです。過去バージョンには BASIC / Lua も
-選べましたが撤去済みで、言語セレクタもありません。
+ScriptRunner が実行するのは **Python（Pyodide）** だけです。言語セレクタはありません。
 
 スクリプトは**タブ**で複数持てます。タブは `＋` で追加、`✕` で閉じ、名前はダブルクリックで
 変更できます（最大 24 文字）。既定名は `main` `main2` … で**拡張子は付きません**。
@@ -166,7 +165,7 @@ ERROR Link: NetworkError: Failed to execute 'transferIn' on 'USBDevice': A trans
 
 現在は polyfill をやめ、[`src/modbus/webusbSerial.ts`](src/modbus/webusbSerial.ts) の自前実装に置き換えてあります。`pull()` が開始した転送を必ず await するため、未完了の転送数は構造上 8 本（`BULK_IN_PIPELINE_DEPTH`）を超えません。深さ 8 なのは、1 本ずつ直列に待つと 1 バイト 1 転送のアダプタでは float32 1 フレームに約 104ms かかり 100ms 周期に収まらないためで、8 本並べるとホスト往復遅延が隠れて回線速度律速（約 18ms）になります。
 
-この結果 **WebUSB でも Web Serial と同じ Polling 25/50/100ms・Save 200ms〜 が選べます**。障害を追うときは System Log のしきい値を **DEBUG** にすると `link ok: … USB transfers` 行に転送回数が出ます。ここが五桁に伸び続ける場合は同種のリークを疑ってください。
+この結果、Polling Rate が固定 100ms になった現在も **WebUSB は Web Serial と同じ条件で安定して動きます**（トランスポート間の速度制限は無い）。障害を追うときは System Log のしきい値を **DEBUG** にすると `link ok: … USB transfers` 行に転送回数が出ます。ここが五桁に伸び続ける場合は同種のリークを疑ってください。
 </details>
 
 ---
