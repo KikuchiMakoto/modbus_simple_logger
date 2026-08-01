@@ -24,7 +24,7 @@
 | 機能 | 説明 |
 |------|------|
 | **Modbus RTU 通信** | Web Serial API（`navigator.serial`）で接続。非対応環境（Android など）は自前の WebUSB CDC-ACM 実装（[`src/modbus/webusbSerial.ts`](src/modbus/webusbSerial.ts)）でフォールバック |
-| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（接続中は固定）と **Save Rate**（いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。選べる範囲は**トランスポート非依存**で、Web Serial / WebUSB（Android）とも Polling 25ms / 50ms / 100ms（既定 100ms）・Save 200ms〜30分（WebUSB が 200ms / 500ms に制限されていた時期があるが、原因だった polyfill のリークを修正して撤廃済み — 下記参照）。Save Rate の最小値は必ず最も遅い Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートは常に 100ms 固定。Normal（i16）/ Extended（f32）の2精度モードと、接続時に一度だけデバイスへ問い合わせて選ぶ **Auto**（既定） |
+| **AI 16ch 計測** | HX711 ×8 + ADS1115 ×8 の定期ポーリング。**Polling Rate**（接続中は固定）と **Save Rate**（いつでも変更可）は独立 — 保存を遅くしてもフィードバック制御は速いまま回る。選べる範囲は**トランスポート非依存**で、Web Serial / WebUSB（Android）とも Polling 25ms / 50ms / 100ms（既定 100ms）・Save 200ms〜30分（WebUSB が 200ms / 500ms に制限されていた時期があるが、原因だった polyfill のリークを修正して撤廃済み — 下記参照）。Save Rate の最小値は必ず最も遅い Polling Rate 以上なので、書き出す行は常にポーリングの格子に乗る。チャートは常に 100ms 固定。Normal（i16、既定）/ Extended（f32）の2精度モードを明示的に選択 |
 | **AO 8ch 制御** | GP8403（Holding Register）への書き込み。ScriptRunner からの自動制御にも対応 |
 | **キャリブレーション** | チャネルごとに `a·x² + b·x + c` を編集・保存（localStorage）・JSON 入出力。ワンタッチ Tare（0点補正）付き |
 | **電圧表示モード** | HX711（mV/V, με）/ ADS1115（V, mV）を各チャネルで切り替え |

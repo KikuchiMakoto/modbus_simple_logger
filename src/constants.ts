@@ -124,27 +124,6 @@ export const CHANNEL_CARD_MIN_INTERVAL_MS = 100;
 // re-decimation still forces one remount, which is a genuine visual
 // discontinuity rather than a timer.
 
-// Auto precision probe (Connection Config → Precision → Auto). One request for
-// the first two float channels at AI_FLOAT_START_REGISTER, sent once per
-// connect: an answer means the device has the f32 map, silence means it does
-// not and the i16 map at AI_START_REGISTER is used instead.
-//
-// 100 ms is a deliberate order of magnitude more than the exchange costs. The
-// request and its reply are 21 characters, which is 4 ms of wire time at the
-// default 38400 baud and still only 44 ms at the slowest offered 4800 — so a
-// device that has the registers answers well inside the window at every setting
-// the app can be configured for.
-//
-// A device without those registers answers with a Modbus exception frame, which
-// is shorter than the reply the transfer is waiting for, so it too resolves as
-// a timeout. That is why the probe is repeated: the two "no f32 here" paths and
-// a single dropped frame are indistinguishable from the outside, and demoting a
-// float device to the i16 map on one lost frame would silently record a
-// different set of registers.
-export const PRECISION_PROBE_TIMEOUT_MS = 100;
-export const PRECISION_PROBE_ATTEMPTS = 3;
-export const PRECISION_PROBE_CHANNELS = 2;
-
 export const RETRY_DELAY_MS = 10;
 export const INPUT_READ_RETRY_WINDOW_MS = 60_000;
 // Floor on the AI-read failure budget, and the share of the polls in one window

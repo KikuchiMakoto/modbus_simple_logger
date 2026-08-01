@@ -119,14 +119,11 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - ループを回す条件は「**直前の転送中に**新しい変更が来たこと」だけにすること。失敗した書込みは値が「変更済み」のまま残るため、これを条件にすると死んだデバイスへ延々と再送する
 - `pollOnce` 末尾の `doAoWriteAsync()` は**取りこぼしの拾い直し**（リトライ制限に当たっていた変更）であって主経路ではない
 
-### 精度モードの自動判定（`App.tsx` の `probeExtendedPrecision`）
-- Precision の選択肢は **Auto（既定）/ Normal(i16t) / Extended(f32t)**。型を2つに分けてあり、`ModbusPrecisionSetting`（ユーザーの選択・`'auto'` を含む）と `ModbusPrecision`（実際に線上で使う地図・2値のみ）は**別物**。`'auto'` を下流（ポーリング・TSV 列整形・読み値表示）へ流してはならない
-- 判定は **接続時に1回だけ**。`AI_FLOAT_START_REGISTER`(5000) の先頭2ch を `PRECISION_PROBE_TIMEOUT_MS`(100ms) で読み、返れば Extended、返らなければ Normal。**実行中に再判定しないこと** — 相手のファームウェアの性質であり、記録中にレジスタ地図が変わる余地を作るだけ
-- **プローブは AO Holding Registers 同期の後に置く**。先に置くと「デバイスが全く喋っていない」と「float レジスタが無い」が同じ沈黙になり、断線を根拠にレジスタ地図を決めてしまう
-- **`PRECISION_PROBE_ATTEMPTS`(3回) 失敗して初めて Normal に落とす**。**間違うなら Normal 側へ**倒すこと — Auto 以前の既定がまさに Normal であり、逆に誤って Extended にすると i16 レジスタを float の半分として解釈し、**もっともらしい嘘の値を記録する**
-- **プローブの catch は広いまま保つこと**。float レジスタを持たないデバイスは Modbus 例外フレームを返す。v4.5 以降 `transfer()` はこれを認識し `ModbusExceptionError`（例外コード付き）として投げるので、以前のように「無応答」と区別できないわけではない（`frameScan.ts`）。それでもプローブ側は**投げられたものすべてを「float ブロック無し」として扱う**のが正しく、`probeExtendedPrecision` の catch を例外種別で分岐させてはならない — 例外・無応答・1フレーム落ちのどれであっても結論は同じ Normal であり、分岐を入れれば「Extended に倒れる経路」を新設することになる。副作用として、例外を返すデバイスでは 3×100ms の沈黙を待たず即座に Normal が決まる
-- 応答値は**有限であることまで要求する**。未実装レジスタが 0xFFFF 詰めで応答すると NaN にデコードされるが、フレームとしては妥当なので構造チェックだけでは通ってしまう
-- 決まったモードは**ヘッダーと接続ステータスに必ず出す**（`i16t` / `f32t`、Auto 時は `(auto)` 付き）。自動判定が外した場合に、ユーザーが気づける場所が無いという状態を作らないこと
+### 精度モード（`App.tsx` の `modbusPrecision`）
+- Precision の選択肢は **Normal(i16t) / Extended(f32t)** の2つのみ、既定は **Normal**。ユーザーが明示的に選んだ固定値であり、自動判定・プローブは存在しない（v5.8 で `probeExtendedPrecision`/Auto を撤去）
+- `ModbusPrecision` 型が唯一の型（`'normal' | 'extended'`）。「ユーザー設定」と「実際に線上で使う地図」を分ける必要が無いため、二重の型・二重の state（旧 `resolvedPrecision`）は持たないこと
+- ポーリングループは `modbusPrecisionRef`（`modbusPrecision` を鏡写しする ref）を読む。React state を直接読めないクロージャのためだけの ref であり、値の由来は常に `modbusPrecision` 一つ
+- 決まったモードは**ヘッダーと接続ステータスに必ず出す**（`i16t` / `f32t`）
 
 ### ポーリング（`App.tsx`）
 - **通信レートと記録レートは独立した2つの設定**（v4.1〜）。**この2つを再び1つのレートに戻さないこと**

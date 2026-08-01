@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ModbusPrecisionSetting, PollingRateOption, SerialSettings } from '../types';
+import { ModbusPrecision, PollingRateOption, SerialSettings } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
 type ModbusConfigPanelProps = {
@@ -9,8 +9,8 @@ type ModbusConfigPanelProps = {
   onSlaveIdChange: (value: number) => void;
   serialSettings: SerialSettings;
   onSerialSettingsChange: (settings: SerialSettings) => void;
-  modbusPrecision: ModbusPrecisionSetting;
-  onModbusPrecisionChange: (value: ModbusPrecisionSetting) => void;
+  modbusPrecision: ModbusPrecision;
+  onModbusPrecisionChange: (value: ModbusPrecision) => void;
   pollingRate: PollingRateOption;
   onPollingRateChange: (value: PollingRateOption) => void;
   pollingOptions: PollingRateOption[];
@@ -18,14 +18,9 @@ type ModbusConfigPanelProps = {
   dataBitsOptions: SerialSettings['dataBits'][];
   stopBitsOptions: SerialSettings['stopBits'][];
   parityOptions: SerialSettings['parity'][];
-  precisionOptions: { label: string; value: ModbusPrecisionSetting }[];
+  precisionOptions: { label: string; value: ModbusPrecision }[];
   /** "WebSerial" or "WebUSB" — decided by the environment, not by the user. */
   transportLabel: string;
-  /**
-   * The register map actually in use ("i16" / "f32t"), which under the "auto"
-   * setting is only known after the connect-time probe has answered.
-   */
-  resolvedPrecisionLabel: string;
   connected: boolean;
 };
 
@@ -47,7 +42,6 @@ export function ModbusConfigPanel({
   parityOptions,
   precisionOptions,
   transportLabel,
-  resolvedPrecisionLabel,
   connected,
 }: ModbusConfigPanelProps) {
   // Slave ID is edited as free text and only committed on blur/Enter.
@@ -193,21 +187,10 @@ export function ModbusConfigPanel({
         </div>
 
         <div>
-          <label className="flex items-baseline justify-between text-xs text-slate-600 dark:text-slate-400">
-            <span>Precision</span>
-            {/* Only under "auto", and only once it has an answer: the register
-                map is settled by probing the device at connect time, so before
-                that there is nothing to report, and under an explicit setting
-                the select already says it. */}
-            {modbusPrecision === 'auto' && connected && (
-              <span translate="no" className="font-semibold text-slate-700 dark:text-slate-200">
-                in use: {resolvedPrecisionLabel}
-              </span>
-            )}
-          </label>
+          <label className="block text-xs text-slate-600 dark:text-slate-400">Precision</label>
           <select
             value={modbusPrecision}
-            onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecisionSetting)}
+            onChange={(e) => onModbusPrecisionChange(e.target.value as ModbusPrecision)}
             className="w-full rounded border border-slate-300 bg-white px-2 py-0.5 text-sm text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             disabled={connected}
           >
