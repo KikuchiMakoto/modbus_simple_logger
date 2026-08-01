@@ -1,5 +1,5 @@
-// What the app reported: connection events, save and recording failures,
-// storage trouble, and whatever a script printed — one stream, one clock.
+// What the app reported: connection events, save failures, storage trouble,
+// and whatever a script printed — one stream, one clock.
 //
 // This was the Script Log, five lines tall, inside the Script Runner. Five lines
 // is enough to notice an error and not enough to read one — a traceback scrolled

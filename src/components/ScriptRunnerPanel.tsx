@@ -232,8 +232,8 @@ export function ScriptRunnerPanel({
             box about five lines tall. It is now the System Log window (Menu →
             System Log), which can be opened beside this one and made as tall as
             a traceback needs. What a script records is unchanged; it is now
-            interleaved with the app's own events (link, save, recording) on one
-            clock, at INFO, and the footer still carries the newest line. */}
+            interleaved with the app's own events (link, save) on one clock,
+            at INFO, and the footer still carries the newest line. */}
         {/* Collapsed by default — the editor is what this window is for, and
             the list is long. It used to be a <details>, where the only hint
             that the section opened at all was the tiny native triangle; the

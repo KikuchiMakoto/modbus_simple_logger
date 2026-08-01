@@ -218,7 +218,7 @@ export function SystemLogBody({
       {visible.length === 0 ? (
         <p className="px-2 py-1 text-slate-400 dark:text-slate-500">
           {entries.length === 0
-            ? 'Nothing logged yet. Connection events, save and recording failures, and whatever a script prints all arrive here.'
+            ? 'Nothing logged yet. Connection events, save failures, and whatever a script prints all arrive here.'
             : // Distinguishing the two silences matters: a log that is empty
               // because the threshold is hiding everything looks exactly like a
               // broken log unless it says so.

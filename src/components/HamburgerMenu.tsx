@@ -29,8 +29,8 @@ const MENU_ITEMS = [
   // Directly under the runner, because it is still the runner's other half: the
   // window where a script is written, and the window where what it said is
   // read. It was a pane inside that window until the editor needed the height,
-  // and it carries the app's own events — link, save, recording, storage — as
-  // well now, which is why it is no longer named after scripts.
+  // and it carries the app's own events — link, save, storage — as well now,
+  // which is why it is no longer named after scripts.
   { key: 'systemLog', label: 'System Log', icon: '🧾', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
