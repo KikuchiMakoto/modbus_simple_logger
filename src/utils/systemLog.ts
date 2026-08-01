@@ -45,6 +45,16 @@ export const SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = [
   'FATAL',
 ];
 
+/**
+ * TRACE/DEBUG are wire- and internals-level detail meant for diagnosing this
+ * app itself, not for a measurement run — they are only selectable in a dev
+ * build (`bun run dev`, `import.meta.env.DEV`). A production/launcher build
+ * only offers INFO and above.
+ */
+export const SELECTABLE_SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = import.meta.env.DEV
+  ? SYSTEM_LOG_LEVELS
+  : SYSTEM_LOG_LEVELS.filter((level) => level !== 'TRACE' && level !== 'DEBUG');
+
 const LEVEL_RANK: Record<SystemLogLevel, number> = {
   TRACE: 0,
   DEBUG: 1,
@@ -175,7 +185,7 @@ export const onSystemLogChange = (listener: () => void): (() => void) => {
 
 const storedLevel = ((): SystemLogLevel => {
   const raw = readJsonStorage<string>(LEVEL_STORAGE_KEY);
-  return SYSTEM_LOG_LEVELS.includes(raw as SystemLogLevel) ? (raw as SystemLogLevel) : 'INFO';
+  return SELECTABLE_SYSTEM_LOG_LEVELS.includes(raw as SystemLogLevel) ? (raw as SystemLogLevel) : 'INFO';
 })();
 
 let threshold: SystemLogLevel = storedLevel;
@@ -189,7 +199,7 @@ export const systemLogLevel = (): SystemLogLevel => threshold;
  * quiet while the window beside it showed the errors.
  */
 export const setSystemLogLevel = (level: SystemLogLevel): void => {
-  if (level === threshold) return;
+  if (!SELECTABLE_SYSTEM_LOG_LEVELS.includes(level) || level === threshold) return;
   threshold = level;
   // A "how this screen reads" preference, like theme and UI scale.
   writeLocalPreference(LEVEL_STORAGE_KEY, level);

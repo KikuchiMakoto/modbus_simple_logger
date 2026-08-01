@@ -29,7 +29,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useSystemLogEntries, useSystemLogLevel, useVisibleSystemLog } from '../hooks/useSystemLog';
 import {
-  SYSTEM_LOG_LEVELS,
+  SELECTABLE_SYSTEM_LOG_LEVELS,
   setSystemLogLevel,
   type SystemLogEntry,
   type SystemLogLevel,
@@ -259,7 +259,7 @@ export function SystemLogLevelSelect({ className = '' }: { className?: string })
       aria-label="Minimum log level"
       title="Show this level and above. INFO is the run's story; DEBUG and TRACE add the detail behind a failure."
     >
-      {SYSTEM_LOG_LEVELS.map((entry) => (
+      {SELECTABLE_SYSTEM_LOG_LEVELS.map((entry) => (
         <option key={entry} value={entry}>
           {entry}
         </option>
