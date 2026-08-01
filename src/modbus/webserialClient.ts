@@ -175,8 +175,31 @@ export class WebSerialModbusClient {
    * blocked main thread from a silent device — see TIMER_STALL_THRESHOLD_MS.
    */
   private lastReadOvershootMs = 0;
-  /** True once a read reported `done` or threw: the stream can never recover. */
+  /** True once a read reported `done` or threw: that ReadableStream is finished. */
   private streamDead = false;
+  /** True once a write rejected: the sink errored its WritableStream. */
+  private writerDead = false;
+  /**
+   * The streams `reader` and `writer` hold their locks on.
+   *
+   * Kept so recovery can tell a *replacement* stream from the dead one it is
+   * already holding — see reacquireStreams(). Nulled together with the handle
+   * they belong to, so a half-finished reopen leaves no stale reference behind.
+   */
+  private readableStream: ReadableStream<Uint8Array> | null = null;
+  private writableStream: WritableStream<Uint8Array> | null = null;
+  /**
+   * Bytes read since the last recovery, logged when the next one runs.
+   *
+   * Diagnostic only, and specifically for the Android/WebUSB failure this
+   * recovery path exists for: `transferIn` there dies after a fixed *volume* of
+   * received data, not after a fixed time, which is only visible if the volume
+   * is counted. A field report that says "~16 KB again" identifies it in one
+   * line; wall-clock timestamps alone do not, because the period changes with
+   * the response size (44 s of 37-byte int16 reads, 24 s of 69-byte float32
+   * ones — the same 16 KB).
+   */
+  private rxBytesSinceRecovery = 0;
   /**
    * True when the last transfer ended without consuming a whole frame, so the
    * device may still owe a response. Armed in transfer()'s catch and spent by
@@ -385,11 +408,15 @@ export class WebSerialModbusClient {
       throw new Error('Port streams are not available');
     }
 
-    this.reader = this.port.readable.getReader();
-    this.writer = this.port.writable.getWriter();
+    this.readableStream = this.port.readable;
+    this.writableStream = this.port.writable;
+    this.reader = this.readableStream.getReader();
+    this.writer = this.writableStream.getWriter();
     this.pendingRead = null;
     this.streamDead = false;
+    this.writerDead = false;
     this.rxSuspect = false;
+    this.rxBytesSinceRecovery = 0;
     this.lastReopenAttemptAt = 0;
     console.info(`${this.debugPrefix} streams ready (reader/writer locked)`);
 
@@ -429,6 +456,8 @@ export class WebSerialModbusClient {
     const port = this.port;
     this.reader = null;
     this.writer = null;
+    this.readableStream = null;
+    this.writableStream = null;
     this.port = null;
     this.pendingRead = null;
 
@@ -461,6 +490,7 @@ export class WebSerialModbusClient {
     }
 
     this.streamDead = false;
+    this.writerDead = false;
     this.rxSuspect = false;
     this.disconnecting = false;
     console.info(`${this.debugPrefix} disconnect() complete`);
@@ -511,19 +541,115 @@ export class WebSerialModbusClient {
    */
   private async ensureReadyOrRecover(): Promise<void> {
     if (this.port && !this.disconnecting && (!this.reader || !this.writer)) {
-      const now = Date.now();
-      if (now - this.lastReopenAttemptAt >= REOPEN_THROTTLE_MS) {
-        this.lastReopenAttemptAt = now;
-        console.warn(`${this.debugPrefix} streams missing; reopening port`);
-        try {
-          await this.reopenPort();
-          console.info(`${this.debugPrefix} port reopened before transfer`);
-        } catch (err) {
-          console.error(`${this.debugPrefix} port reopen failed`, err);
+      // Free, and it usually works: re-locking the port's current streams needs
+      // no USB traffic at all. Only when the port has nothing new to hand back
+      // is the close/open round trip below worth its cost.
+      if (this.reacquireStreams()) {
+        console.info(`${this.debugPrefix} streams re-acquired before transfer`);
+      } else {
+        const now = Date.now();
+        if (now - this.lastReopenAttemptAt >= REOPEN_THROTTLE_MS) {
+          this.lastReopenAttemptAt = now;
+          console.warn(`${this.debugPrefix} streams missing; reopening port`);
+          try {
+            await this.reopenPort();
+            console.info(`${this.debugPrefix} port reopened before transfer`);
+          } catch (err) {
+            console.error(`${this.debugPrefix} port reopen failed`, err);
+          }
         }
       }
     }
     this.ensureReady();
+  }
+
+  /**
+   * Re-lock the port's current streams, without touching the USB device.
+   *
+   * The cheap half of recovery, and the one that fits what actually breaks on
+   * Android. There, `transferIn` fails with `NetworkError: A transfer error has
+   * occurred` after a fixed volume of received data — measured at roughly 16 KB,
+   * which is every ~44 s of 16-channel int16 polling at 10 Hz and every ~24 s of
+   * the same poll in extended precision, the same byte count either way. The
+   * device is fine; one bulk transfer failed.
+   *
+   * A failed transfer only destroys the *stream*: the polyfill's underlying
+   * source calls `controller.error()` and then its `onError_` hook, which drops
+   * the port's cached `readable_`, so the very next read of `port.readable`
+   * builds a fresh ReadableStream over the same still-claimed endpoint. Native
+   * Web Serial behaves the same way for a non-fatal read error once the dead
+   * reader's lock is released. Rebuilding from there costs one poll.
+   *
+   * reopenPort() was previously the only route back, and on Android it is the
+   * expensive, failure-prone one: `close()` drops DTR, releases the interfaces
+   * and closes the device, and `open()` has to re-claim and re-configure it —
+   * which the platform frequently refuses right after a transfer error. Each
+   * refusal left the client with no streams, so every poll in the next
+   * REOPEN_THROTTLE_MS window failed with `Device not connected` (37 and 21 of
+   * them per incident in the report this came from) and the run burned 4-12 s
+   * of its AI-read failure budget on a fault that cost one frame.
+   *
+   * @returns True when both handles are live again.
+   */
+  private reacquireStreams(): boolean {
+    const port = this.port;
+    if (!port || this.disconnecting) return false;
+
+    // Each side is rebuilt only when it is dead or missing. A read error leaves
+    // `port.writable` untouched and working, and cycling that lock for nothing
+    // would risk a healthy writer to fix a broken reader.
+    if (this.streamDead || !this.reader) {
+      // What we must not be handed back: the corpse we are already holding.
+      // Only meaningful when the stream died — a reader that is merely absent
+      // (a reopen that failed halfway) has no stream to be handed back twice.
+      const stale = this.streamDead ? this.readableStream : null;
+      if (this.reader) {
+        // Release first: both implementations only publish a replacement once
+        // the dead stream is unlocked, so reading `port.readable` while still
+        // holding the reader would return the corpse and fail the check below.
+        try { this.reader.releaseLock(); } catch (err) { console.debug(`${this.debugPrefix} reacquireStreams() reader releaseLock failed`, err); }
+        this.reader = null;
+        this.readableStream = null;
+      }
+      this.pendingRead = null;
+
+      const readable = port.readable;
+      if (!readable || readable === stale) return false;
+      try {
+        this.reader = readable.getReader();
+      } catch (err) {
+        console.warn(`${this.debugPrefix} reacquireStreams() failed to lock readable`, err);
+        return false;
+      }
+      this.readableStream = readable;
+      this.streamDead = false;
+    }
+
+    if (this.writerDead || !this.writer) {
+      const stale = this.writerDead ? this.writableStream : null;
+      if (this.writer) {
+        try { this.writer.releaseLock(); } catch (err) { console.debug(`${this.debugPrefix} reacquireStreams() writer releaseLock failed`, err); }
+        this.writer = null;
+        this.writableStream = null;
+      }
+
+      const writable = port.writable;
+      if (!writable || writable === stale) return false;
+      try {
+        this.writer = writable.getWriter();
+      } catch (err) {
+        console.warn(`${this.debugPrefix} reacquireStreams() failed to lock writable`, err);
+        return false;
+      }
+      this.writableStream = writable;
+      this.writerDead = false;
+    }
+
+    // `rxSuspect` and `lastTransferTime` are deliberately left alone, unlike in
+    // reopenPort(). The device was never reset here: it may still be shifting
+    // out the response the dead stream dropped, and it is still owed its silent
+    // interval. The pre-write fence in transfer() sweeps that tail up.
+    return this.reader !== null && this.writer !== null;
   }
 
   private buildFrame(functionCode: number, payload: number[]): Uint8Array {
@@ -555,6 +681,10 @@ export class WebSerialModbusClient {
    * polling at 0 Hz with the UI still showing a live connection. Parking the
    * read also keeps the bytes: they are handed to whoever reads next rather
    * than thrown away with the reader.
+   *
+   * A stream the source *errored* is the recoverable case and the opposite of
+   * this one: that path does run `onError_`, which drops the cached stream so a
+   * replacement can be locked — see reacquireStreams().
    *
    * @param timeoutMs - How long to wait for bytes before giving up.
    * @returns The chunk, or null when the deadline expired first.
@@ -604,6 +734,7 @@ export class WebSerialModbusClient {
       this.streamDead = true;
       throw new Error('Stream closed unexpectedly');
     }
+    this.rxBytesSinceRecovery += value?.length ?? 0;
     return value ?? new Uint8Array(0);
   }
 
@@ -652,10 +783,15 @@ export class WebSerialModbusClient {
   /**
    * Close and re-open the port, rebuilding both stream locks.
    *
-   * The only way back from a dead ReadableStream: `SerialPort.readable` keeps
-   * returning the closed stream until the port is re-opened (the WebUSB
-   * polyfill rebuilds it in `close()`, native Web Serial in `open()`). No user
-   * gesture is needed — the port permission is already granted.
+   * The fallback half of recovery, for when the port has no replacement stream
+   * to hand out — a stream closed rather than errored, or a device that needs
+   * re-claiming. `SerialPort.readable` keeps returning the closed stream until
+   * the port is re-opened (the WebUSB polyfill rebuilds it in `close()`, native
+   * Web Serial in `open()`). No user gesture is needed — the port permission is
+   * already granted.
+   *
+   * Try reacquireStreams() first: this path drops DTR and re-claims the USB
+   * interfaces, which is both slow and, on Android, often refused outright.
    *
    * @throws If the port cannot be re-opened.
    */
@@ -677,6 +813,8 @@ export class WebSerialModbusClient {
     try { this.writer?.releaseLock(); } catch (err) { console.debug(`${this.debugPrefix} reopenPort() writer releaseLock failed`, err); }
     this.reader = null;
     this.writer = null;
+    this.readableStream = null;
+    this.writableStream = null;
     this.pendingRead = null;
 
     try { await port.close(); } catch (err) { console.warn(`${this.debugPrefix} reopenPort() close failed`, err); }
@@ -690,9 +828,12 @@ export class WebSerialModbusClient {
       throw new Error('Port streams are not available after reopen');
     }
 
-    this.reader = port.readable.getReader();
-    this.writer = port.writable.getWriter();
+    this.readableStream = port.readable;
+    this.writableStream = port.writable;
+    this.reader = this.readableStream.getReader();
+    this.writer = this.writableStream.getWriter();
     this.streamDead = false;
+    this.writerDead = false;
     // A reopened port has fresh streams: whatever the device owed the previous
     // ones is unreachable now, so there is nothing to fence against.
     this.rxSuspect = false;
@@ -702,28 +843,44 @@ export class WebSerialModbusClient {
   /**
    * Best-effort recovery run after every failed transfer.
    *
-   * A live stream only needs its stale bytes drained. A dead one needs the
-   * port re-opened, throttled to REOPEN_THROTTLE_MS so a permanently
-   * unplugged device does not spin on reopen attempts every polling cycle.
+   * A live stream only needs its stale bytes drained. A dead one is rebuilt
+   * from the port's own streams where possible (see reacquireStreams), and only
+   * when the port has no replacement to offer is the device closed and
+   * re-opened — throttled to REOPEN_THROTTLE_MS so a permanently unplugged
+   * device does not spin on reopen attempts every polling cycle.
    */
   private async recoverAfterTransferError(): Promise<void> {
     // Nothing to recover into: the handles are already detached and the port is
     // being closed. Flushing or reopening here would fight the teardown.
     if (this.disconnecting) return;
-    if (!this.streamDead) {
+    if (!this.streamDead && !this.writerDead) {
       try {
         await this.flushReceiveBuffer();
       } catch (flushErr) {
         console.warn(`${this.debugPrefix} flush after error failed`, flushErr);
       }
+      // The flush reads, so it can be the thing that discovers a dead stream.
+      // Re-checked rather than returned on, or that discovery would wait a poll.
+      if (!this.streamDead && !this.writerDead) return;
     }
-    if (!this.streamDead) return;
+
+    console.warn(`${this.debugPrefix} serial stream is dead`, {
+      streamDead: this.streamDead,
+      writerDead: this.writerDead,
+      rxBytesSinceRecovery: this.rxBytesSinceRecovery,
+    });
+    this.rxBytesSinceRecovery = 0;
+
+    if (this.reacquireStreams()) {
+      console.info(`${this.debugPrefix} streams re-acquired without reopening the port`);
+      return;
+    }
 
     const now = Date.now();
     if (now - this.lastReopenAttemptAt < REOPEN_THROTTLE_MS) return;
     this.lastReopenAttemptAt = now;
 
-    console.warn(`${this.debugPrefix} serial stream is dead; reopening port`);
+    console.warn(`${this.debugPrefix} no replacement streams available; reopening port`);
     try {
       await this.reopenPort();
       console.info(`${this.debugPrefix} port reopened after dead stream`);
@@ -793,7 +950,17 @@ export class WebSerialModbusClient {
 
       // Write frame
       console.debug(`${this.debugPrefix} transfer() write start`);
-      await writer.write(frame);
+      try {
+        await writer.write(frame);
+      } catch (writeErr) {
+        // A rejected write means the sink errored its WritableStream, so this
+        // writer is finished — every later write() would reject the same way.
+        // Left unflagged, the TX side had no recovery path at all: only the
+        // read side ever set a dead flag, so a failed transferOut would fail
+        // every remaining poll of the run.
+        this.writerDead = true;
+        throw writeErr;
+      }
       console.debug(`${this.debugPrefix} transfer() write complete`);
 
       // The read deadline starts here, not at mutex acquisition.
