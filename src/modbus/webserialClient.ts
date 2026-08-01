@@ -65,33 +65,49 @@ type ReadOutcome =
 
 /**
  * Backoff between automatic port-reopen attempts, in ms, one per consecutive
- * failure. The last entry repeats once the list runs out.
+ * failure. The last entry repeats once the list runs out, and each wait is
+ * measured from the *end* of the previous attempt.
  *
- * Was a flat 2000. A field trace showed why that is the wrong shape: the first
- * reopen after a dead stream fails on `claimInterface` ("Unable to claim
- * interface") because Android has not finished releasing the interface the
- * close() just gave up, and a flat throttle then charged a full two seconds for
- * a condition that clears in a few hundred milliseconds. Three attempts at two
- * seconds each is where that run's four-second hole came from.
+ * Two field traces show what this is retrying against. After a transfer error
+ * `claimInterface` is refused — "Unable to claim interface" — and stays refused
+ * for a while no matter how often it is asked:
  *
- * Still bounded at two seconds, because the other thing this throttle protects
- * against has not changed: a device that has genuinely been unplugged must not
- * be retried on every poll for the rest of the session.
+ *     attempt at +0.00s FAIL   +1.07s FAIL   +3.10s OK      (second trace)
+ *     attempt at +0.00s FAIL   +2.04s FAIL   +4.04s OK      (first trace)
+ *
+ * measured from the stream error, not from the close() before each attempt. So
+ * the gate is a recovery the USB stack is doing on its own after the fault, on
+ * the order of two to three seconds, and nothing this code does hurries it.
+ *
+ * So the ladder holds a short cadence *through* that window rather than backing
+ * off inside it. An earlier shape — 500, 500, 500, 1000, 2000 — reached two
+ * seconds while the gate was still shut, which put the next attempt at +4.4 s
+ * against a gate that had lifted at +2.5 s: 1.9 s of hole bought nothing. Six
+ * entries at 500 ms cover the whole observed range, and only past it does the
+ * ladder climb, because by then the explanation is no longer a gate but a
+ * device that has genuinely been unplugged and must not be retried on every
+ * poll for the rest of the session.
+ *
+ * Indexed by the number of consecutive failures, so entry 0 is the gap after a
+ * *successful* reopen and entry 1 onwards is the ladder proper. An attempt of
+ * its own costs about 350 ms on the hardware in the trace, so these are gaps
+ * between attempts, not the attempt period.
  */
-const REOPEN_BACKOFF_MS = [500, 1000, 2000];
+const REOPEN_BACKOFF_MS = [500, 500, 500, 500, 500, 500, 1000, 2000];
 
 /**
  * Pause between closing and re-opening the port during recovery.
  *
- * `claimInterface` is refused if it runs before Android has finished tearing
- * down the previous claim, and the polyfill's open() claims immediately. The
- * two calls are back to back with nothing between them, so the wait has to go
- * here, in the only place this code controls.
+ * Kept small. It was introduced on the theory that the refused `claimInterface`
+ * was racing the close() immediately before it; the trace above disproved that
+ * — the gate is timed from the fault, not from the close — so this is no longer
+ * load-bearing and only costs recovery time. Left non-zero because close() and
+ * open() back to back with no yield at all is worth avoiding regardless, and
+ * removed entirely from the planned reopen, which has no fault to recover from.
  *
- * Polyfill only: native Web Serial claims nothing and has no such race, so
- * desktop recovery keeps its current speed.
+ * Polyfill only: native Web Serial claims nothing and has no such race.
  */
-const REOPEN_SETTLE_MS = 300;
+const REOPEN_SETTLE_MS = 50;
 
 /**
  * Cap on each individual teardown step in disconnect().
@@ -320,9 +336,23 @@ export class WebSerialModbusClient {
    * the stale-RX flush before the next write.
    */
   private rxSuspect = false;
-  private lastReopenAttemptAt = 0;
   /** Consecutive failed reopen attempts, indexing REOPEN_BACKOFF_MS. */
   private reopenFailures = 0;
+  /**
+   * When the last reopen attempt *finished*.
+   *
+   * The backoff is measured from here, not from when the attempt started. A
+   * trace caught the difference: a 1000 ms backoff following a 650 ms attempt
+   * let the next one fire 400 ms later, so the ladder was being eaten by the
+   * attempts it was meant to space out.
+   */
+  private lastReopenFinishedAt = 0;
+  /**
+   * When the stream last died. Reported with each reopen attempt, because the
+   * claim gate is timed from the fault — so how late an attempt is relative to
+   * *this*, not to the previous attempt, is what predicts whether it works.
+   */
+  private lastStreamDeathAt = 0;
   /** True while a throttle window is being waited out, so it is said once. */
   private reopenThrottleReported = false;
   private slaveId: number;
@@ -612,7 +642,6 @@ export class WebSerialModbusClient {
     this.rxSuspect = false;
     this.lastReadParkedForMs = 0;
     this.lastFailureAt = 0;
-    this.lastReopenAttemptAt = 0;
     this.reopenFailures = 0;
     this.reopenThrottleReported = false;
     this.resetEpoch();
@@ -739,33 +768,69 @@ export class WebSerialModbusClient {
    */
   private async ensureReadyOrRecover(): Promise<void> {
     if (this.port && !this.disconnecting && (!this.reader || !this.writer)) {
-      const now = Date.now();
-      // Same backoff ladder as recoverAfterTransferError(): this is the same
-      // reopen, reached from the other side, and two independent throttles over
-      // one operation would let each reset the other's window.
-      const backoffMs = REOPEN_BACKOFF_MS[
-        Math.min(this.reopenFailures, REOPEN_BACKOFF_MS.length - 1)
-      ];
-      if (now - this.lastReopenAttemptAt >= backoffMs) {
-        this.lastReopenAttemptAt = now;
-        this.reopenThrottleReported = false;
-        console.warn(`${this.debugPrefix} streams missing; reopening port`);
-        this.log('DEBUG', () => 'streams missing; reopening the port');
-        try {
-          await this.reopenPort();
-          console.info(`${this.debugPrefix} port reopened before transfer`);
-          this.reopenFailures = 0;
-          this.log('DEBUG', () => `port reopened in ${Date.now() - now}ms`);
-        } catch (err) {
-          console.error(`${this.debugPrefix} port reopen failed`, err);
-          this.reopenFailures += 1;
-          this.log('DEBUG', () =>
-            `port reopen FAILED after ${Date.now() - now}ms: ` +
-            `${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+      await this.attemptReopen('streams missing');
     }
     this.ensureReady();
+  }
+
+  /**
+   * One backoff-gated reopen attempt.
+   *
+   * Shared by both callers — the recovery after a failed transfer and the
+   * readiness check before the next one. They are the same operation reached
+   * from two directions, and each used to keep its own copy of the throttle, so
+   * an attempt made by one reset the window the other was waiting out.
+   *
+   * @param reason - What prompted the attempt, for the log.
+   * @returns True if the port is open with fresh streams.
+   */
+  private async attemptReopen(reason: string): Promise<boolean> {
+    const now = Date.now();
+    const backoffMs = REOPEN_BACKOFF_MS[
+      Math.min(this.reopenFailures, REOPEN_BACKOFF_MS.length - 1)
+    ];
+    if (now - this.lastReopenFinishedAt < backoffMs) {
+      // Once per window, not once per poll. Said every poll — with a countdown
+      // that changed each time, so it could not collapse either — this line
+      // interleaved with the caller's own error lines and stopped *those* from
+      // collapsing too, turning one incident into eighty rows.
+      if (!this.reopenThrottleReported) {
+        this.reopenThrottleReported = true;
+        this.log('DEBUG', () => `waiting ${backoffMs}ms before the next reopen attempt`);
+      }
+      console.debug(`${this.debugPrefix} reopen throttled`, {
+        msToGo: backoffMs - (now - this.lastReopenFinishedAt),
+        reopenFailures: this.reopenFailures,
+      });
+      return false;
+    }
+    this.reopenThrottleReported = false;
+
+    // Reported against the fault, not against the previous attempt, because
+    // that is what the claim gate is timed from — see REOPEN_BACKOFF_MS. This
+    // is the number that says whether the gate has lifted yet.
+    const sinceFault = this.lastStreamDeathAt > 0
+      ? `, +${((now - this.lastStreamDeathAt) / 1000).toFixed(1)}s since the fault`
+      : '';
+    console.warn(`${this.debugPrefix} reopening port`, { reason });
+    this.log('DEBUG', () => `reopening the port (${reason})${sinceFault}`);
+
+    try {
+      await this.reopenPort();
+      this.lastReopenFinishedAt = Date.now();
+      this.reopenFailures = 0;
+      console.info(`${this.debugPrefix} port reopened`);
+      this.log('DEBUG', () => `port reopened in ${this.lastReopenFinishedAt - now}ms${sinceFault}`);
+      return true;
+    } catch (err) {
+      this.lastReopenFinishedAt = Date.now();
+      this.reopenFailures += 1;
+      console.error(`${this.debugPrefix} port reopen failed`, err);
+      this.log('DEBUG', () =>
+        `port reopen FAILED after ${this.lastReopenFinishedAt - now}ms${sinceFault}: ` +
+        `${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
   }
 
   private buildFrame(functionCode: number, payload: number[]): Uint8Array {
@@ -1007,42 +1072,7 @@ export class WebSerialModbusClient {
     }
     if (!this.streamDead) return;
 
-    const now = Date.now();
-    const backoffMs = REOPEN_BACKOFF_MS[
-      Math.min(this.reopenFailures, REOPEN_BACKOFF_MS.length - 1)
-    ];
-    if (now - this.lastReopenAttemptAt < backoffMs) {
-      // Once per window, not once per poll. Said every poll — with a countdown
-      // that changed each time, so it could not collapse either — this line
-      // interleaved with the caller's own error lines and stopped *those* from
-      // collapsing too, turning one incident into eighty rows.
-      if (!this.reopenThrottleReported) {
-        this.reopenThrottleReported = true;
-        this.log('DEBUG', () => `waiting ${backoffMs}ms before the next reopen attempt`);
-      }
-      console.debug(`${this.debugPrefix} reopen throttled`, {
-        msToGo: backoffMs - (now - this.lastReopenAttemptAt),
-        reopenFailures: this.reopenFailures,
-      });
-      return;
-    }
-    this.lastReopenAttemptAt = now;
-    this.reopenThrottleReported = false;
-
-    console.warn(`${this.debugPrefix} serial stream is dead; reopening port`);
-    this.log('DEBUG', () => 'reopening the port after a dead stream');
-    try {
-      await this.reopenPort();
-      console.info(`${this.debugPrefix} port reopened after dead stream`);
-      this.reopenFailures = 0;
-      this.log('DEBUG', () => `port reopened in ${Date.now() - now}ms`);
-    } catch (reopenErr) {
-      console.error(`${this.debugPrefix} port reopen failed`, reopenErr);
-      this.reopenFailures += 1;
-      this.log('DEBUG', () =>
-        `port reopen FAILED after ${Date.now() - now}ms: ` +
-        `${reopenErr instanceof Error ? reopenErr.message : String(reopenErr)}`);
-    }
+    await this.attemptReopen('dead stream');
   }
 
   private async transfer(frame: Uint8Array, expectedLength: number, timeout = 1000): Promise<DataView> {
@@ -1321,6 +1351,8 @@ export class WebSerialModbusClient {
           `failing read was issued ${issuedBeforeWrite ? 'BEFORE' : 'after'} the request, ` +
           `${Date.now() - this.lastSettledReadIssuedAt}ms ago`);
         this.resetEpoch();
+        // The clock the claim gate runs on — see attemptReopen().
+        this.lastStreamDeathAt = Date.now();
       }
 
       // No whole frame was consumed, so the device may still owe a response that

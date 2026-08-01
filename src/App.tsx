@@ -176,12 +176,14 @@ const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 const AO_FULL_SCALE_MV = 10000;
 
 /**
- * How fast the Modbus loop runs. Deliberately short: this is the rate a
- * feedback script's inputs are refreshed at, and there is no reason to ever
- * want it slower — a run that only needs a sample a minute on disk still wants
- * a control loop that sees fresh data. How much of it is kept is SAVE_RATE_OPTIONS.
+ * How fast the Modbus loop runs, on a transport that can keep up.
+ *
+ * Deliberately short: this is the rate a feedback script's inputs are refreshed
+ * at, and on Web Serial there is no reason to want it slower — a run that only
+ * needs a sample a minute on disk still wants a control loop that sees fresh
+ * data. How much of it is kept is SAVE_RATE_OPTIONS.
  */
-const POLLING_OPTIONS: PollingRateOption[] = [
+const POLLING_OPTIONS_WEBSERIAL: PollingRateOption[] = [
   // 25 ms, not 20: 20 ms was tried on the bench and did not hold rate, 25 ms
   // does. It is still the setting nearest the edge — the read timeout has a
   // 100 ms floor it cannot honour, so what keeps it working is the device
@@ -190,7 +192,39 @@ const POLLING_OPTIONS: PollingRateOption[] = [
   { label: '50 ms', valueMs: 50 },
   { label: '100 ms', valueMs: 100 },
 ];
-const DEFAULT_POLLING_RATE_MS = 100;
+
+/**
+ * The same list for WebUSB, where the transport is the limit rather than the
+ * device.
+ *
+ * On Android there is no OS serial driver in the path, so the CDC adapter's
+ * packetisation reaches this code raw: it delivers one byte per USB transfer,
+ * measured, which makes a 16-channel float32 response cost 69 `transferIn`
+ * round trips instead of one or two. Chrome's Android USB stack then fails the
+ * stream at about 16,200 transfers — 16,206 and 16,194 in two traces — and
+ * recovery costs a claim gate of some three seconds during which no sample is
+ * taken.
+ *
+ * That limit is a *rate* budget, so the poll interval buys uptime directly.
+ * Against the observed 16,200 transfers, per failure:
+ *
+ *              float32 (69/frame)   int16 (37/frame)
+ *     100 ms          24 s               44 s
+ *     200 ms          47 s               88 s
+ *     500 ms         117 s              219 s
+ *
+ * 100 ms and faster are therefore not offered here at all. They do not fail
+ * gracefully — they fail every 24 seconds, and each failure eats a multi-second
+ * hole out of the middle of a recording.
+ */
+const POLLING_OPTIONS_WEBUSB: PollingRateOption[] = [
+  { label: '200 ms', valueMs: 200 },
+  { label: '500 ms', valueMs: 500 },
+];
+
+const POLLING_OPTIONS: PollingRateOption[] =
+  shouldUsePolyfill ? POLLING_OPTIONS_WEBUSB : POLLING_OPTIONS_WEBSERIAL;
+const DEFAULT_POLLING_RATE_MS = shouldUsePolyfill ? 200 : 100;
 
 /**
  * How often a polled sample is written to the TSV file.
@@ -205,11 +239,15 @@ const DEFAULT_POLLING_RATE_MS = 100;
  * the written interval lands on the poll grid exactly — 200 ms is every 2nd
  * poll at 100 ms polling, every 8th at 25 ms.
  *
- * The floor being above the slowest poll rate is what lets the two lists be
- * independent. Adding a poll rate slower than 200 ms would break that, and the
- * save rate would need clamping to it.
+ * The floor being at or above the slowest poll rate is what lets the two lists
+ * be independent — a save interval shorter than the poll interval would ask for
+ * rows that were never sampled. That is why the floor moves with the transport:
+ * WebUSB polls at 200-500 ms (see POLLING_OPTIONS_WEBUSB) and so starts at 1 s,
+ * which is a whole multiple of both, keeping every written row on the poll grid.
  */
-const SAVE_RATE_OPTIONS: PollingRateOption[] = [
+const SAVE_RATE_MIN_MS = shouldUsePolyfill ? 1000 : 200;
+
+const ALL_SAVE_RATE_OPTIONS: PollingRateOption[] = [
   { label: '200 ms', valueMs: 200 },
   { label: '500 ms', valueMs: 500 },
   { label: '1 s', valueMs: 1000 },
@@ -225,6 +263,11 @@ const SAVE_RATE_OPTIONS: PollingRateOption[] = [
   { label: '20 min', valueMs: 1200000 },
   { label: '30 min', valueMs: 1800000 },
 ];
+
+const SAVE_RATE_OPTIONS: PollingRateOption[] =
+  ALL_SAVE_RATE_OPTIONS.filter((option) => option.valueMs >= SAVE_RATE_MIN_MS);
+// Valid on both transports, so it needs no branch of its own: 1 s is the WebUSB
+// floor and a whole multiple of every Web Serial poll rate.
 const DEFAULT_SAVE_RATE_MS = 1000;
 
 const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
@@ -1643,19 +1686,24 @@ function App() {
     const pruneAndCountAI = () =>
       pruneFailuresInWindow(inputReadFailureTimestampsRef, INPUT_READ_RETRY_WINDOW_MS);
 
-    // 75% of the poll interval, floored at 100 ms. The floor now always wins —
-    // every poll rate is 100 ms or faster — so the "never blocks longer than one
-    // cycle" property the 75% was for no longer holds, and one timeout costs a
-    // poll slot (four of them at 25 ms). The floor stays because it is sized for
-    // the wire, not the loop: 16 i16 channels take 93 ms to transfer at the
-    // slowest offered 4800 baud, and a tighter deadline would fail reads that
-    // were on their way.
+    // 75% of the poll interval, floored at 100 ms. On the Web Serial rates the
+    // floor always wins, so the "never blocks longer than one cycle" property
+    // the 75% was for does not hold there and one timeout costs a poll slot
+    // (four of them at 25 ms). On the WebUSB rates the 75% wins instead and the
+    // property holds again. The floor is sized for the wire, not the loop: 16
+    // i16 channels take 93 ms to transfer at the slowest offered 4800 baud, and
+    // a tighter deadline would fail reads that were on their way. It is a floor
+    // in both senses — the client raises it further for long responses, see
+    // minimumReadTimeoutMs().
     const readTimeoutMs = Math.min(Math.max(Math.floor(pollIntervalRef.current * 0.75), 100), 900);
-    // Never true at the current poll rates, and kept deliberately rather than
-    // deleted: it is the rule, not an accident of the option list. A retry has
-    // to fit inside the cycle, and below 500 ms it cannot. Losing it costs
-    // little now — a dropped frame costs one poll rather than one recorded row,
-    // because the recording deadline just moves to the next successful poll.
+    // A retry has to fit inside the cycle, and below 500 ms it cannot. Now
+    // reachable, at the slowest WebUSB rate — the transport that most needs a
+    // second chance, since its stream faults are recovered from rather than
+    // avoided. The retry is not the immediate one it looks like: the client
+    // holds the line quiet for RECOVERY_QUIET_MS after a failed transfer before
+    // writing again, so RETRY_DELAY_MS below is a floor on that wait, not the
+    // whole of it. Modbus RTU does not tolerate being asked again while the
+    // device is still answering the previous question.
     const canRetry = pollIntervalRef.current >= 500;
     // Proportional to how often we poll — see INPUT_READ_MAX_FAILURE_RATIO.
     const failureBudget = Math.max(
