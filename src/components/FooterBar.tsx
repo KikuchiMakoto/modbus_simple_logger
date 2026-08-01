@@ -266,10 +266,14 @@ export function FooterBar({
             it is wanted and ignored when it is not; between REC and the log
             line it would be movement in the middle of the bar.
 
-            Dropped below `md`, where the bar is 24px tall: the message is what
-            the bar is for, and this is the item here with the least claim on a
-            phone's width. */}
-        <span className="hidden shrink-0 tabular-nums text-slate-400 dark:text-slate-500 md:inline">
+            Dropped below `sm`, not `md` like the script-name chip beside it.
+            768px is a laptop window someone has made narrow to fit something
+            else beside it, not a phone, and "is the link keeping up" is a
+            question that does not stop mattering because the window got
+            smaller — it is a measurement either way. It costs about 70px, which
+            comes out of the log line's truncation and nothing else. Below
+            640px the bar is 24px tall and the message needs the room. */}
+        <span className="hidden shrink-0 tabular-nums text-slate-400 dark:text-slate-500 sm:inline">
           Polling: {pollIntervalMs > 0 ? `${pollIntervalMs} ms` : '-'}
         </span>
       </div>
