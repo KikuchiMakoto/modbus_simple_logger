@@ -22,7 +22,6 @@ const LIBRARIES = [
   { name: 'Vite', pkg: 'vite', license: 'MIT' },
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
-  { name: 'Wasmoon (Lua)', pkg: 'wasmoon', license: 'MIT' },
   { name: 'Prism', pkg: 'prismjs', license: 'MIT' },
   { name: 'react-simple-code-editor', pkg: 'react-simple-code-editor', license: 'MIT' },
   { name: 'Pyodide', pkg: 'pyodide', license: 'MPL-2.0' },

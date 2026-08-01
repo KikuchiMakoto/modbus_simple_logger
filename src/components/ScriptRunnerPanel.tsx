@@ -2,11 +2,7 @@ import { useState } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { CodeEditor } from './CodeEditor';
 import { CollapseButton } from './CollapseButton';
-import {
-  SCRIPT_LANGUAGES,
-  SCRIPT_LANGUAGE_LIST,
-  buildAiPrompt,
-} from '../utils/scriptLanguages';
+import { SCRIPT_LANGUAGES, buildAiPrompt } from '../utils/scriptLanguages';
 import { SCRIPT_TAB_NAME_MAX } from '../utils/scriptTabs';
 import { FloatingWindow } from './FloatingWindow';
 import { HoldToConfirm } from './HoldToConfirm';
@@ -77,38 +73,6 @@ export function ScriptRunnerPanel({
       defaultHeight={620}
       headerActions={
         <>
-          {/* The language belongs up here with Run/Stop, not in the body: it
-              selects which set of scripts the window is showing at all, which
-              makes it chrome in the same sense the title is — and every row it
-              does not occupy below is a row of editor.
-
-              Frozen for the length of a run, which is what keeps the executing
-              script visible: tabs can only be paged within one language, so
-              while the selector cannot move, the running tab is always in the
-              strip on screen, marked. Nothing then has to explain in words
-              where the run went. */}
-          <select
-            value={scriptRunner.scriptLanguage}
-            onChange={(event) =>
-              scriptRunner.setScriptLanguage(
-                event.target.value as typeof scriptRunner.scriptLanguage,
-              )
-            }
-            disabled={scriptRunner.scriptRunning}
-            className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-800 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            aria-label="Script language"
-            title={
-              scriptRunner.scriptRunning
-                ? 'Stop the script to switch language'
-                : "Which language's scripts this window shows"
-            }
-          >
-            {SCRIPT_LANGUAGE_LIST.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
           {/* Was a slide-to-confirm, which cost the width of a track this header
               no longer has to spare. Held instead of swiped: the gesture is
               smaller but it is still a gesture, which is what this needs — it

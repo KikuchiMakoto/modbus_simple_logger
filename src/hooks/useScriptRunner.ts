@@ -68,7 +68,7 @@ export function useScriptRunner(
   // Open documents, and which one is in front. One state object rather than two:
   // closing a tab changes both, and a render that saw the new list against the
   // old active id would be pointing at a tab that no longer exists.
-  const [tabState, setTabState] = useState<TabState>(() => ({ ...loadScriptTabs(), lastActive: {} }));
+  const [tabState, setTabState] = useState<TabState>(() => loadScriptTabs());
   const { tabs, activeId: activeTabId } = tabState;
   // The list is never empty (closeTab refuses the last one in a language), so
   // the fallback is only there to keep this total.
@@ -101,9 +101,9 @@ export function useScriptRunner(
   const scriptRunRef = useRef<ScriptRunInfo>(IDLE_RUN);
   const runIdRef = useRef(0);
   // One worker per language, kept alive once created. Pyodide costs seconds to
-  // boot; terminating it because someone glanced at the BASIC example would
-  // make switching back feel broken. The BASIC and Lua workers are cheap enough
-  // that the same policy costs nothing.
+  // boot, so it is worth not tearing down between runs. The map is keyed by
+  // language for historical reasons (it used to hold BASIC and Lua workers
+  // too); with only Python left it holds at most one entry.
   const workersRef = useRef(new Map<ScriptLanguageId, Worker>());
   /** Which language's worker is executing, so Stop reaches the right one. */
   const runningLanguageRef = useRef<ScriptLanguageId | null>(null);
@@ -216,15 +216,10 @@ export function useScriptRunner(
     const paramSab = paramShareRef.current!.buffer as SharedArrayBuffer;
     const intSab = interruptBufferRef.current!.buffer as SharedArrayBuffer;
 
-    // Static `new URL(...)` literals: this is how the bundler finds a worker
+    // Static `new URL(...)` literal: this is how the bundler finds a worker
     // entry point and emits it, so the path cannot come from the table in
     // scriptLanguages.ts.
-    const worker =
-      language === 'basic'
-        ? new Worker(new URL('../basicWorker.ts', import.meta.url), { type: 'module' })
-        : language === 'lua'
-          ? new Worker(new URL('../luaWorker.ts', import.meta.url), { type: 'module' })
-          : new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
     const runnerName = SCRIPT_LANGUAGES[language].label;
     worker.onmessage = (event: MessageEvent) => {
       const message = event.data as
@@ -412,39 +407,6 @@ export function useScriptRunner(
     });
   }, []);
 
-  /**
-   * Switch which language's scripts are on screen.
-   *
-   * Not a change to any tab: a tab belongs to its language for life, and this
-   * swaps the whole strip for that language's own. A language reached for the
-   * first time gets one tab holding its example script.
-   *
-   * Refused for the length of a run. Since tabs can only be paged within one
-   * language, holding the selector still is what guarantees the executing script
-   * stays on screen — Run/Stop always means the tab with the marker on it, and
-   * no part of the window has to explain in words where the run went.
-   */
-  const setScriptLanguage = useCallback((next: ScriptLanguageId) => {
-    if (scriptExecutingRef.current) return;
-    const state = tabStateRef.current;
-    if (activeTabOf(state).language === next) return;
-    const existing = tabsOfLanguage(state.tabs, next);
-    // Minted out here rather than in the updater, which has to stay pure.
-    const created = existing.length === 0 ? createTab(next, state.tabs) : null;
-    setTabState((prev) => {
-      const current = activeTabOf(prev);
-      if (current.language === next) return prev;
-      const lastActive = { ...prev.lastActive, [current.language]: current.id };
-      if (created) return { tabs: [...prev.tabs, created], activeId: created.id, lastActive };
-      // Back to whichever of that language's scripts was last in front, so
-      // flipping between languages returns to where each was left.
-      const remembered = prev.lastActive[next];
-      const target = tabsOfLanguage(prev.tabs, next);
-      const activeId = target.some((tab) => tab.id === remembered) ? remembered! : target[0].id;
-      return { ...prev, activeId, lastActive };
-    });
-  }, []);
-
   const selectTab = useCallback((id: string) => {
     setTabState((prev) => (prev.tabs.some((tab) => tab.id === id) ? { ...prev, activeId: id } : prev));
   }, []);
@@ -545,7 +507,6 @@ export function useScriptRunner(
      */
     statusTabName: tabs.find((tab) => tab.id === runningTabId)?.name ?? activeTab.name,
     scriptLanguage,
-    setScriptLanguage,
     scriptCode,
     setScriptCode,
     scriptRunning,
@@ -562,16 +523,9 @@ export function useScriptRunner(
 }
 
 type TabState = {
-  /** Every open script, of every language. */
+  /** Every open script. */
   tabs: ScriptTab[];
   activeId: string;
-  /**
-   * The tab each language was last left on, so switching language twice comes
-   * back to the same script rather than to the first in the strip. Not
-   * persisted: it is a within-session convenience, and on reload the stored
-   * activeId already points at the one script that matters.
-   */
-  lastActive: Partial<Record<ScriptLanguageId, string>>;
 };
 
 /** The tab in front. Total: `tabs` is never empty (see closeTab). */

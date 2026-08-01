@@ -9,7 +9,7 @@
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
-- Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python / BASIC / Lua** の3言語）
+- Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python**（Pyodide）のみ。かつては BASIC / Lua も選べたが撤去済み）
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
 - Wake Lock API による計測中の画面スリープ抑止
 
@@ -37,23 +37,12 @@ src/
 │   └── frameScan.ts                 # 応答フレーミングの純粋関数（scanModbusFrame）＋ ModbusExceptionError。slaveId/fc/CRC 検証と例外フレーム判定
 ├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
 ├── pyodideWorker.ts                 # Python(Pyodide) 実行 Worker
-├── basicWorker.ts                   # BASIC 実行 Worker（インタプリタのステップループ + 割込み可能な Sleep）
-├── luaWorker.ts                     # Lua(wasmoon) 実行 Worker（コルーチン + debug.sethook）
-├── basic/                           # BASIC 方言の実装。README-dialect.md が仕様、checks.ts が 122 件の検証
-│   ├── README-dialect.md            # **方言仕様（日本語）。BASIC を触る前にこれを読む**
-│   ├── lexer.ts / parser.ts         # パーサは**フラット命令列**を吐く（Stop がどこでも効く理由）
-│   ├── interpreter.ts               # 期限までステップ実行して制御を返すステップマシン
-│   ├── values.ts / builtins.ts      # VB6 の値意味論 / 組込関数・計測 API
-│   └── checks.ts                    # `bun run basic:check`
-├── lua/
-│   ├── scaffolding.ts               # Lua 側の足場（sleep=coroutine.yield, 停止フック）
-│   └── checks.ts                    # `bun run lua:check`
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
 ├── timerWorker.ts                   # タイマー抑制回避用 Worker（setTimeout/setInterval をワーカースレッドで保持）
 ├── hooks/
 │   ├── useTheme.ts                  # テーマ管理（localStorage 永続化）
 │   ├── useChartAxes.ts              # チャート軸設定（localStorage 永続化）
-│   ├── useScriptRunner.ts           # 言語ごとの Worker 管理（1言語1つ・生成後は保持）+ SAB 先行確保 + 言語別コード永続化
+│   ├── useScriptRunner.ts           # Pyodide Worker 管理（生成後は保持）+ SAB 先行確保 + タブ永続化
 │   ├── useNotifications.ts          # 通知トグルと許可状態（UI 用ラッパー。実体は utils/notifications.ts）
 │   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示するコンポーネントだけが購読する
 │   └── useKeepAwake.ts              # ランチャーへのスリープ抑制要求（exe 限定）。ページ可視時のみ効く Screen Wake Lock を、最小化中も補う
@@ -62,7 +51,7 @@ src/
 │   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（ScriptRunner 状態 → System Log 最新1行のロール表示 → 右端＝実測ポーリング周期）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
 │   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・フッターの2面で共有（行は memo 済み）
 │   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）
-│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ／言語セレクタ／実行・停止・Output ログ・API 一覧（UI 名: Script Runner）
+│   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ（タブ切替）／実行・停止・Output ログ・API 一覧（UI 名: Script Runner。言語は Python 固定でセレクタ無し）
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン＋通知トグル（UI 名: Application Info）
@@ -209,32 +198,20 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
 - 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
 
-### ScriptRunner（`pyodideWorker.ts` / `basicWorker.ts` / `luaWorker.ts`）
+### ScriptRunner（`pyodideWorker.ts`）
 
-**3言語共通の約束**
-- **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイルに集約**。3つの実行系に共通点は無いが *契約* は同じ（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）。`useScriptRunner` が3つを同一に扱えるのはこれのため
-- **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す（3言語とも同じ）
-- **計測 API の名前は3言語で共通の PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `SetNotify` `Elapsed`）。BASIC の名前解決が大小文字とアンダースコアを無視するので、PascalCase を選べば3言語で綴りが一致する — スクリプトを言語間で移すときに覚え直さずに済むのが狙い。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではなく、全言語で同じに読めることの方が価値が高いという判断）。**片方の言語だけ別名を足さないこと** — 差異を消すために揃えたものが元に戻る。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
-- **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
-- **Worker は言語ごとに1つ作り、以後保持する**。Pyodide は起動に数秒かかるので、BASIC の例を覗いただけで破棄すると戻ったときに壊れて見える
-- **コードは言語ごとに別キーで永続化する**（Python は既存の `scriptRunnerCode` を維持）。実行中の言語切替は拒否する（実行中の Worker は旧言語のもので、エディタだけ入れ替わると Stop が画面に無いスクリプトを指す）
-- **Stop は3言語とも「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること。実現手段は言語ごとに違う（下記）
-- **待ちの単位は3言語とも「秒」**（Python `asyncio.sleep`、BASIC `Sleep`、Lua `sleep`）。BASIC を一度ミリ秒にしたが戻した: VB6 に `Sleep` 文は無く、**VB6 の言語ネイティブな待ちは `Timer` ループ＝秒**、QBasic/N88 の `SLEEP` も秒で、ミリ秒は VBA/VB.NET が Win32 API を取り込んだ経路にしか出てこない。加えて**失敗の向きが安全**である — 秒での取り違えは「待ちすぎ」で目に見えるが、ミリ秒だと QBasic 流の `Sleep 1` が 1ms ループになり Modbus リンクを静かに叩き続ける。**言語ごとに単位を変えないこと**
+Python (Pyodide) だけが残っている。かつては BASIC（`basicWorker.ts` + `src/basic/`）と
+Lua（`luaWorker.ts` + `src/lua/`、wasmoon）も選べる3言語構成だったが、いずれも撤去済み
+（`bun run basic:check` / `bun run lua:check` も消えた）。以下はその名残で、Python 1言語に
+なっても崩さなくてよい設計:
 
-**BASIC（`basicWorker.ts` + `src/basic/`）**
-- **方言仕様は `src/basic/README-dialect.md`。BASIC を変更する前に必ず読む**（VB6 準拠の範囲、受理する N88/QBasic/VB.NET の綴り、組込関数）
-- **方言の優先順位は VB6 → VB.NET → VBA**。ただし実態としては **VBA は VB6 とほぼ同一言語**なので発動せず、**VB.NET は「綴りの追加元」であって「意味論の上書き元」ではない**（`End While`・`AndAlso`/`OrElse`・`+=` は受理するが、`And` はビット演算のまま、`Mod` は整数演算のまま、`GoSub` は残す）
-- **パーサはフラットな `Instr[]` を吐く。これが Stop が効く理由**（実行が配列上の PC なので、任意の2命令の間で割込みを見て、どこにいても中断できる）。木を歩くインタプリタに変えないこと
-- `interpreter.resume(deadline)` は**期限が来たら制御を返す**。Sleep も待たずに呼び出し元へ返し、Worker が 25ms スライスで待つ（`Sleep 3600000` も中断可能）
-- Print 出力はスライスごとにバッチ送信する（毎文 postMessage すると構造化複製がメインスレッドを叩く）
-- **検証は `bun run basic:check`（122件）**。`bun run build` は `7.5 Mod 2` が 1 か 1.5 かを判定できないので、言語仕様を触ったらこちらを必ず通す
-
-**Lua（`luaWorker.ts` + `src/lua/`）**
-- **コルーチンを JS 側へ渡さないこと**。`sleep` は `coroutine.yield(秒)`、駆動は `doStringSync('return __msl_step()')` で、**境界を越えるのは文字列とプレーンなテーブルだけ**。以前スレッドを JS に渡して戻していたが、wasmoon はスレッドを往復できず WASM レベルの `call_indirect signature mismatch` と nil になった upvalue になった（何も動かない）
-- **`debug.sethook` のカウントフック（5000命令ごと）が `while true do end` を殺す唯一の手段**。sleep の無いループは yield しないのでコルーチンだけでは止まらない
-- Lua 文字列内の `	` `
-` は TS のテンプレートリテラルで**先に実体化される**ので `\t` と書くこと（一度これで setup チャンク全体が "unfinished string" で壊れた）
-- **検証は `bun run lua:check`（14件）**。wasmoon のマーシャリングの仮定は実際に走らせるまで一切見えない
+- **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイル**。実行系が増えても契約だけ揃えれば `useScriptRunner` は同一に扱える、という前提で作られている（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）
+- **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
+- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `SetNotify` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであってPython ライブラリの呼び出しではない、という判断。BASIC/Lua と綴りを揃えていた名残でもある）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
+- **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。1エントリの Record になっているが、`ScriptLanguageId` を型として保つのは `scriptTabs.ts` の永続化コードが `isScriptLanguageId` で古い `'basic'`/`'lua'` の保存値を弾くため。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
+- **Worker は生成後、保持し続ける**。Pyodide は起動に数秒かかるので、都度破棄すると次に開いたときに壊れて見える
+- **Stop は「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること
+- **待ちの単位は「秒」**（`asyncio.sleep`）。ミリ秒での取り違えは静かに Modbus リンクを叩き続ける事故になるので、単位はここで固定してある
 
 **Python（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
@@ -281,7 +258,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
 - **復旧ファイル名は `<stem>_recovered<ext>`**（`recoveredDownloadName()`、v4.1〜）。元の名前のまま返してはならない — 復旧ファイルは「その run が本来出すはずだったファイル」ではなく**クラッシュが残した残骸**であり、ページが死んだ時点でバッファに載っていた行を欠いている可能性がある。元の名前でダウンロードフォルダに置くと正常な保存と見分けが付かず、**そもそも run が失敗したこと自体に気付けない**。OPFS 側のエントリ名は `buildRecoveryName()` のまま（あちらはパースされる名前、こちらは人間だけが読む名前）
 - **2つの `confirm()` で Cancel の意味は逆**（v4.1〜）。1つ目（提示）の Cancel は**ミラーを削除する** — 名前・開始時刻・サイズを見た上で「要らない」と答えたのだから、起動の度に同じ死んだ run を出し続けるのはデータ保護ではなく催促である。2つ目（削除確認）の Cancel は**保持する** — こちらの Cancel は「ダウンロードが届いていない」の意であり、消せば救出対象そのものを壊す。**この非対称を「一貫性」を理由に揃えてはならない**。どちらもダイアログ本文に Cancel の挙動を明記すること
-- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`notificationsEnabled`・`scriptRunnerCode`（Python）/ `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
+- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`notificationsEnabled`・`scriptRunnerCode`（Python。旧 `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage` は BASIC/Lua 撤去で書込みが無くなった死んだキーとして残置）・`scriptRunnerTabs`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
   - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・スクリプトのコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — ビューアでは書込みが no-op、localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
@@ -363,7 +340,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **プリキャッシュ注入**（`vite.config.ts` の `precache-manifest` プラグイン）: ビルド時に `dist` の全アセットを走査し `dist/sw.js` の `PRECACHE_MANIFEST` / `CACHE_VERSION` / `APP_VERSION` を置換。`sw.js` 側のプレースホルダ（`const PRECACHE_MANIFEST = [];` / `const CACHE_VERSION = 'dev';` / `const APP_VERSION = '';`）の文字列を変更するとマッチしなくなり**オフライン動作や更新プロンプトのバージョン表示が壊れる**ため注意。アセット追加時は手書き不要（自動で含まれる）
 - **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
 - **依存ライブラリのバージョン表示は自動生成**（`vite.config.ts` の `DEP_VERSIONS` → `VITE_DEP_VERSIONS`）: `package.json` の `dependencies`/`devDependencies` 全件について **`node_modules/<name>/package.json` の実インストール版**を JSON で注入する（`^19.2.8` のようなレンジではなく実際にバンドルされた版が出る）。`AppInfoPanel.tsx` の `LIBRARIES` は**表示名・パッケージ名・ライセンスのみ**を持ち、バージョンを直書きしないこと。ライブラリ追加時は 1 行足すだけでよく、バージョン更新時の同期作業は不要
-- **Prism の import 順序**（`utils/prism.ts`）: `prism-vbnet` は `Prism.languages.extend('basic', …)` で定義されているのに **prism-basic を自分では import しない**（Prism 本来のローダが依存解決する前提で、バンドラは通らない）。`prism-basic` → `prism-vbnet` の順を崩すと**モジュール評価時に throw してアプリ全体が起動しない**（エディタだけの問題では済まない）。文法は必要な3つだけを個別 import すること（`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
+- **Prism のグラマーは必要な分だけ個別 import すること**（`utils/prism.ts`、現在は `prism-python` のみ。`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。かつて BASIC 用に `prism-vbnet` も入れていたが、それは `Prism.languages.extend('basic', …)` 経由で `prism-basic` に依存しており、import 順を誤ると**モジュール評価時に throw してアプリ全体が起動しなかった**（エディタだけの問題では済まない）。BASIC 撤去で両方消えたので今この順序問題は無いが、**言語を増やす際は依存する他のグラマーが無いか確認すること**。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
 - **エディタの Tab/undo は react-simple-code-editor 側の実装を使う**（`components/CodeEditor.tsx`）。v5.0 まで App.tsx に自前の Tab インデント handler があったが、ライブラリ内蔵と同等（2スペース・選択範囲対応）でありながら**ライブラリの undo スタックを迂回して Ctrl+Z を壊す**ため削除した。外から `onKeyDown` で `preventDefault()` するとライブラリ側の処理が丸ごと止まる仕様なので、キー処理を足すときはこの点に注意
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
