@@ -364,7 +364,6 @@ export class WebSerialModbusClient {
   private transferMutex = new AsyncMutex();
   private lastTransferTime = 0;
   private minMessageIntervalMs: number;
-  private isExtendedPrecision = false;
   private readonly isUsingPolyfill: boolean;
   private readonly debugPrefix = '[WebSerialModbusClient]';
   private readonly verboseFrameLogging: boolean;
@@ -376,7 +375,6 @@ export class WebSerialModbusClient {
    * @param slaveId - Modbus slave ID.
    * @param serialSettings - Serial communication settings.
    * @param serialApi - Web Serial API implementation (native or polyfill).
-   * @param isExtendedPrecision - True when float32 extended precision mode is used.
    * @param verboseFrameLogging - True to include per-frame hex dumps in debug logs.
    */
   constructor(
@@ -388,14 +386,12 @@ export class WebSerialModbusClient {
       parity: 'none',
     },
     serialApi?: Serial,
-    isExtendedPrecision = false,
     isUsingPolyfillOverride?: boolean,
     verboseFrameLogging = false,
   ) {
     this.slaveId = slaveId;
     this.serialSettings = serialSettings;
     this.serialApi = serialApi || navigator.serial;
-    this.isExtendedPrecision = isExtendedPrecision;
     this.verboseFrameLogging = verboseFrameLogging;
     this.isUsingPolyfill =
       isUsingPolyfillOverride ??
@@ -406,7 +402,6 @@ export class WebSerialModbusClient {
       {
         slaveId: this.slaveId,
         serialSettings: this.serialSettings,
-        isExtendedPrecision: this.isExtendedPrecision,
         isUsingPolyfill: this.isUsingPolyfill,
         verboseFrameLogging: this.verboseFrameLogging,
         minMessageIntervalMs: this.minMessageIntervalMs,
@@ -479,20 +474,18 @@ export class WebSerialModbusClient {
   }
 
   /**
-   * Calculate minimum message interval based on Modbus RTU specification
-   * and precision mode.
+   * Calculate minimum message interval based on the Modbus RTU specification.
    *
    * Modbus RTU requires 3.5 character times of silent interval.
    * For stability, we use 5 character times.
    *
-   * Normal mode: minimum 10ms after each message.
-   * Extended mode: minimum 1ms after each message.
+   * Minimum 10ms after each message (the Normal/i16t figure — this was once
+   * lower in the removed float32 Extended precision mode).
    *
    * @returns Minimum interval in milliseconds
    */
   private calculateMinInterval(): number {
-    // Base interval depends on precision mode
-    const baseIntervalMs = this.isExtendedPrecision ? 1 : 10;
+    const baseIntervalMs = 10;
 
     // 5 characters worth of time in milliseconds
     const silentIntervalMs = (this.bitsPerChar() * 5 * 1000) / this.serialSettings.baudRate;
@@ -587,24 +580,10 @@ export class WebSerialModbusClient {
     return new Error(`${message} [rx ~${bucketKb} KB since last stream error]`);
   }
 
-  /**
-   * Update precision mode and recalculate minimum interval
-   */
-  setPrecisionMode(isExtended: boolean): void {
-    console.info(`${this.debugPrefix} setPrecisionMode`, {
-      from: this.isExtendedPrecision,
-      to: isExtended,
-    });
-    this.isExtendedPrecision = isExtended;
-    this.minMessageIntervalMs = this.calculateMinInterval();
-    console.info(`${this.debugPrefix} minMessageIntervalMs updated`, this.minMessageIntervalMs);
-  }
-
   async connect(): Promise<boolean> {
     console.info(`${this.debugPrefix} connect() start`, {
       slaveId: this.slaveId,
       serialSettings: this.serialSettings,
-      isExtendedPrecision: this.isExtendedPrecision,
     });
     if (!this.serialApi) {
       throw new Error('Web Serial API is not supported in this browser');
@@ -1458,41 +1437,6 @@ export class WebSerialModbusClient {
       values.push(view.getInt16(3 + i * 2, false));
     }
     console.debug(`${this.debugPrefix} readInputRegisters() done`, {
-      byteCount,
-      valuesLength: values.length,
-      preview: values.slice(0, 10),
-    });
-    return values;
-  }
-
-  /**
-   * Read Input Registers as Float32 values with ABCD byte order
-   * Each float32 value is stored in 2 consecutive registers (4 bytes)
-   * ABCD byte order: [Register N: AB] [Register N+1: CD]
-   * @param start - Starting register address (e.g., 5000)
-   * @param count - Number of float32 values to read (will read count*2 registers)
-   * @returns Array of float32 values
-   */
-  async readInputRegistersAsFloat32Abcd(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
-    console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd()`, { start, count, timeoutMs });
-    // Read twice as many registers since each float32 needs 2 registers
-    const registerCount = count * 2;
-    const payload = [start >> 8, start & 0xff, registerCount >> 8, registerCount & 0xff];
-    const frame = this.buildFrame(4, payload);
-    const expected = 5 + registerCount * 2; // addr + fc + byteCount + data + crc
-    const view = await this.transfer(frame, expected, timeoutMs);
-
-    const values: number[] = [];
-    const byteCount = view.getUint8(2);
-    assertRegisterByteCount(byteCount, registerCount);
-
-    // Process pairs of registers as float32 (ABCD byte order = big-endian)
-    for (let i = 0; i < count; i += 1) {
-      const float32Value = view.getFloat32(3 + i * 4, false); // false = big-endian (ABCD)
-      values.push(float32Value);
-    }
-
-    console.debug(`${this.debugPrefix} readInputRegistersAsFloat32Abcd() done`, {
       byteCount,
       valuesLength: values.length,
       preview: values.slice(0, 10),

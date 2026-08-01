@@ -1,5 +1,3 @@
-import { isViewerMode } from './appMode';
-
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -45,10 +43,10 @@ export const readJsonStorage = <T extends JsonValue>(key: string): T | null => {
   // The cookie lifeboat. This read used to be missing, which made the fallback
   // write-only: writeRaw() parks a value in a cookie when localStorage throws,
   // but every caller that reads through this function looked only at
-  // localStorage — so UI scale, the ScriptRunner code and its backup, the
-  // collapsed-section flags and the notification toggle were all lost on reload
-  // in exactly the situation the fallback exists for (a browser with site data
-  // blocked for the origin, or Safari private mode at its quota).
+  // localStorage — so UI scale, the ScriptRunner code and its backup, and the
+  // collapsed-section flags were all lost on reload in exactly the situation
+  // the fallback exists for (a browser with site data blocked for the origin,
+  // or Safari private mode at its quota).
   const cookie = readCookieRaw(key);
   return cookie === null ? null : parseJson<T>(cookie);
 };
@@ -92,21 +90,14 @@ function writeRaw(key: string, value: JsonValue): WriteResult {
   return writeCookieFallback(key, serialized) ? 'cookie' : 'failed';
 }
 
-// Single chokepoint for every persisted setting, which is why the viewer guard
-// lives at this level rather than being repeated at each call site: a remote
-// monitor is fed the host's labels, calibration and voltage modes about once a
-// second, and letting those land in the viewer PC's localStorage would silently
-// overwrite that machine's own logger settings with someone else's.
+// Single chokepoint for every persisted setting.
 export const writeJsonStorage = (key: string, value: JsonValue): WriteResult => {
-  if (!isBrowser || isViewerMode) return 'failed';
+  if (!isBrowser) return 'failed';
   return writeRaw(key, value);
 };
 
 // Settings that describe how THIS screen looks — theme, UI scale — rather than
-// what the logger is measuring. Nothing in the host feed writes them, so the
-// viewer guard above does not apply: a remote monitor on a 4K panel has to be
-// able to keep its own zoom and its own light/dark choice across reloads, which
-// the guard would otherwise silently discard.
+// what the logger is measuring.
 export const writeLocalPreference = (key: string, value: JsonValue): WriteResult => {
   if (!isBrowser) return 'failed';
   return writeRaw(key, value);
@@ -136,9 +127,8 @@ export const readJsonCookie = <T extends JsonValue>(key: string): T | null => {
   if (readCookieRaw(key) === null) return value;
 
   // Clear the cookie only once the value is actually in localStorage. The write
-  // is a no-op in viewer mode and falls back to this very cookie when
-  // localStorage is unavailable — deleting unconditionally, as this used to,
-  // threw the setting away in both cases.
+  // falls back to this very cookie when localStorage is unavailable — deleting
+  // unconditionally, as this used to, threw the setting away in that case.
   if (writeJsonStorage(key, value) === 'storage') {
     document.cookie = `${key}=; max-age=0; path=/`;
   }

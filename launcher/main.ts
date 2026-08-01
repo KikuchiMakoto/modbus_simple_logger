@@ -7,10 +7,6 @@
 // next launch.
 import { createServer, loadAssets, BASE_PATH } from './server';
 import { findBrowser, launchBrowser, type BrowserInfo } from './browser';
-import { hostFeed, OFF_STATUS } from './hostFeed';
-import { startViewerServer, lanViewerUrls, viewerUrl, type ViewerServerHandle } from './viewerServer';
-import { startTunnel, type TunnelHandle } from './tunnel';
-import { viewerHub } from './viewerHub';
 import { acquireInstanceLock, type InstanceLock } from './singleInstance';
 import { setKeepAwake } from './keepAwake';
 
@@ -30,9 +26,8 @@ const notice = (message: string): void => {
         'Add-Type -AssemblyName PresentationFramework;' +
           `[System.Windows.MessageBox]::Show(${JSON.stringify(message)}, 'Modbus Simple Logger') | Out-Null`,
       ],
-      // Same reason as the tunnel: a GUI-subsystem parent spawning a console
-      // program gets a console window for free. Here it would flash up behind
-      // the dialog.
+      // A GUI-subsystem parent spawning a console program gets a console
+      // window for free. Here it would flash up behind the dialog.
       { windowsHide: true },
     );
   } else {
@@ -47,10 +42,10 @@ const fatal = (message: string): never => {
 };
 
 // Single instance. A second copy would open a second window onto the same one
-// serial port, fight over the viewer port and over the browser
-// profile — and it is nearly always an accidental double-click of the exe or of
-// a taskbar icon. Claimed before anything else is started so the loser exits
-// without having bound a port or spawned a browser.
+// serial port and fight over the browser profile — and it is nearly always an
+// accidental double-click of the exe or of a taskbar icon. Claimed before
+// anything else is started so the loser exits without having bound a port or
+// spawned a browser.
 const lock = await acquireInstanceLock();
 if (!lock.held) {
   notice(
@@ -71,61 +66,6 @@ const assets = await loadAssets().catch((err: Error) =>
 const server = await createServer(assets).catch((err: Error) =>
   fatal(`${err.message}\nRun \`bun run launcher:build\` again.`),
 );
-
-// Read-only remote monitoring, off until the host page asks for it. The switch
-// is in the page because the packaged exe has no console to put it in, and the
-// `__feed` socket carrying the request is loopback-only — so "the page" is
-// always the local window, never a viewer.
-let viewer: ViewerServerHandle | null = null;
-let tunnel: TunnelHandle | null = null;
-
-const stopSharing = () => {
-  tunnel?.stop();
-  tunnel = null;
-  viewer?.stop();
-  viewer = null;
-};
-
-// cloudflared died on its own (network dropped, Cloudflare closed the quick
-// tunnel, the process was killed from Task Manager). The published URL and the
-// QR code are dead at that point, so tear the rest down and tell the page —
-// leaving a panel that still shows a working-looking link is worse than saying
-// it stopped.
-const onTunnelLost = () => {
-  stopSharing();
-  hostFeed.pushStatus({
-    ...OFF_STATUS,
-    error: 'The internet link stopped unexpectedly. Turn it back on to get a new one.',
-  });
-};
-
-hostFeed.setControlHandler(async (action) => {
-  // Always start from a clean stop, including on enable: the two modes bind
-  // differently, so switching between them has to tear the old server down
-  // rather than reuse it.
-  stopSharing();
-  if (action.type === 'disable') return OFF_STATUS;
-
-  viewer = startViewerServer(assets, action.mode);
-  try {
-    const urls =
-      action.mode === 'tunnel'
-        ? [viewerUrl((tunnel = await startTunnel(viewer.port, onTunnelLost)).url)]
-        : lanViewerUrls(viewer.port);
-    return {
-      ...OFF_STATUS,
-      running: true,
-      mode: action.mode,
-      urls,
-      viewers: viewerHub.viewerCount,
-    };
-  } catch (err) {
-    // A tunnel that never came up leaves a loopback-only server listening for
-    // nobody; don't leave that behind just because the URL failed.
-    stopSharing();
-    throw err;
-  }
-});
 
 const appUrl = `http://127.0.0.1:${server.port}${BASE_PATH}`;
 
@@ -151,11 +91,6 @@ const shutdown = (code: number) => {
     child.kill();
   } catch {
     // already gone
-  }
-  try {
-    stopSharing();
-  } catch {
-    // already stopped
   }
   try {
     server.stop(true);

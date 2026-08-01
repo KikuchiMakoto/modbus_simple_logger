@@ -146,13 +146,10 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
 
   // PascalCase, not Python's usual snake_case.
   //
-  // Deliberate: the same names work in all three languages. BASIC's lookup
-  // ignores case and underscores, so it accepts this spelling natively, and
-  // matching it in Python and Lua means a script can be translated between the
-  // three without relearning the API — which is the whole point of offering
-  // three. The cost is that these eight names do not look like PEP 8; they are
-  // instrument calls rather than Python library calls, and reading the same in
-  // every language is worth more here than matching one language's convention.
+  // Deliberate: these are instrument calls rather than Python library calls,
+  // named to read the same as calls to the physical rig rather than to match
+  // PEP 8. (The spelling also dates from when BASIC and Lua were options too —
+  // both are gone now, but the names stayed as they were.)
   const api = pyodide;
   const registerApi = (name: string, fn: unknown): void => {
     api.globals.set(name, fn);
@@ -175,20 +172,13 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   registerApi('SetAiTare', (ch: number) => {
     postWorkerMessage({ type: 'set_ai_tare', ch: Number(ch) });
   });
-  // Raise an OS notification from the script. The main thread decides whether
-  // anything is actually shown (the user's toggle and the browser permission
-  // both have to allow it — see utils/notifications.ts); the message is written
-  // to the ScriptRunner log either way, so a script never loses what it said.
-  registerApi('SetNotify', (message: unknown) => {
-    postWorkerMessage({ type: 'notify', message: String(message) });
-  });
   registerApi('GetParam', (ch: number) => readAiValue(paramShare, Number(ch)));
   registerApi('SetParam', (ch: number, data: number) => {
     writeParamValue(paramShare, Number(ch), Number(data));
   });
-  // Matches BASIC's Elapsed. Monotonic seconds since this worker started, so it
-  // has no midnight discontinuity — the one a multi-day consolidation stage
-  // would otherwise walk straight into.
+  // Monotonic seconds since this worker started, so it has no midnight
+  // discontinuity — the one a multi-day consolidation stage would otherwise
+  // walk straight into.
   registerApi('Elapsed', () => (Date.now() - runStartedAt) / 1000);
 
   // Armed last, deliberately. A Stop issued while Pyodide was still loading

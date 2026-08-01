@@ -18,9 +18,7 @@ export function useTheme() {
   useEffect(() => {
     if (!hasUserPreference) return;
     // Not writeJsonCookie: the theme is a property of the screen in front of
-    // you, not of the measurement, so it has to stick in viewer mode too — and
-    // the viewer is where a mismatched theme is most likely to be fixed, on
-    // whatever spare monitor the run is being watched from.
+    // you, not of the measurement.
     writeLocalPreference(THEME_COOKIE_KEY, theme);
   }, [theme, hasUserPreference]);
 

@@ -13,9 +13,8 @@
 // rolls, and the record it rolled off is in the System Log window rather than
 // behind a × that threw it away.
 import { useState } from 'react';
-import { useSystemLogSource, useVisibleSystemLog } from '../hooks/useSystemLog';
+import { useSystemLogEntries, useVisibleSystemLog } from '../hooks/useSystemLog';
 import { levelTextClass } from './SystemLogBody';
-import { RecLamp } from './RecLamp';
 import type { ScriptOutcome } from '../hooks/useScriptRunner';
 import type { SystemLogEntry } from '../utils/systemLog';
 
@@ -101,41 +100,11 @@ function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
 }
 
 export function FooterBar({
-  remoteEntries,
-  recording,
   pollIntervalMs,
   runner,
 }: {
-  /**
-   * A viewer's copy of the host's log. Omitted on the host, which reads its own
-   * — the bar shows the newest line that passes the threshold, either way.
-   */
-  remoteEntries?: SystemLogEntry[];
-  /**
-   * The recording in progress, or null when nothing is being recorded.
-   *
-   * This lamp used to sit in the header's status strip, between `File:` and
-   * `Total:` — so starting a recording pushed two numeric readouts sideways,
-   * and its width brought forward the wrap that costs the channel grid a whole
-   * row of a sticky header. Neither happens here: the footer is a fixed strip
-   * of fixed height, and growing a second row is the one thing it must never
-   * do (see the top of this file).
-   *
-   * Null on a viewer, which cannot record and is not told whether the host is.
-   */
-  recording: { fileName: string } | null;
-  /**
-   * Measured poll interval in ms, or 0 when nothing is polling. On a viewer this
-   * is the host's, arriving over the feed — the machine showing it never polls
-   * anything itself.
-   */
+  /** Measured poll interval in ms, or 0 when nothing is polling. */
   pollIntervalMs: number;
-  /**
-   * The script runner's state, or null on a viewer — which has no menu, so the
-   * runner is unreachable there and a badge reporting its state would describe
-   * a feature that window does not offer. The log line still shows: a viewer can
-   * lose its feed, and nothing else on that window would say so.
-   */
   runner: {
     running: boolean;
     outcome: ScriptOutcome;
@@ -143,9 +112,9 @@ export function FooterBar({
     languageLabel: string;
     /** The script the runner is pointed at — the running one, or the tab in front. */
     scriptName: string;
-  } | null;
+  };
 }) {
-  const visible = useVisibleSystemLog(useSystemLogSource(remoteEntries));
+  const visible = useVisibleSystemLog(useSystemLogEntries());
   const line = visible[visible.length - 1] ?? null;
   const badge = runner ? (runner.running ? OUTCOME_BADGE.running : OUTCOME_BADGE[runner.outcome]) : null;
   const lineColor = line ? levelTextClass(line.level) : 'text-slate-500 dark:text-slate-400';
@@ -182,23 +151,6 @@ export function FooterBar({
           drops out: the log line beside it already names the script it came
           from, and the chip is the widest fixed thing here. */}
       <div className="fixed bottom-0 left-0 right-0 z-20 flex h-6 items-center gap-2 border-t border-slate-200 bg-slate-50/70 px-2 text-[0.65rem] backdrop-blur dark:border-slate-800 dark:bg-slate-950/70 md:h-8 md:gap-3 md:px-3 md:text-xs">
-        {/* First on the bar, and the only thing here that survives below `md`
-            unconditionally. The script-name chip beside it gives up its width on
-            a phone because the log line already names the script; this says a
-            file is being written right now, which nothing else on the bar says
-            and which cannot be recovered if it is missed.
-
-            No reserved slot: the runner group shifts right by this chip's width
-            when a recording starts. That is not the fault this move was made to
-            fix — the header put it in the middle of a column of numbers read by
-            position — and holding ~4rem empty for the whole session would take
-            it from the log line every second of every run that never records. */}
-        {recording && (
-          <RecLamp
-            className="shrink-0 rounded bg-rose-100 px-1 py-0.5 text-[0.6rem] font-semibold leading-none text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
-            title={recording.fileName}
-          />
-        )}
         {runner && badge && (
           <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
             <span className={`h-2 w-2 shrink-0 rounded-full md:h-2.5 md:w-2.5 ${badge.dot}`} />
@@ -223,9 +175,9 @@ export function FooterBar({
           </div>
         )}
         {/* The gap between the bar's groups is the parent's now, not a margin
-            here: with two optional groups to its left (REC, runner) a margin
-            conditional on one of them would open next to nothing when only the
-            other is present. `gap` is only drawn between siblings that exist. */}
+            here: the runner group is optional, and a margin on it would open
+            next to nothing when it is absent. `gap` is only drawn between
+            siblings that exist. */}
         <div className="flex min-w-0 flex-1 items-center self-stretch">
           {/* Outside the roll on purpose. The marker is not part of the message
               — it is a gutter mark saying "what follows is a log line rather

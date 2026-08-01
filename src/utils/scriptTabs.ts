@@ -1,16 +1,15 @@
 // The Script Runner's open documents.
 //
-// The editor used to hold exactly one script per language, keyed by
+// The editor used to hold exactly one script, keyed by
 // SCRIPT_LANGUAGES[id].storageKey. That is one script per *runtime*, which is
 // not how the panel is actually used: a rig ends up with a warm-up script, a
-// sweep and a shutdown, all Python, and keeping three of those meant keeping two
-// of them somewhere outside the app.
+// sweep and a shutdown, and keeping three of those meant keeping two of them
+// somewhere outside the app.
 //
-// So: tabs, but a separate strip of them per language rather than one mixed
-// list. The Language selector still chooses the mode, and the tabs shown are
-// that mode's scripts — a Python tab cannot become a Lua tab, and a Lua script
-// never sits in the middle of the Python ones. A tab therefore belongs to its
-// language for life; changing language means changing which strip is on screen.
+// So: tabs, shown as one strip. Each tab still carries a `language` field —
+// this used to also select between Python/BASIC/Lua, and only Python remains,
+// but keeping the field is what lets loadScriptTabs drop a tab persisted under
+// one of the removed languages instead of needing a separate migration path.
 import {
   DEFAULT_SCRIPT_LANGUAGE,
   SCRIPT_LANGUAGES,
@@ -111,6 +110,10 @@ export function loadScriptTabs(): { tabs: ScriptTab[]; activeId: string } {
   const tabs: ScriptTab[] = [];
   if (stored && Array.isArray(stored.tabs)) {
     for (const entry of stored.tabs) {
+      // Also drops any tab persisted under the old 'basic'/'lua' language ids,
+      // from a build that still had those languages: isScriptLanguageId now
+      // only accepts 'python', so such a tab is silently skipped rather than
+      // carried forward or crashing the load.
       if (!entry || typeof entry.code !== 'string' || !isScriptLanguageId(entry.language)) continue;
       tabs.push({
         id: typeof entry.id === 'string' && entry.id !== '' ? entry.id : newTabId(),
@@ -123,8 +126,8 @@ export function loadScriptTabs(): { tabs: ScriptTab[]; activeId: string } {
         language: entry.language,
         code: entry.code,
       });
-      // The cap is per language, so a stored file with twelve Python tabs must
-      // not shut out the one Lua tab behind them.
+      // The cap is per language (a no-op with only one language left, but
+      // harmless to keep general).
       if (tabsOfLanguage(tabs, entry.language).length > SCRIPT_TABS_MAX) tabs.pop();
     }
   }
@@ -137,20 +140,25 @@ export function loadScriptTabs(): { tabs: ScriptTab[]; activeId: string } {
 
 function migrateLegacyTabs(): { tabs: ScriptTab[]; activeId: string } {
   const tabs: ScriptTab[] = [];
-  for (const language of ['python', 'basic', 'lua'] as ScriptLanguageId[]) {
-    const code = readJsonStorage<string>(SCRIPT_LANGUAGES[language].storageKey);
-    if (typeof code !== 'string') continue;
+  // BASIC and Lua are gone, so their old per-language storage keys
+  // ('scriptRunnerCodeBasic', 'scriptRunnerCodeLua') are simply never read
+  // again here — the code that used to live under them is orphaned but
+  // harmless, same as any other dead localStorage key.
+  const code = readJsonStorage<string>(SCRIPT_LANGUAGES[DEFAULT_SCRIPT_LANGUAGE].storageKey);
+  if (typeof code === 'string') {
     tabs.push({
       id: newTabId(),
-      name: defaultTabName(language, tabs),
-      language,
+      name: defaultTabName(DEFAULT_SCRIPT_LANGUAGE, tabs),
+      language: DEFAULT_SCRIPT_LANGUAGE,
       code,
     });
   }
   if (tabs.length === 0) tabs.push(createTab(DEFAULT_SCRIPT_LANGUAGE, tabs));
 
   // Whichever language the panel was last set to is the tab that should be in
-  // front, so the window opens on the script it closed on.
+  // front, so the window opens on the script it closed on. A stored value of
+  // 'basic'/'lua' fails isScriptLanguageId now, so `active` falls through to
+  // undefined and the fallback below (tabs[0]) is used instead.
   const last = readJsonStorage<string>('scriptRunnerLanguage');
   const active = isScriptLanguageId(last) ? tabs.find((tab) => tab.language === last) : undefined;
   return { tabs, activeId: (active ?? tabs[0]).id };

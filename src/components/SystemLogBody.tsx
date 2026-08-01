@@ -27,9 +27,9 @@
 // make the last minute easier to read is the wrong trade in a window whose
 // whole job is to still have the line from an hour ago.
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { useSystemLogLevel, useSystemLogSource, useVisibleSystemLog } from '../hooks/useSystemLog';
+import { useSystemLogEntries, useSystemLogLevel, useVisibleSystemLog } from '../hooks/useSystemLog';
 import {
-  SYSTEM_LOG_LEVELS,
+  SELECTABLE_SYSTEM_LOG_LEVELS,
   setSystemLogLevel,
   type SystemLogEntry,
   type SystemLogLevel,
@@ -161,25 +161,22 @@ const LogRow = memo(function LogRow({
  * different sizes, and a row opened out in a 240 px chart slot has no business
  * opening in the window somebody is reading a traceback in.
  *
- * Reads the store itself, except on a viewer — which has no log of its own and
- * is handed the host's over the feed. Subscribing here rather than in App is
- * what keeps a chatty script from re-rendering the charts; see
- * useSystemLogSource.
+ * Subscribing here — in the three components that display the log — rather
+ * than in App is deliberate. App renders the charts; a script printing ten
+ * lines a second would otherwise re-render the whole page at that rate to
+ * update a 200 px box.
  */
 export function SystemLogBody({
-  remoteEntries,
   className = '',
   style,
 }: {
-  /** A viewer's copy of the host's log. Omitted on the host, which has its own. */
-  remoteEntries?: SystemLogEntry[];
   className?: string;
   /** The chart-slot copy pins a height here; the window lets flex do it. */
   style?: React.CSSProperties;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
-  const entries = useSystemLogSource(remoteEntries);
+  const entries = useSystemLogEntries();
   const visible = useVisibleSystemLog(entries);
   const level = useSystemLogLevel();
 
@@ -221,7 +218,7 @@ export function SystemLogBody({
       {visible.length === 0 ? (
         <p className="px-2 py-1 text-slate-400 dark:text-slate-500">
           {entries.length === 0
-            ? 'Nothing logged yet. Connection events, save and recording failures, and whatever a script prints all arrive here.'
+            ? 'Nothing logged yet. Connection events, save failures, and whatever a script prints all arrive here.'
             : // Distinguishing the two silences matters: a log that is empty
               // because the threshold is hiding everything looks exactly like a
               // broken log unless it says so.
@@ -262,7 +259,7 @@ export function SystemLogLevelSelect({ className = '' }: { className?: string })
       aria-label="Minimum log level"
       title="Show this level and above. INFO is the run's story; DEBUG and TRACE add the detail behind a failure."
     >
-      {SYSTEM_LOG_LEVELS.map((entry) => (
+      {SELECTABLE_SYSTEM_LOG_LEVELS.map((entry) => (
         <option key={entry} value={entry}>
           {entry}
         </option>
@@ -279,9 +276,9 @@ export function SystemLogLevelSelect({ className = '' }: { className?: string })
  * bug report has to be the real thing: the DEBUG lines the reader filtered out
  * are exactly the ones whoever reads the report will want.
  */
-export function SystemLogCopyButton({ remoteEntries }: { remoteEntries?: SystemLogEntry[] }) {
+export function SystemLogCopyButton() {
   const [copied, setCopied] = useState(false);
-  const entries = useSystemLogSource(remoteEntries);
+  const entries = useSystemLogEntries();
 
   const copyLog = () => {
     const text = entries

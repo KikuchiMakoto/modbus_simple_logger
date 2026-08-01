@@ -19,7 +19,6 @@
 // from a previous session shown at startup is worse than no error, and the
 // durable record already exists in the console and in the TSV.
 import { readJsonStorage, writeLocalPreference } from './cookies';
-import { notify } from './notifications';
 
 /**
  * log4j's ladder, and used with log4j's meanings:
@@ -46,6 +45,16 @@ export const SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = [
   'FATAL',
 ];
 
+/**
+ * TRACE/DEBUG are wire- and internals-level detail meant for diagnosing this
+ * app itself, not for a measurement run — they are only selectable in a dev
+ * build (`bun run dev`, `import.meta.env.DEV`). A production/launcher build
+ * only offers INFO and above.
+ */
+export const SELECTABLE_SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = import.meta.env.DEV
+  ? SYSTEM_LOG_LEVELS
+  : SYSTEM_LOG_LEVELS.filter((level) => level !== 'TRACE' && level !== 'DEBUG');
+
 const LEVEL_RANK: Record<SystemLogLevel, number> = {
   TRACE: 0,
   DEBUG: 1,
@@ -71,9 +80,6 @@ export type SystemLogSource = string;
 export const SOURCE = {
   link: 'Link',
   save: 'Save',
-  // Separate from `save` on purpose: a recording failure never means the TSV is
-  // in trouble, and sharing a tag would let one look like the other.
-  recording: 'Recording',
   calibration: 'Calibration',
   storage: 'Storage',
   app: 'App',
@@ -132,9 +138,6 @@ const LINE_MAX = 2000;
  */
 const FLUSH_MS = 100;
 
-/** Collapses with the 'msl-script-*' tags in notifications.ts's NOTIFY_TAG family. */
-const NOTIFY_TAG_APP_ERROR = 'msl-app-error';
-
 const LEVEL_STORAGE_KEY = 'systemLogLevel';
 
 /** Oldest first: this is read top to bottom, and the tail is what is followed. */
@@ -182,7 +185,7 @@ export const onSystemLogChange = (listener: () => void): (() => void) => {
 
 const storedLevel = ((): SystemLogLevel => {
   const raw = readJsonStorage<string>(LEVEL_STORAGE_KEY);
-  return SYSTEM_LOG_LEVELS.includes(raw as SystemLogLevel) ? (raw as SystemLogLevel) : 'INFO';
+  return SELECTABLE_SYSTEM_LOG_LEVELS.includes(raw as SystemLogLevel) ? (raw as SystemLogLevel) : 'INFO';
 })();
 
 let threshold: SystemLogLevel = storedLevel;
@@ -196,10 +199,9 @@ export const systemLogLevel = (): SystemLogLevel => threshold;
  * quiet while the window beside it showed the errors.
  */
 export const setSystemLogLevel = (level: SystemLogLevel): void => {
-  if (level === threshold) return;
+  if (!SELECTABLE_SYSTEM_LOG_LEVELS.includes(level) || level === threshold) return;
   threshold = level;
-  // A "how this screen reads" preference, like theme and UI scale — so a viewer
-  // keeps its own choice rather than having it discarded by the host-feed guard.
+  // A "how this screen reads" preference, like theme and UI scale.
   writeLocalPreference(LEVEL_STORAGE_KEY, level);
   emitNow();
 };
@@ -254,9 +256,7 @@ export const logWarn = (source: SystemLogSource, text: string): void =>
 
 /**
  * Report a failure at ERROR, and remember that this source is failing so its
- * recovery can be logged. Notifies, since this is the only channel that reaches
- * a user who walked away from a run that is now failing — but only on a new
- * line, not on every repeat of one already said.
+ * recovery can be logged.
  */
 export const postFailure = (
   level: 'ERROR' | 'FATAL',
@@ -264,18 +264,10 @@ export const postFailure = (
   message: string,
 ): void => {
   const tag = SOURCE[source];
-  const before = entries[entries.length - 1];
   logSystem(level, tag, message);
-  const after = entries[entries.length - 1];
   // ERROR is a state a later success can clear; FATAL (data loss) is not, so it
   // never marks the source as merely "failing".
   if (level === 'ERROR') failing.add(tag);
-  // Unchanged head means the post collapsed into a repeat — already announced.
-  if (after === before || after?.repeats !== 1) return;
-  notify(level === 'FATAL' ? 'Data loss' : 'Logger error', after.text, {
-    tag: NOTIFY_TAG_APP_ERROR,
-    sticky: true,
-  });
 };
 
 /**

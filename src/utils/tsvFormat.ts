@@ -63,10 +63,6 @@ function appendFormatted(
  * @param aiVoltage - Array of AI voltage display values
  * @param paramValues - Array of Parameter values (default: [])
  * @param physicalPrecision - Number of decimal places for physical/voltage/Parameter values (default: 3)
- * @param aiRawAsFloat - When true, AI raw values are emitted with the float
- *   formatter (used in Modbus extended precision mode, where AI Input Registers
- *   are 32-bit floats). Default false: AI raw values are emitted as integers
- *   via toString() (HX711 / ADS1115 ADC counts).
  * @returns TSV data row string with newline
  */
 export function formatTsvRow(
@@ -76,8 +72,7 @@ export function formatTsvRow(
   aoRaw: Float32Array | number[],
   aiVoltage: Float32Array | number[],
   paramValues: Float32Array | number[] = [],
-  physicalPrecision: number = 3,
-  aiRawAsFloat: boolean = false
+  physicalPrecision: number = 3
 ): string {
   const intStr = (v: number) => v.toString();
   // Round to physicalPrecision decimals, then drop trailing zeros and a bare
@@ -88,7 +83,7 @@ export function formatTsvRow(
   const fmt = (v: number) => parseFloat(v.toFixed(physicalPrecision)).toString();
   // Single preallocated parts array, filled by index — no per-column copies.
   const parts: string[] = [formatTimestamp(timestamp)];
-  appendFormatted(parts, aiRaw, aiRawAsFloat ? fmt : intStr);
+  appendFormatted(parts, aiRaw, intStr);
   appendFormatted(parts, aiPhysical, fmt);
   appendFormatted(parts, aiVoltage, fmt);
   appendFormatted(parts, aoRaw, intStr);

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
-import type { NotificationsState } from '../hooks/useNotifications';
 
 // Installed version of every dependency, injected at build time from
 // node_modules (see vite.config.ts). Keeping the versions out of this file is
@@ -22,10 +21,8 @@ const LIBRARIES = [
   { name: 'Vite', pkg: 'vite', license: 'MIT' },
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
-  { name: 'Wasmoon (Lua)', pkg: 'wasmoon', license: 'MIT' },
   { name: 'Prism', pkg: 'prismjs', license: 'MIT' },
   { name: 'react-simple-code-editor', pkg: 'react-simple-code-editor', license: 'MIT' },
-  { name: 'qrcode-generator', pkg: 'qrcode-generator', license: 'MIT' },
   { name: 'Pyodide', pkg: 'pyodide', license: 'MPL-2.0' },
 ].map((lib) => ({ ...lib, version: DEP_VERSIONS[lib.pkg] ?? 'unknown' }));
 
@@ -48,17 +45,12 @@ export function AppInfoPanel({
   open,
   onClose,
   connected = false,
-  notifications,
 }: {
   open: boolean;
   onClose: () => void;
   // Applying an update reloads the page, which would drop the port and stop the
   // measurement — so while a device is connected there is nothing to check for.
   connected?: boolean;
-  // Notifications are one switch with no settings of their own, so they live
-  // here rather than in a panel of their own (what is notified is documented in
-  // the PyScriptRunner API list, next to the calls that raise them).
-  notifications: NotificationsState;
 }) {
   const [checking, setChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -149,115 +141,6 @@ export function AppInfoPanel({
             (components/UiScaleControl.tsx): it is a display setting you adjust
             while looking at the page, and this panel is the wrong place to have
             to open to do that. */}
-
-        <div>
-          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Notifications</h4>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <label className="flex cursor-pointer items-center justify-between gap-3">
-              <span>
-                <span className="font-semibold">Desktop notifications</span>
-                <span className="block text-xs text-slate-500 dark:text-slate-400">
-                  Script Runner events and <span className="font-mono">SetNotify()</span> messages.
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                className="h-5 w-5 shrink-0 accent-emerald-500"
-                checked={notifications.enabled}
-                disabled={!notifications.supported || notifications.permission === 'denied'}
-                onChange={(e) => notifications.setEnabled(e.target.checked)}
-              />
-            </label>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              {!notifications.supported
-                ? 'Not available on this page.'
-                : notifications.permission === 'denied'
-                  ? 'Blocked in browser settings. Allow them there, then reload.'
-                  : notifications.enabled
-                    ? 'On. The output log keeps a copy of every event.'
-                    : 'Off. The output log keeps a copy of every event.'}
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Browser Requirements</h4>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-800">
-            <p className="mb-2">
-              Chromium engine only. Safari and Firefox cannot use the serial
-              port. Mobile relies on the WebUSB fallback when Web Serial is
-              unavailable.
-            </p>
-            <table className="w-full border-collapse">
-              <tbody>
-                <tr className="border-t border-slate-200 dark:border-slate-700">
-                  <th
-                    scope="row"
-                    className="py-1 pr-2 text-left font-medium text-slate-600 dark:text-slate-300"
-                  >
-                    Desktop
-                  </th>
-                  <td className="py-1 text-slate-600 dark:text-slate-300">Chrome / Edge <span className="font-mono">89+</span></td>
-                </tr>
-                <tr className="border-t border-slate-200 dark:border-slate-700">
-                  <th
-                    scope="row"
-                    className="py-1 pr-2 text-left font-medium text-slate-600 dark:text-slate-300"
-                  >
-                    Mobile
-                  </th>
-                  <td className="py-1 text-slate-600 dark:text-slate-300">Android Chrome <span className="font-mono">89+</span></td>
-                </tr>
-              </tbody>
-            </table>
-            <p className="mt-2 leading-relaxed">
-              <a
-                href="https://developer.mozilla.org/docs/Web/API/Web_Serial_API"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                Web Serial
-              </a>{' '}
-              /
-              <a
-                href="https://developer.mozilla.org/docs/Web/API/USB"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                {' '}WebUSB
-              </a>{' '}
-              /
-              <a
-                href="https://developer.mozilla.org/docs/Web/API/File_System_Access_API"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                {' '}File System Access
-              </a>{' '}
-              /
-              <a
-                href="https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                {' '}Screen Wake Lock
-              </a>{' '}
-              /
-              <a
-                href="https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-600 hover:underline dark:text-emerald-400"
-              >
-                {' '}SharedArrayBuffer
-              </a>
-            </p>
-          </div>
-        </div>
 
         <div>
           <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Special Thanks</h4>

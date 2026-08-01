@@ -54,9 +54,9 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 // Plot area height. The empty state matches it exactly, so the card does not
 // change size the moment the first sample arrives.
 //
-// Exported because the launcher puts the System Log and the camera in two of the
-// four grid slots: those cards are not plots, but they sit in the same row and
-// have to be exactly as tall, or the grid steps.
+// Exported because the launcher puts the System Log in one of the four grid
+// slots: that card is not a plot, but it sits in the same row and has to be
+// exactly as tall, or the grid steps.
 export const PLOT_HEIGHT = '240px';
 
 // Force-release the WebGL context(s) behind a graph div.
@@ -208,7 +208,7 @@ function ChartPanelComponent({
     // Pre-shifting the plotted value into a "local epoch" is the standard fix:
     // Plotly then renders local wall-clock while thinking it is UTC. Only the
     // copy handed to Plotly moves — DataPoint.timestamp stays true epoch-ms for
-    // the TSV, IndexedDB and the viewer feed, which must not be shifted.
+    // the TSV and IndexedDB, which must not be shifted.
     //
     // One offset for the whole buffer, taken from its newest point rather than
     // per point, to keep the allocation out of this loop. A session spanning a

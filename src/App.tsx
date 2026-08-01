@@ -15,8 +15,6 @@ import {
   PollingRateOption,
   DataPoint,
   SerialSettings,
-  ModbusPrecision,
-  ModbusPrecisionSetting,
   VoltageMode,
   DEFAULT_VOLTAGE_CONFIG,
 } from './types';
@@ -25,11 +23,7 @@ import {
   AO_CHANNELS,
   PARAM_CHANNELS,
   AI_START_REGISTER,
-  AI_FLOAT_START_REGISTER,
   AO_START_REGISTER,
-  PRECISION_PROBE_ATTEMPTS,
-  PRECISION_PROBE_CHANNELS,
-  PRECISION_PROBE_TIMEOUT_MS,
   RETRY_DELAY_MS,
   INPUT_READ_RETRY_WINDOW_MS,
   INPUT_READ_MAX_FAILURES_PER_WINDOW,
@@ -63,7 +57,6 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
   rawToDisplayValue,
-  sanitizeVoltageConfig,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -82,16 +75,6 @@ import {
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import {
-  hasBoundDevice,
-  loadRecordingConfig,
-  saveRecordingConfig,
-  type RecordingConfig,
-} from './utils/recordingConfig';
-import { createVideoRecorder, type VideoRecorderHandle } from './utils/videoRecorder';
-import { useCameraFeed } from './hooks/useCameraFeed';
-import { useMediaStreamHost } from './hooks/useMediaStreamHost';
-import { useRemoteVideo } from './hooks/useRemoteVideo';
-import {
   discardRecoveredRun,
   downloadRecoveredRun,
   formatRunSize,
@@ -107,7 +90,6 @@ import {
   postFailure,
   reportError,
   SOURCE,
-  systemLogSnapshot,
 } from './utils/systemLog';
 import { setUpdateChecksSuspended } from './utils/swUpdate';
 import { runAtPriority } from './utils/taskPriority';
@@ -131,30 +113,15 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
-import { RecordingConfigPanel } from './components/RecordingConfigPanel';
-import { CameraCard } from './components/CameraCard';
-import { SystemLogCard } from './components/SystemLogCard';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
 import { FooterBar } from './components/FooterBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
-import { ThemeToggle } from './components/ThemeToggle';
 import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
-import type { SystemLogEntry } from './utils/systemLog';
-import { useNotifications } from './hooks/useNotifications';
-import {
-  useViewerHost,
-  useViewerClient,
-  type ViewerHostHandle,
-  type ViewerSample,
-  type ViewerStatePayload,
-  VIEWER_SYSTEM_LOG_TAIL,
-} from './hooks/useViewerFeed';
-import { RemoteViewerPanel } from './components/RemoteViewerPanel';
-import { isLauncherMode, isLauncherServed, isViewerMode } from './utils/appMode';
+import { useKeepAwake } from './hooks/useKeepAwake';
 import { webUsbSerial } from './modbus/webusbSerial';
 
 function isMobileDevice(): boolean {
@@ -174,24 +141,6 @@ const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 // clamp and the 100% mark of the AO card's level meter — one constant, so the
 // meter can never disagree with what the hardware will actually accept.
 const AO_FULL_SCALE_MV = 10000;
-
-/**
- * How fast the Modbus loop runs, on a transport that can keep up.
- *
- * Deliberately short: this is the rate a feedback script's inputs are refreshed
- * at, and on Web Serial there is no reason to want it slower — a run that only
- * needs a sample a minute on disk still wants a control loop that sees fresh
- * data. How much of it is kept is SAVE_RATE_OPTIONS.
- */
-const POLLING_OPTIONS: PollingRateOption[] = [
-  // 25 ms, not 20: 20 ms was tried on the bench and did not hold rate, 25 ms
-  // does. It is still the setting nearest the edge — the read timeout has a
-  // 100 ms floor it cannot honour, so what keeps it working is the device
-  // answering well inside the cycle rather than anything this code enforces.
-  { label: '25 ms', valueMs: 25 },
-  { label: '50 ms', valueMs: 50 },
-  { label: '100 ms', valueMs: 100 },
-];
 
 // One list for both transports. WebUSB was held to 200-500 ms for a while
 // because the link died every 24 s at 100 ms — that turned out to be a leak in
@@ -247,26 +196,18 @@ const SAVE_RATE_OPTIONS: PollingRateOption[] =
 // floor and a whole multiple of every Web Serial poll rate.
 const DEFAULT_SAVE_RATE_MS = 1000;
 
-const BAUD_OPTIONS = [4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 921600, 1500000, 2000000];
-const DATA_BITS_OPTIONS: SerialSettings['dataBits'][] = [7, 8];
-const STOP_BITS_OPTIONS: SerialSettings['stopBits'][] = [1, 2];
-const PARITY_OPTIONS: SerialSettings['parity'][] = ['none', 'even', 'odd'];
-const PRECISION_OPTIONS: { label: string; value: ModbusPrecisionSetting }[] = [
-  { label: 'Auto', value: 'auto' },
-  { label: 'Normal(i16t)', value: 'normal' },
-  { label: 'Extended(f32t)', value: 'extended' },
-];
-
-const PRECISION_LABEL: Record<ModbusPrecision, string> = {
-  normal: 'i16t',
-  extended: 'f32t',
-};
-const DEFAULT_SERIAL_SETTINGS: SerialSettings = {
+// The link's serial framing is fixed — one configuration, not a user choice.
+// Connection Config (ModbusConfigPanel) displays these as read-only text.
+const FIXED_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
   dataBits: 8,
   stopBits: 1,
   parity: 'none',
 };
+const FIXED_SLAVE_ID = 1;
+// The register map on the wire is always 16-bit int (i16t) Input Registers;
+// the 32-bit float (f32t) "Extended" mode has been removed.
+const PRECISION_LABEL = 'i16t';
 
 const computeSensorValues = (raw: number, idx: number) => {
   if (idx < 8) {
@@ -435,46 +376,6 @@ const axisOptions = [
 
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 
-/**
- * Ask the device whether it has the float32 register map, by reading the first
- * PRECISION_PROBE_CHANNELS float channels at AI_FLOAT_START_REGISTER.
- *
- * Run once per connect, never during polling: the answer is a property of the
- * firmware on the other end, so re-asking mid-run could only ever change the
- * register map underneath a recording.
- *
- * Silence is read as "no f32 map" and repeated PRECISION_PROBE_ATTEMPTS times
- * before it is believed. The asymmetry is deliberate — being wrong towards
- * 'normal' lands on the mode this app used by default before Auto existed,
- * while being wrong towards 'extended' would decode 16-bit registers as
- * halves of floats and record numbers that look plausible and are nonsense.
- *
- * The values are required to be finite for the same reason: an unimplemented
- * register block that answers with 0xFFFF padding decodes to NaN, which is a
- * structurally valid float32 frame and would otherwise pass. A device that
- * legitimately reports NaN on channel 0 or 1 will fall back to Normal, and can
- * be set to Extended by hand.
- */
-async function probeExtendedPrecision(client: WebSerialModbusClient): Promise<boolean> {
-  for (let attempt = 1; attempt <= PRECISION_PROBE_ATTEMPTS; attempt += 1) {
-    try {
-      const values = await client.readInputRegistersAsFloat32Abcd(
-        AI_FLOAT_START_REGISTER,
-        PRECISION_PROBE_CHANNELS,
-        PRECISION_PROBE_TIMEOUT_MS,
-      );
-      if (values.length >= PRECISION_PROBE_CHANNELS && values.every((v) => Number.isFinite(v))) {
-        console.info('[App] precision probe: float block answered', { attempt, values });
-        return true;
-      }
-      console.warn('[App] precision probe: answer was not a usable float block', { attempt, values });
-    } catch (err) {
-      console.info(`[App] precision probe: no float block (attempt ${attempt}/${PRECISION_PROBE_ATTEMPTS})`, err);
-    }
-  }
-  return false;
-}
-
 // Module scope, not a ref: StrictMode mounts the app twice in development, and
 // the recovery prompt is a blocking dialog the user would have to dismiss twice
 // for every leftover run.
@@ -489,22 +390,14 @@ function App() {
     chart4X, setChart4X, chart4Y, setChart4Y,
   } = useChartAxes(axisOptionKeys);
 
-  const [slaveId, setSlaveId] = useState(1);
-  const [serialSettings, setSerialSettings] = useState<SerialSettings>(DEFAULT_SERIAL_SETTINGS);
-  // What the user picked, and what the link ended up using. Auto is the
-  // default: the probe can only improve on a fixed 'normal', which is what an
-  // f32 device got here before if nobody remembered to change this.
-  const [modbusPrecision, setModbusPrecision] = useState<ModbusPrecisionSetting>('auto');
-  const [resolvedPrecision, setResolvedPrecision] = useState<ModbusPrecision>('normal');
-  // Read by the polling loop, which keeps a closure alive across renders. Set
-  // in handleConnect before polling is allowed to start, so no cycle can run
-  // against the previous connection's answer.
-  const resolvedPrecisionRef = useRef<ModbusPrecision>('normal');
-  // Two independent rates: how fast the link is polled, and how much of that is
-  // kept. See POLLING_OPTIONS / SAVE_RATE_OPTIONS.
-  const [pollingRate, setPollingRate] = useState<PollingRateOption>(
-    POLLING_OPTIONS.find((p) => p.valueMs === DEFAULT_POLLING_RATE_MS)!,
-  );
+  // The link is one fixed configuration (slave id, serial framing, register
+  // map, poll rate) — see FIXED_SLAVE_ID / FIXED_SERIAL_SETTINGS /
+  // DEFAULT_POLLING_RATE_MS above. None of it is user-settable, so none of it
+  // needs to be reactive state.
+  const slaveId = FIXED_SLAVE_ID;
+  const serialSettings = FIXED_SERIAL_SETTINGS;
+  // Two independent rates: how fast the link is polled (fixed), and how much
+  // of that is kept (still user-selectable). See SAVE_RATE_OPTIONS.
   const [saveRate, setSaveRate] = useState<PollingRateOption>(
     SAVE_RATE_OPTIONS.find((p) => p.valueMs === DEFAULT_SAVE_RATE_MS)!,
   );
@@ -533,12 +426,6 @@ function App() {
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [systemLogPanelOpen, setSystemLogPanelOpen] = useState(false);
-  const [recordingConfigPanelOpen, setRecordingConfigPanelOpen] = useState(false);
-  const [recordingConfig, setRecordingConfig] = useState<RecordingConfig>(() =>
-    loadRecordingConfig(),
-  );
-  /** Name of the video being written, or '' when nothing is recording. */
-  const [activeRecordingFilename, setActiveRecordingFilename] = useState('');
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -638,7 +525,7 @@ function App() {
   // The Modbus poll interval on the wire — NOT the save rate. Everything that
   // has to fit inside one transfer cycle (read timeouts, the retry budget, the
   // channel-card publish floor) is measured against this.
-  const pollIntervalRef = useRef(pollingRate.valueMs);
+  const pollIntervalRef = useRef(DEFAULT_POLLING_RATE_MS);
   // The recording side: the selected save interval, and the capture time the
   // next recorded sample is due at (0 = record the very next successful poll).
   //
@@ -655,7 +542,7 @@ function App() {
   // poll rate. A plain counter, not a deadline like the save path above: a poll
   // lost to a failed read shifts the phase of a 10 Hz chart trace by 100 ms and
   // nothing else, whereas a missing TSV row is missing data.
-  const plotStrideRef = useRef(1);
+  const plotStrideRef = useRef(Math.max(1, Math.round(CHART_INPUT_INTERVAL_MS / DEFAULT_POLLING_RATE_MS)));
   const pollsSincePlotRef = useRef(0);
   // Measured poll interval, for the footer's right-hand readout. Taken from the
   // poll loop rather than from the recorded points, which at the slow save rates
@@ -670,23 +557,6 @@ function App() {
   const lastPollRatePublishRef = useRef(0);
   const [actualPollIntervalMs, setActualPollIntervalMs] = useState(0);
   const voltageConfigRef = useRef<VoltageMode[]>(voltageConfig);
-
-  // Remote monitoring (see hooks/useViewerFeed.ts). Held in a ref because the
-  // publish calls happen inside the chart-flush path, whose useCallback is
-  // deliberately dependency-free: routing them through a ref keeps this feature
-  // from re-creating the hottest callback in the file. The hook itself is called
-  // further down, once the values it reports on exist.
-  const viewerHostRef = useRef<ViewerHostHandle | null>(null);
-  const [remoteViewerPanelOpen, setRemoteViewerPanelOpen] = useState(false);
-  // A viewer renders the host's serial line; it has no port of its own to
-  // describe, and the local DEFAULT_SERIAL_SETTINGS would be a fiction.
-  const [remoteSerialLabel, setRemoteSerialLabel] = useState('');
-  // The host's System Log, mirrored for chart slot 3 and the footer line. A
-  // viewer runs no script and owns no serial port, so this is the only thing
-  // either of those could ever show.
-  const [remoteSystemLog, setRemoteSystemLog] = useState<SystemLogEntry[]>([]);
-  const [remoteScriptStatus, setRemoteScriptStatus] = useState('');
-  const [remoteScriptRunning, setRemoteScriptRunning] = useState(false);
 
   const handleMenuSelect = (item: string) => {
     if (item === 'calibration') {
@@ -707,10 +577,6 @@ function App() {
       setScriptRunnerPanelOpen(true);
     } else if (item === 'systemLog') {
       setSystemLogPanelOpen(true);
-    } else if (item === 'remoteViewer') {
-      setRemoteViewerPanelOpen(true);
-    } else if (item === 'recordingConfig') {
-      setRecordingConfigPanelOpen(true);
     }
   };
 
@@ -754,8 +620,7 @@ function App() {
   // silently works, or it is silently unavailable, and nothing has promised
   // the user that it will be there.
   useEffect(() => {
-    // Viewer windows mirror a host's data and never own a save file.
-    if (isViewerMode || recoveryPromptStarted) return;
+    if (recoveryPromptStarted) return;
     recoveryPromptStarted = true;
 
     const run = async () => {
@@ -826,27 +691,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    pollIntervalRef.current = pollingRate.valueMs;
-    plotStrideRef.current = Math.max(1, Math.round(CHART_INPUT_INTERVAL_MS / pollingRate.valueMs));
-    pollsSincePlotRef.current = 0;
-  }, [pollingRate.valueMs]);
-
-  useEffect(() => {
     saveIntervalRef.current = saveRate.valueMs;
     // Re-arm rather than carry the old phase over: a change to the save rate
     // should take effect on the next poll, not once the deadline left over from
     // the previous rate expires (up to half an hour away).
     nextRecordAtRef.current = 0;
   }, [saveRate.valueMs]);
-
-  // A manual choice is its own answer — no probe involved — so it takes effect
-  // as soon as it is picked rather than at the next connect. (The control is
-  // disabled while connected, so this can only run between sessions.)
-  useEffect(() => {
-    if (modbusPrecision === 'auto') return;
-    resolvedPrecisionRef.current = modbusPrecision;
-    setResolvedPrecision(modbusPrecision);
-  }, [modbusPrecision]);
 
   useEffect(() => {
     saveAiCalibration(aiCalibration);
@@ -881,10 +731,6 @@ function App() {
   useEffect(() => {
     writeJsonStorage('param_collapsed', paramCollapsed);
   }, [paramCollapsed]);
-
-  useEffect(() => {
-    saveRecordingConfig(recordingConfig);
-  }, [recordingConfig]);
 
   const handleAiFreeLabelChange = useCallback((idx: number, value: string) => {
     setAiFreeLabels((prev) => {
@@ -989,25 +835,11 @@ function App() {
     pendingDataPoints.current = [];
     const buffer = dataBufferRef.current;
 
-    // What remote viewers are shown: exactly the points this host decided to
-    // plot, not every captured point. During a save that means the decimated
-    // stream, so the feed's bandwidth is bounded by the chart budget rather than
-    // by the poll rate — a 50 Hz capture does not become a 50 Hz socket.
-    const published: DataPoint[] = [];
     // Whether the chart buffer actually gained anything. While saving it very
     // often does not — see the redraw arming at the bottom.
     let bufferChanged = false;
 
-    if (isViewerMode) {
-      bufferChanged = true;
-      // A viewer's points arrive already decimated by the host and already
-      // bounded by the hub's backlog, so there is nothing to decide here: keep
-      // the most recent chart budget and drop the rest. Notably this skips the
-      // IndexedDB write below — a monitor is not a recorder, and the complete
-      // record lives on the host's TSV.
-      for (const p of pointsToAdd) buffer.push(p);
-      if (buffer.length > CHART_MAX_POINTS) buffer.splice(0, buffer.length - CHART_MAX_POINTS);
-    } else if (tsvWriterRef.current) {
+    if (tsvWriterRef.current) {
       // Saving: keep the chart bounded by downsampling the WHOLE capture
       // (save-start → now) to ~CHART_MAX_POINTS. Add 1 of every `stride` raw
       // points, and when the buffer doubles, re-decimate by 2 and double the
@@ -1016,7 +848,6 @@ function App() {
       for (const p of pointsToAdd) {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
-          published.push(p);
           bufferChanged = true;
         }
         saveRawCounterRef.current++;
@@ -1046,7 +877,6 @@ function App() {
       // decimation — every point the chart is fed is drawn.
       bufferChanged = true;
       for (const p of pointsToAdd) buffer.push(p);
-      published.push(...pointsToAdd);
       if (buffer.length > NON_SAVING_CHART_PREVIEW_POINTS) {
         buffer.splice(0, buffer.length - NON_SAVING_CHART_PREVIEW_POINTS);
       }
@@ -1072,14 +902,6 @@ function App() {
           console.error('Error trimming data points:', err);
         });
       }
-    }
-
-    // Push to remote viewers, if any. publishSamples short-circuits while remote
-    // monitoring is off, so this costs one branch on the normal path.
-    if (published.length > 0) {
-      viewerHostRef.current?.publishSamples(
-        published.map((p) => [p.seq, p.timestamp, Array.from(p.aiRaw), Array.from(p.aiPhysical), Array.from(p.param)]),
-      );
     }
 
     // Redraws are data-driven AND rate-limited, and it takes both to be right.
@@ -1195,10 +1017,6 @@ function App() {
   }, [applyCalibrationToChannels]);
 
   const scriptRunner = useScriptRunner(setAo, handleTareCalibration);
-  // Only the panel needs this hook; the events themselves call notify() from
-  // utils/notifications directly, which is what lets a worker message handler
-  // raise one without a component in the way.
-  const notifications = useNotifications();
 
   // Mirror AO values into the ScriptRunner share so GetAo() can read them, in
   // volts to match the unit SetAo() takes (AO state is held in millivolts).
@@ -1226,214 +1044,26 @@ function App() {
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
 
-  // --- Remote monitoring (desktop exe only) ------------------------------
-  //
-  // Host side. The per-sample feed is tapped off the chart flush above; what is
-  // left is the slow-moving half — labels, calibration, voltage modes and the
-  // header's status line — which is republished on a timer rather than on every
-  // change. A second's latency on a label is invisible, and a timer cannot be
-  // forgotten the way an extra publish call at each of a dozen setState sites
-  // would eventually be.
-  const viewerHost = useViewerHost();
-  viewerHostRef.current = viewerHost;
-
-  // --- Camera / microphone capture ---------------------------------------
-  //
-  // One device, one stream, four consumers (this panel's preview, the chart
-  // slot on the launcher, the file recorder and the remote publisher). The
-  // device is opened only while one of them is actually looking, so a bound
-  // camera costs nothing until it is used — and it is frozen while recording,
-  // because re-opening it mid-run would cut the recording in half.
-  const cameraWanted =
-    !isViewerMode &&
-    hasBoundDevice(recordingConfig) &&
-    (recordingConfigPanelOpen || isLauncherMode || activeRecordingFilename !== '');
-  const cameraFeed = useCameraFeed({
-    config: recordingConfig,
-    active: cameraWanted,
-    locked: activeRecordingFilename !== '',
-  });
-  const videoRecorderRef = useRef<VideoRecorderHandle | null>(null);
-  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
-
-  // Host side of remote video. A second encoder, so it only runs when somebody
-  // is actually attached — see useMediaStreamHost.
-  useMediaStreamHost({
-    stream: cameraFeed.stream,
-    viewerCount: viewerHost.status?.viewers ?? 0,
-    publishMedia: viewerHost.publishMedia,
-    publishMediaEnd: viewerHost.publishMediaEnd,
-  });
-
-  // What the System Log window puts in its subtitle, shared with slot 3 and
-  // with the snapshot sent to viewers so all three say the same thing. The log
-  // itself covers the whole app now; this line still names the run, because a
-  // tail left open across runs would otherwise not say which one it is of.
+  // What the System Log window puts in its subtitle, shared with slot 3. The
+  // log itself covers the whole app now; this line still names the run,
+  // because a tail left open across runs would otherwise not say which one it
+  // is of.
   const hostScriptStatus = scriptRunner.runningTab
     ? `${scriptRunner.runningTab.name} — ${scriptRunner.scriptRunning ? 'Running' : scriptRunner.scriptRun.outcome}`
     : scriptRunner.scriptRunning
       ? 'Running'
       : scriptRunner.scriptRun.outcome;
 
-  // Rebuilt every render (see viewerStateRef below) so the timer below always reads
-  // current values without owning them as dependencies.
-  const viewerStateRef = useRef<() => ViewerStatePayload>(null as unknown as () => ViewerStatePayload);
-  viewerStateRef.current = () => ({
-    aiLabels: Array.from({ length: AI_CHANNELS }, (_, i) => aiFreeLabels[i] ?? ''),
-    aoLabels: Array.from({ length: AO_CHANNELS }, (_, i) => aoFreeLabels[i] ?? ''),
-    paramLabels: Array.from({ length: PARAM_CHANNELS }, (_, i) => paramFreeLabels[i] ?? ''),
-    voltageConfig: voltageConfig.slice(0, AI_CHANNELS),
-    calibration: aiCalibration.slice(0, AI_CHANNELS).map(({ a, b, c }) => ({ a, b, c })),
-    aoMilliVolts: aoChannels.map((ch) => ch.physical),
-    paramValues: [...paramValues],
-    connected,
-    saving: activeSaveFilename !== '',
-    filename: activeSaveFilename,
-    saveElapsedMs,
-    savePointCount,
-    pollingIntervalMs: pollingRate.valueMs,
-    saveIntervalMs: saveRate.valueMs,
-    actualPollIntervalMs,
-    precision: resolvedPrecision,
-    serial: `${serialTransportLabel} - ${formatSerialSettings(serialSettings)}`,
-    // The tail only. A viewer's chart slot shows about a screenful, and sending
-    // the whole log every second would put a session's entire output on the wire
-    // once a second to redraw the same last few lines. Unfiltered by level: the
-    // viewer applies its own threshold, which is that machine's setting.
-    systemLog: systemLogSnapshot().slice(-VIEWER_SYSTEM_LOG_TAIL),
-    scriptStatus: hostScriptStatus,
-    scriptRunning: scriptRunner.scriptRunning,
-  });
-
-  useEffect(() => {
-    if (isViewerMode) return;
-    const timer = window.setInterval(() => {
-      viewerHostRef.current?.publishState(viewerStateRef.current());
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   // Sleep suppression while there is something to lose by sleeping: a live
   // acquisition, or a script driving outputs. The page's own Screen Wake Lock
   // (requestWakeLock) covers the display while the window is visible; this asks
   // the launcher process to hold the *system* awake, which is the part a
   // minimised window cannot do for itself. Outside the exe the call is a no-op.
+  const { setKeepAwake } = useKeepAwake();
   const keepAwakeWanted = acquiring || scriptRunner.scriptRunning;
-  const setKeepAwake = viewerHost.setKeepAwake;
   useEffect(() => {
     setKeepAwake(keepAwakeWanted);
   }, [keepAwakeWanted, setKeepAwake]);
-
-  // Viewer side. Received samples are pushed through the same buffer and flush
-  // the acquisition loop uses, so the charts and channel cards on a monitor are
-  // drawn by exactly the code that draws them on the host — there is no second
-  // rendering path to keep in step.
-  const ingestRemoteSamples = useCallback(
-    (samples: ViewerSample[]) => {
-      if (samples.length === 0) return;
-      for (const [seq, timestamp, raw, phy, param] of samples) {
-        pendingDataPoints.current.push({
-          seq,
-          timestamp,
-          aiRaw: Float32Array.from(raw),
-          aiPhysical: Float32Array.from(phy),
-          param: Float32Array.from(param),
-        });
-      }
-      // Only the newest sample reaches the channel cards; the rest exist to fill
-      // the chart. Physical values come from the host as sent — recomputing them
-      // from the viewer's own calibration would show a different number from the
-      // one the operator is looking at.
-      const [, , lastRaw, lastPhy] = samples[samples.length - 1];
-      aiRawSourceRef.current = [...lastRaw];
-      setAiChannels((prev) =>
-        prev.map((ch, idx) => {
-          const rawValue = lastRaw[idx] ?? ch.raw;
-          const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-          return {
-            ...ch,
-            raw: rawValue,
-            physical: lastPhy[idx] ?? ch.physical,
-            status: getAiStatus(rawValue),
-            voltage,
-            microStrain,
-          };
-        }),
-      );
-      flushPendingDataPoints();
-    },
-    [flushPendingDataPoints],
-  );
-
-  const ingestRemoteState = useCallback((state: ViewerStatePayload) => {
-    // Every setter is a no-op when the value is unchanged, because this runs
-    // once a second and React would otherwise re-render the whole grid on each
-    // tick regardless of whether anything moved.
-    const replaceIfChanged = <T,>(prev: T, next: T): T =>
-      JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
-
-    setAiFreeLabels((prev) => replaceIfChanged(prev, state.aiLabels));
-    setAoFreeLabels((prev) => replaceIfChanged(prev, state.aoLabels));
-    setParamFreeLabels((prev) => replaceIfChanged(prev, state.paramLabels));
-    // Sanitized, not cast: the host may be running a different version of this
-    // app and sending a mode this build does not know.
-    setVoltageConfig((prev) => replaceIfChanged(prev, sanitizeVoltageConfig(state.voltageConfig)));
-    setAiCalibration((prev) => replaceIfChanged(prev, state.calibration));
-    setParamValues((prev) => replaceIfChanged(prev, state.paramValues));
-    setAoChannels((prev) =>
-      prev.map((ch, idx) => {
-        const physical = state.aoMilliVolts[idx] ?? ch.physical;
-        return physical === ch.physical ? ch : { ...ch, raw: physical, physical };
-      }),
-    );
-    setConnected(state.connected);
-    setActiveSaveFilename(state.filename);
-    setSaveElapsedMs(state.saveElapsedMs);
-    setSavePointCount(state.savePointCount);
-    setActualPollIntervalMs(state.actualPollIntervalMs ?? 0);
-    setRemoteSerialLabel(state.serial);
-    // Absent from a host running an older build, which is why it defaults
-    // rather than being read straight through.
-    setRemoteSystemLog(state.systemLog ?? []);
-    setRemoteScriptStatus(state.scriptStatus ?? '');
-    setRemoteScriptRunning(state.scriptRunning === true);
-    // Mirror the host's resolved register map. Without this the viewer's
-    // resolvedPrecision stays at its 'normal' default and a host in Extended
-    // mode prints its Raw without toFixed(3), dropping the decimal part that
-    // is the whole reason the mode exists. The ref is the on-wire mirror that
-    // poll-side code reads; the viewer never polls, but keeping them in step
-    // is cheaper than reasoning about which one each consumer reads.
-    setResolvedPrecision((prev) => (prev === state.precision ? prev : state.precision));
-    resolvedPrecisionRef.current = state.precision;
-    setPollingRate((prev) =>
-      prev.valueMs === state.pollingIntervalMs
-        ? prev
-        : POLLING_OPTIONS.find((option) => option.valueMs === state.pollingIntervalMs) ?? prev,
-    );
-    setSaveRate((prev) =>
-      prev.valueMs === state.saveIntervalMs
-        ? prev
-        : SAVE_RATE_OPTIONS.find((option) => option.valueMs === state.saveIntervalMs) ?? prev,
-    );
-  }, []);
-
-  const ingestRemoteReset = useCallback(() => {
-    pendingDataPoints.current = [];
-    dataBufferRef.current = [];
-    setDisplayRevision((v) => v + 1);
-  }, []);
-
-  // Viewer side of the host's camera. Inert on the host itself, where onMedia
-  // is never called.
-  const remoteVideo = useRemoteVideo();
-
-  const viewerClient = useViewerClient({
-    onState: ingestRemoteState,
-    onSamples: ingestRemoteSamples,
-    onReset: ingestRemoteReset,
-    onMedia: remoteVideo.onMedia,
-    onMediaEnd: remoteVideo.onMediaEnd,
-  });
 
   // `timestamp` is the capture time, taken in pollOnce the moment the AI read
   // returned — NOT Date.now() from in here. This function runs from a promise
@@ -1489,7 +1119,7 @@ function App() {
 
   /**
    * The display side of a poll: channel cards, and — when `plot` is set — the
-   * chart buffer, IndexedDB and the remote viewer feed.
+   * chart buffer and IndexedDB.
    *
    * Both are on the poll clock, not the save rate. Only the TSV follows "Save
    * every"; a chart that advanced one point per half hour would make a
@@ -1638,8 +1268,8 @@ function App() {
     }
   }, [pruneFailuresInWindow, writeAoBlockOnce]);
 
-  // Direct assignment during render, like viewerStateRef below: an
-  // effect would leave the first AO change of the session with no writer.
+  // Direct assignment during render: an effect would leave the first AO
+  // change of the session with no writer.
   requestAoWriteRef.current = () => {
     void doAoWriteAsync();
   };
@@ -1695,9 +1325,7 @@ function App() {
       );
     } else {
       try {
-        aiSourceValues = resolvedPrecisionRef.current === 'extended'
-          ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
-          : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
+        aiSourceValues = await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
       } catch (readError) {
         inputReadFailureTimestampsRef.current.push(Date.now());
         const normalizedReadError =
@@ -1706,9 +1334,7 @@ function App() {
           console.warn('[App] AI read failed; retrying once', normalizedReadError);
           try {
             await waitMs(RETRY_DELAY_MS);
-            aiSourceValues = resolvedPrecisionRef.current === 'extended'
-              ? await client.readInputRegistersAsFloat32Abcd(AI_FLOAT_START_REGISTER, AI_CHANNELS, readTimeoutMs)
-              : await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
+            aiSourceValues = await client.readInputRegisters(AI_START_REGISTER, AI_CHANNELS, readTimeoutMs);
           } catch (retryReadError) {
             inputReadFailureTimestampsRef.current.push(Date.now());
             firstError = new Error(
@@ -1867,7 +1493,7 @@ function App() {
 
       if (pollTimer.current === undefined) return;
 
-      const pollIntervalMs = pollingRate.valueMs;
+      const pollIntervalMs = DEFAULT_POLLING_RATE_MS;
       idealScheduleRef.current += pollIntervalMs;
       const now = Date.now();
       if (idealScheduleRef.current < now - pollIntervalMs) {
@@ -1883,7 +1509,7 @@ function App() {
         void runPollingLoop();
       }, delay);
     }
-  }, [pollOnce, pollingRate.valueMs]);
+  }, [pollOnce]);
 
   const scheduleImmediatePoll = useCallback(() => {
     if (pollTimer.current !== undefined) {
@@ -1983,7 +1609,6 @@ function App() {
     console.info('[App] handleConnect start', {
       slaveId,
       serialSettings,
-      modbusPrecision,
       connected,
     });
     // Fence off anything still owed to a previous session, so a straggler cannot
@@ -2000,7 +1625,6 @@ function App() {
 
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
-      viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
       // The one place a full plot rebuild is free: no measurement is running
       // yet, and the charts are empty. Bounding WebGL/regl accumulation per
@@ -2012,9 +1636,6 @@ function App() {
         slaveId,
         serialSettings,
         serial,
-        // Auto opens on the Normal timing (the wider inter-frame gap) and is
-        // corrected by setPrecisionMode() once the probe has answered.
-        modbusPrecision === 'extended',
         shouldUsePolyfill,
       );
       pendingClient = client;
@@ -2033,22 +1654,6 @@ function App() {
         throw new Error(`Failed to sync AO Holding Registers: ${(err as Error).message}`);
       }
 
-      // Resolve Auto here, after the AO sync has already proved the link works
-      // end to end. Probing first would make "device is not talking at all"
-      // and "device has no float registers" the same silence, and the app
-      // would settle on a register map on the strength of a dead cable.
-      //
-      // Both the ref and the state are set before setAcquiring(true) below, so
-      // the polling loop cannot start against a stale answer.
-      const resolved: ModbusPrecision =
-        modbusPrecision === 'auto'
-          ? (await probeExtendedPrecision(client)) ? 'extended' : 'normal'
-          : modbusPrecision;
-      console.info('[App] precision resolved', { setting: modbusPrecision, resolved });
-      client.setPrecisionMode(resolved === 'extended');
-      resolvedPrecisionRef.current = resolved;
-      setResolvedPrecision(resolved);
-
       clientRef.current = client;
       pendingClient = null;
       outputHoldingFailureTimestampsRef.current = [];
@@ -2060,11 +1665,8 @@ function App() {
       // Drop the previous session's link errors: they describe a connection
       // that no longer exists.
       clearStatusSource('link');
-      // Always names the mode, including when it was chosen by the probe: an
-      // Auto that got it wrong has to be visible somewhere the user looks.
       setStatus(
-        `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL[resolved]}` +
-          (modbusPrecision === 'auto' ? ' (auto)' : ''),
+        `Connected @ ${formatSerialSettings(serialSettings)} - ${PRECISION_LABEL}`,
         'link',
       );
       await requestWakeLock();
@@ -2157,7 +1759,6 @@ function App() {
       setActualPollIntervalMs(0);
       await dataStorage.clearAllData();
       dataBufferRef.current = [];
-      viewerHostRef.current?.publishReset();
       setDisplayRevision((v) => v + 1);
       console.info('[App] handleDisconnect data/session cleanup complete');
     } catch (err) {
@@ -2371,83 +1972,6 @@ function App() {
     }
   };
 
-  /**
-   * Start recording, from the button in Recording Config.
-   *
-   * Deliberately not tied to Start Save any more. Recording is most often
-   * wanted for remote monitoring — watching a rig for an hour with no TSV run
-   * in progress at all — and binding it to the save made that impossible while
-   * also forcing the video into the downloads folder, because Start Save's own
-   * picker had already spent the click's user activation. A button of its own
-   * carries its own activation, which is what lets the folder be chosen.
-   */
-  const handleStartRecording = async () => {
-    if (videoRecorderRef.current) return;
-
-    const stream = cameraFeed.stream;
-    if (!stream) {
-      postFailure(
-        'ERROR',
-        'recording',
-        cameraFeed.error
-          ? `Recording not started: ${cameraFeed.error}`
-          : 'Recording not started: no camera or microphone is bound.',
-      );
-      return;
-    }
-
-    try {
-      // The save dialog opens inside this call, on this click — the only place
-      // it can, since a file picker needs a user gesture.
-      const recorder = await createVideoRecorder({
-        stream,
-        config: recordingConfig,
-        onError: (message, severity) => {
-          if (severity === 'warning') {
-            console.warn('Recording warning:', message);
-            // A dropped frame or a re-negotiated bitrate: the recording is
-            // still running, so this must not read as a failure — which is what
-            // it had to do, or say nothing at all, before there were levels.
-            logSystem('WARN', SOURCE.recording, message);
-            return;
-          }
-          console.error('Recording error:', message);
-          postFailure('ERROR', 'recording', message);
-        },
-      });
-      // Cancelled the save dialog. Nothing was started and nothing is said.
-      if (!recorder) return;
-      videoRecorderRef.current = recorder;
-      setActiveRecordingFilename(recorder.getFileName());
-      setRecordingStartedAt(Date.now());
-      setStatus(`Recording to ${recorder.getFileName()}`, 'recording');
-      clearStatusSource('recording');
-    } catch (err) {
-      reportError('recording', err, 'Recording failed to start');
-    }
-  };
-
-  const handleStopRecording = async () => {
-    const recorder = videoRecorderRef.current;
-    if (!recorder) return;
-    videoRecorderRef.current = null;
-    const fileName = recorder.getFileName();
-    setActiveRecordingFilename('');
-    setRecordingStartedAt(null);
-
-    try {
-      const bytes = await recorder.stop();
-      if (bytes === 0) {
-        postFailure('ERROR', 'recording', 'Recording produced no data.');
-        return;
-      }
-      setStatus(`Saved ${fileName}`, 'recording');
-      clearStatusSource('recording');
-    } catch (err) {
-      reportError('recording', err, 'Failed to finish the recording');
-    }
-  };
-
   const handleStartSave = async () => {
     // Re-entry guard: a second Start (double-click, or a click racing the file
     // picker) would create a second writer that overwrites tsvWriterRef and
@@ -2485,7 +2009,6 @@ function App() {
           // polling schedule has drifted; resync from now.
           idealScheduleRef.current = 0;
         },
-        resolvedPrecision === 'extended',
       );
       try {
         const startedAt = Date.now();
@@ -2494,7 +2017,6 @@ function App() {
 
         await dataStorage.clearAllData();
         dataBufferRef.current = [];
-        viewerHostRef.current?.publishReset();
         // Restart the whole-capture downsampling from this save start.
         saveDecimationStrideRef.current = 1;
         saveRawCounterRef.current = 0;
@@ -2578,16 +2100,10 @@ function App() {
 
     await dataStorage.clearAllData();
     dataBufferRef.current = [];
-    viewerHostRef.current?.publishReset();
     setDisplayRevision((v) => v + 1);
 
     setStatus('Stopped saving', 'save');
   };
-
-  // Auto has no answer until it has connected once, and saying "i16t" before
-  // the probe has run would be a claim about a device nobody has asked yet.
-  const precisionLabel =
-    modbusPrecision === 'auto' && !connected ? 'auto' : PRECISION_LABEL[resolvedPrecision];
 
   // The page background and its full-height box live on <body> (index.css)
   // rather than on this element: everything below is inside #root, which the UI
@@ -2616,17 +2132,11 @@ function App() {
                 </a>
               </h1>
               {/* Link details have moved to Connection Config in full — baud
-                  and parity, the transport name, and the resolved precision.
+                  and parity, the transport name, and the precision mode.
                   None of them is something to act on while a run is in flight
                   (they are all locked once connected), and the header is
                   sticky, so every line here is a line the channel grid never
-                  gets back. A viewer has no local link at all: what it shows
-                  is the host's, which no panel of its own can report. */}
-              {isViewerMode && (
-                <p className="text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
-                  {remoteSerialLabel || 'Waiting for the host window…'}
-                </p>
-              )}
+                  gets back. */}
               <div
                 role="status"
                 aria-live="polite"
@@ -2670,37 +2180,7 @@ function App() {
                 becomes the only item on its own line and would otherwise sit at
                 the left edge, away from the window controls it belongs with. */}
             <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-              {/* The theme toggle's home is the Menu panel's header. A viewer
-                  has no menu button (see below), so it keeps one here rather
-                  than losing light/dark entirely — a monitor is exactly the
-                  window someone leaves on a wall display and wants dimmed. */}
-              {isViewerMode && <ThemeToggle isDarkMode={isDarkMode} onToggle={toggleTheme} />}
-              {/* A viewer gets no controls at all — not disabled ones. Every
-                  action here (connect, save, and everything behind the menu)
-                  acts on hardware this machine does not have, so offering them
-                  greyed out would only invite the question of how to enable
-                  them. The badge says why they are missing. The restriction
-                  itself is enforced by the transport, not by this branch: see
-                  launcher/viewerHub.ts. */}
-              {isViewerMode ? (
-                <span
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                    viewerClient.hostGone
-                      ? 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-amber-300'
-                      : viewerClient.connected
-                        ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-500/60 dark:bg-emerald-500/10 dark:text-emerald-300'
-                        : 'border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
-                  }`}
-                >
-                  {viewerClient.hostGone
-                    ? 'Monitor - host window closed'
-                    : viewerClient.connected
-                      ? 'Monitor (read-only)'
-                      : 'Monitor - reconnecting…'}
-                </span>
-              ) : (
-                <>
-                  {/* Connect is a button; Disconnect is a swipe. They are not
+              {/* Connect is a button; Disconnect is a swipe. They are not
                       the same kind of action: connecting is recoverable by
                       clicking again, while disconnecting mid-run drops the link
                       a save is being written from, and the two sit at the same
@@ -2823,8 +2303,6 @@ function App() {
                       <line x1="3" y1="18" x2="21" y2="18" />
                     </svg>
                   </button>
-                </>
-              )}
             </div>
           </header>
         </div>
@@ -2877,7 +2355,6 @@ function App() {
                     value={aiFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    readOnly={isViewerMode}
                     className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
@@ -2885,11 +2362,9 @@ function App() {
                   <div className="flex justify-between items-center leading-none">
                     <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
                     <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {/* Extended reads float32 registers, so truncating the
-                          readout to an integer threw away the only thing that
-                          mode is for. Normal carries int16 counts, where a
-                          decimal point would be noise. */}
-                      {resolvedPrecision === 'extended' ? ch.raw.toFixed(3) : ch.raw}
+                      {/* i16t Input Registers, so raw is an integer count —
+                          a decimal point here would be noise. */}
+                      {ch.raw}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
@@ -2950,7 +2425,6 @@ function App() {
                     value={aoFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
                     placeholder="Label"
-                    readOnly={isViewerMode}
                     className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                   />
                 </div>
@@ -2995,7 +2469,6 @@ function App() {
                   value={paramFreeLabels[idx] ?? ''}
                   onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
                   placeholder="Label"
-                  readOnly={isViewerMode}
                   className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 />
               </div>
@@ -3040,64 +2513,32 @@ function App() {
           onXAxisChange={setChart2X}
           onYAxisChange={setChart2Y}
         />
-        {/* Slots 3 and 4 are the launcher's, and only the launcher's. On the web
-            build these stay plots, so nothing an existing user is looking at
-            moves. The axis selections for both are still loaded and still saved
-            — they are simply unused here, so switching between the two builds
-            does not cost the user their chart setup.
-
-            Slot 3 is the System Log in both. A viewer runs no script and owns
-            no serial port, so the entries come over the feed from the host —
-            which is the point: what a script printed and what the link did are
-            the other half of what the charts are showing, and that is as true
-            for someone watching remotely as for the person at the machine.
-
-            Slot 4 is the camera in both, from different sources — the local
-            device on the host, the host's stream on a viewer. */}
-        {isLauncherServed ? (
-          <SystemLogCard
-            remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-            subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
-            running={isViewerMode ? remoteScriptRunning : scriptRunner.scriptRunning}
-          />
-        ) : (
-          <ChartPanel
-            color="#f472b6"
-            dataPoints={dataBufferRef.current}
-            purgeEpoch={chartEpoch}
-            displayRevision={displayRevision}
-            axisOptions={axisOptions}
-            axisLabels={chartAxisLabels}
-            xAxis={chart3X}
-            yAxis={chart3Y}
-            isDarkMode={isDarkMode}
-            onXAxisChange={setChart3X}
-            onYAxisChange={setChart3Y}
-          />
-        )}
-        {isLauncherServed ? (
-          <CameraCard
-            feed={cameraFeed}
-            recording={activeRecordingFilename !== ''}
-            remote={isViewerMode}
-            snapshotUrl={remoteVideo.snapshotUrl}
-            lastFrameAt={remoteVideo.lastFrameAt}
-          />
-        ) : (
-          <ChartPanel
-            color="#fbbf24"
-            dataPoints={dataBufferRef.current}
-            purgeEpoch={chartEpoch}
-            displayRevision={displayRevision}
-            axisOptions={axisOptions}
-            axisLabels={chartAxisLabels}
-            xAxis={chart4X}
-            yAxis={chart4Y}
-            isDarkMode={isDarkMode}
-            onXAxisChange={setChart4X}
-            onYAxisChange={setChart4Y}
-          />
-        )}
+        <ChartPanel
+          color="#f472b6"
+          dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
+          displayRevision={displayRevision}
+          axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
+          xAxis={chart3X}
+          yAxis={chart3Y}
+          isDarkMode={isDarkMode}
+          onXAxisChange={setChart3X}
+          onYAxisChange={setChart3Y}
+        />
+        <ChartPanel
+          color="#fbbf24"
+          dataPoints={dataBufferRef.current}
+          purgeEpoch={chartEpoch}
+          displayRevision={displayRevision}
+          axisOptions={axisOptions}
+          axisLabels={chartAxisLabels}
+          xAxis={chart4X}
+          yAxis={chart4Y}
+          isDarkMode={isDarkMode}
+          onXAxisChange={setChart4X}
+          onYAxisChange={setChart4Y}
+        />
       </div>
       </div>
 
@@ -3107,29 +2548,12 @@ function App() {
         onSelectItem={handleMenuSelect}
         isDarkMode={isDarkMode}
         onToggleTheme={toggleTheme}
-        showRemoteViewer={viewerHost.status !== null}
       />
 
       <ModbusConfigPanel
         open={modbusConfigPanelOpen}
         onClose={() => setModbusConfigPanelOpen(false)}
-        slaveId={slaveId}
-        onSlaveIdChange={setSlaveId}
-        serialSettings={serialSettings}
-        onSerialSettingsChange={setSerialSettings}
-        modbusPrecision={modbusPrecision}
-        onModbusPrecisionChange={setModbusPrecision}
-        baudOptions={BAUD_OPTIONS}
-        dataBitsOptions={DATA_BITS_OPTIONS}
-        stopBitsOptions={STOP_BITS_OPTIONS}
-        parityOptions={PARITY_OPTIONS}
-        precisionOptions={PRECISION_OPTIONS}
         transportLabel={serialTransportLabel}
-        resolvedPrecisionLabel={precisionLabel}
-        pollingRate={pollingRate}
-        onPollingRateChange={setPollingRate}
-        pollingOptions={POLLING_OPTIONS}
-        connected={connected}
       />
 
       <CalibrationPanel
@@ -3178,25 +2602,11 @@ function App() {
         open={appInfoPanelOpen}
         onClose={() => setAppInfoPanelOpen(false)}
         connected={connected}
-        notifications={notifications}
       />
 
       <ManualPanel
         open={manualPanelOpen}
         onClose={() => setManualPanelOpen(false)}
-      />
-
-      <RecordingConfigPanel
-        open={recordingConfigPanelOpen}
-        onClose={() => setRecordingConfigPanelOpen(false)}
-        config={recordingConfig}
-        onConfigChange={setRecordingConfig}
-        feed={cameraFeed}
-        locked={activeRecordingFilename !== ''}
-        activeFileName={activeRecordingFilename}
-        recordingStartedAt={recordingStartedAt}
-        onStartRecording={handleStartRecording}
-        onStopRecording={handleStopRecording}
       />
 
       <ScriptRunnerPanel
@@ -3212,41 +2622,19 @@ function App() {
       <SystemLogPanel
         open={systemLogPanelOpen}
         onClose={() => setSystemLogPanelOpen(false)}
-        remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-        subtitle={isViewerMode ? remoteScriptStatus : hostScriptStatus}
+        subtitle={hostScriptStatus}
       />
 
-      <RemoteViewerPanel
-        open={remoteViewerPanelOpen}
-        onClose={() => setRemoteViewerPanelOpen(false)}
-        status={viewerHost.status}
-        onEnabledChange={viewerHost.setEnabled}
-      />
-
-      {/* One strip, on every build. A viewer gets the log line without the
-          runner badge: it has no menu, so Script Runner is unreachable there and
-          a badge reporting its state would describe a feature that window does
-          not offer — but it can still lose its feed, and the log line is what
-          says so. */}
+      {/* One strip, on every build. */}
       <FooterBar
-        remoteEntries={isViewerMode ? remoteSystemLog : undefined}
-        // Null on a viewer without a branch of its own: a viewer cannot start a
-        // recording, so this is always '' there.
-        recording={activeRecordingFilename === '' ? null : { fileName: activeRecordingFilename }}
-        // The host's own measurement, or the host's as relayed, depending on
-        // which window this is — the same value the header used to print.
         pollIntervalMs={actualPollIntervalMs}
-        runner={
-          isViewerMode
-            ? null
-            : {
-                running: scriptRunner.scriptRunning,
-                outcome: scriptRunner.scriptRun.outcome,
-                status: scriptRunner.scriptRunnerStatus,
-                languageLabel: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label,
-                scriptName: scriptRunner.statusTabName,
-              }
-        }
+        runner={{
+          running: scriptRunner.scriptRunning,
+          outcome: scriptRunner.scriptRun.outcome,
+          status: scriptRunner.scriptRunnerStatus,
+          languageLabel: SCRIPT_LANGUAGES[scriptRunner.statusLanguage].label,
+          scriptName: scriptRunner.statusTabName,
+        }}
       />
     </div>
   );

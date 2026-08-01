@@ -24,10 +24,10 @@ export const saveAiCalibration = (values: AiCalibration[]) => writeJsonCookie(AI
 const VALID_VOLTAGE_MODES = new Set<string>(VOLTAGE_MODES.map((m) => m.value));
 
 // Every voltage config that comes from outside this build goes through here:
-// localStorage written by an older version, and the state a remote host pushes
-// to a viewer. Both can carry a mode this build no longer has (the retired
-// 'unknown', say), and rawToDisplayValue has no case for one — it would return
-// undefined and take the whole channel grid down on the next frame.
+// localStorage written by an older version can carry a mode this build no
+// longer has (the retired 'unknown', say), and rawToDisplayValue has no case
+// for one — it would return undefined and take the whole channel grid down on
+// the next frame.
 export const sanitizeVoltageConfig = (raw: unknown): VoltageMode[] => {
   if (!Array.isArray(raw)) return [...DEFAULT_VOLTAGE_CONFIG];
   return Array.from({ length: AI_CHANNELS }, (_, i) => {
@@ -87,20 +87,10 @@ export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: numb
       return { value: hx711RawToMvPerV(raw), unit: 'mV/V' };
     case 'hx711_micro_strain':
       return { value: hx711RawToMicroStrain(raw), unit: 'με' };
-    case 'ads1115_10v':
-      return { value: raw / 32768.0 * 10.0, unit: 'V' };
     case 'ads1115_6144mv':
       return { value: raw / 32768.0 * 6.144, unit: 'V' };
-    case 'ads1115_4096mv':
-      return { value: raw / 32768.0 * 4.096, unit: 'V' };
-    case 'ads1115_2048mv':
-      return { value: raw / 32768.0 * 2.048, unit: 'V' };
-    case 'ads1115_1024mv':
-      return { value: raw / 32768.0 * 1.024, unit: 'V' };
-    case 'ads1115_512mv':
-      return { value: raw / 32768.0 * 512, unit: 'mV' };
-    case 'ads1115_256mv':
-      return { value: raw / 32768.0 * 256, unit: 'mV' };
+    case 'ads1115_12288mv':
+      return { value: raw / 32768.0 * 12.288, unit: 'V' };
   }
 };
 
