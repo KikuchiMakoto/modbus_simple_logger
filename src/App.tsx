@@ -122,6 +122,7 @@ import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
 import { useScriptRunner } from './hooks/useScriptRunner';
 import { useKeepAwake } from './hooks/useKeepAwake';
+import { useUnloadGuard } from './hooks/useUnloadGuard';
 import { webUsbSerial } from './modbus/webusbSerial';
 
 function isMobileDevice(): boolean {
@@ -817,6 +818,11 @@ function App() {
   }, []);
 
   const isSaving = !!tsvWriterRef.current;
+
+  // Reload/close guard. Only while saving — outside a save there is nothing to
+  // lose and the prompt would just be in the way.
+  useUnloadGuard(isSaving);
+
   useEffect(() => {
     if (!isSaving || saveStartedAt === null) {
       setSaveElapsedMs(0);
