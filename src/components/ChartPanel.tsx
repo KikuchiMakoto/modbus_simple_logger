@@ -197,33 +197,38 @@ function ChartPanelComponent({
     const n = dataPoints.length;
     const xData = new Float64Array(n);
     const yData = new Float64Array(n);
-    const xIsTime = xDesc.kind === 'time';
-    // Plotly has no timezone support: a `type: 'date'` axis formats epoch-ms
-    // through d3's utcFormat / getUTCHours (see lib/dates.js formatTime, "only
-    // supports UTC times"), so feeding it a raw Date.now() draws the axis in
-    // UTC. The TSV's `timestamp` column (tsvFormat.ts, getHours) and the status
-    // bar clock (toLocaleTimeString) are both local, so the chart was the one
-    // surface disagreeing with the others — by 9 hours in JST.
+    // Raw epoch-ms goes straight to Plotly — do NOT pre-shift it by
+    // getTimezoneOffset().
     //
-    // Pre-shifting the plotted value into a "local epoch" is the standard fix:
-    // Plotly then renders local wall-clock while thinking it is UTC. Only the
-    // copy handed to Plotly moves — DataPoint.timestamp stays true epoch-ms for
-    // the TSV and IndexedDB, which must not be shifted.
+    // This used to add the local offset, on the premise that a `type: 'date'`
+    // axis renders epoch-ms in UTC (lib/dates.js formatTime does say "only
+    // supports UTC times"). That premise is wrong for *numeric* input. A number
+    // handed to a date axis goes through set_convert's dt2ms, which fails to
+    // parse it as a date string and falls back to `dateTime2ms(new Date(ms))`;
+    // that JS-Date branch subtracts `getTimezoneOffset()` itself, to "convert to
+    // the UTC milliseconds that give the same hours as this date has in the
+    // local timezone" — and the axis range does the same via cleanDate →
+    // ms2DateTimeLocal, which formats with d3-time-format's *local* timeFormat
+    // and getHours(), not utcFormat. Plotly's internal axis value is therefore
+    // already local wall-clock, and the UTC-only formatter downstream is
+    // consuming that pre-shifted value, not a true epoch.
     //
-    // One offset for the whole buffer, taken from its newest point rather than
-    // per point, to keep the allocation out of this loop. A session spanning a
-    // DST transition therefore reads an hour off on the far side of it — the
-    // trade is deliberate: this loop runs over the whole buffer on every redraw.
-    const tzShiftMs = xIsTime
-      ? -new Date(dataPoints[n - 1].timestamp).getTimezoneOffset() * 60_000
-      : 0;
+    // So the manual offset was a second application of a conversion Plotly had
+    // already done: the axis read +9h (JST) into the future. Verified in
+    // Chromium at Asia/Tokyo, America/New_York and UTC — with raw epoch-ms the
+    // ticks match local wall-clock in all three.
+    //
+    // The TSV's `timestamp` column (tsvFormat.ts, getHours) and the status bar
+    // clock (toLocaleTimeString) were always local and always correct; only the
+    // chart was off, which is what pointed at the drawing code rather than the
+    // stored value.
     let xMin = Infinity;
     let xMax = -Infinity;
     let yMin = Infinity;
     let yMax = -Infinity;
     for (let i = 0; i < n; i++) {
       const p = dataPoints[i];
-      const xv = xIsTime ? p.timestamp + tzShiftMs : resolveAxisValue(p, xDesc);
+      const xv = resolveAxisValue(p, xDesc);
       const yv = resolveAxisValue(p, yDesc);
       xData[i] = xv;
       yData[i] = yv;
