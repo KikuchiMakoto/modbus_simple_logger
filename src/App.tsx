@@ -108,7 +108,6 @@ import {
   DenominatorOption,
 } from './components/InputCalibratorPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
-import { ModbusConfigPanel } from './components/ModbusConfigPanel';
 import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
@@ -136,7 +135,6 @@ function isMobileDevice(): boolean {
 
 const shouldUsePolyfill = isMobileDevice() || !('serial' in navigator);
 const serial: Serial = shouldUsePolyfill ? webUsbSerial as unknown as Serial : navigator.serial;
-const serialTransportLabel = shouldUsePolyfill ? 'WebUSB' : 'WebSerial';
 
 // GP8403 full scale. AO state is held in millivolts, so this is both the write
 // clamp and the 100% mark of the AO card's level meter — one constant, so the
@@ -198,7 +196,6 @@ const SAVE_RATE_OPTIONS: PollingRateOption[] =
 const DEFAULT_SAVE_RATE_MS = 1000;
 
 // The link's serial framing is fixed — one configuration, not a user choice.
-// Connection Config (ModbusConfigPanel) displays these as read-only text.
 const FIXED_SERIAL_SETTINGS: SerialSettings = {
   baudRate: 38400,
   dataBits: 8,
@@ -420,7 +417,6 @@ function App() {
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [inputCalibratorPanelOpen, setInputCalibratorPanelOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
-  const [modbusConfigPanelOpen, setModbusConfigPanelOpen] = useState(false);
   const [inputConfigPanelOpen, setInputConfigPanelOpen] = useState(false);
   const [outputTesterPanelOpen, setOutputTesterPanelOpen] = useState(false);
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
@@ -564,8 +560,6 @@ function App() {
       setCalibrationPanelOpen(true);
     } else if (item === 'inputCalibrator') {
       setInputCalibratorPanelOpen(true);
-    } else if (item === 'modbusConfig') {
-      setModbusConfigPanelOpen(true);
     } else if (item === 'inputConfig') {
       setInputConfigPanelOpen(true);
     } else if (item === 'outputTester') {
@@ -2137,12 +2131,11 @@ function App() {
                   ModbusSimpleLogger
                 </a>
               </h1>
-              {/* Link details have moved to Connection Config in full — baud
-                  and parity, the transport name, and the precision mode.
-                  None of them is something to act on while a run is in flight
-                  (they are all locked once connected), and the header is
-                  sticky, so every line here is a line the channel grid never
-                  gets back. */}
+              {/* Link details — baud and parity, the transport name, the
+                  precision mode — are not shown at all. None of them is
+                  something to act on while a run is in flight (they are all
+                  locked once connected), and the header is sticky, so every
+                  line here is a line the channel grid never gets back. */}
               <div
                 role="status"
                 aria-live="polite"
@@ -2233,8 +2226,8 @@ function App() {
                       Connect
                     </button>
                   )}
-                  {/* Next to Start Save, not in Connection Config, because it is
-                      a property of the run rather than of the link: the poll
+                  {/* Next to Start Save, because it is a property of the run
+                      rather than of the link: the poll
                       rate is set once for a device, this is chosen per
                       measurement — and unlike the poll rate it stays live
                       mid-run. */}
@@ -2554,12 +2547,6 @@ function App() {
         onSelectItem={handleMenuSelect}
         isDarkMode={isDarkMode}
         onToggleTheme={toggleTheme}
-      />
-
-      <ModbusConfigPanel
-        open={modbusConfigPanelOpen}
-        onClose={() => setModbusConfigPanelOpen(false)}
-        transportLabel={serialTransportLabel}
       />
 
       <CalibrationPanel
