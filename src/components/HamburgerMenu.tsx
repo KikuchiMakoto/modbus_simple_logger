@@ -11,7 +11,6 @@ type HamburgerMenuProps = {
 };
 
 const MENU_ITEMS = [
-  { key: 'modbusConfig', label: 'Connection Config', icon: '🔌', wip: false },
   // The three AI-side windows share an "Input …" prefix and sit together, in
   // the order they are reached for: the coefficient table is what gets opened
   // day to day, the calibrator is what fills it in, and the range is set once
@@ -22,7 +21,7 @@ const MENU_ITEMS = [
   // listed, and both of those follow the channel number the user picks.
   { key: 'inputCalibrator', label: 'Input Calibrator', icon: '⚖️', wip: false },
   // A mixer/knob panel rather than the old ⚡: what this sets is each channel's
-  // range, and a lightning bolt read as "power" next to Connection Config.
+  // range, and a lightning bolt read as "power".
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
   { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
   { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },

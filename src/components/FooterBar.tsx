@@ -221,8 +221,8 @@ export function FooterBar({
             No breakpoint gate at all, unlike the script-name chip beside it.
             That chip can go because the log line already names the script it
             came from; this is stated nowhere else in the app, and a phone on
-            the WebUSB path — no room for a Script Runner window, no room for
-            Connection Config either — is exactly the setup with nothing else
+            the WebUSB path — no room for a Script Runner window — is exactly
+            the setup with nothing else
             that could answer "is the link keeping up". It costs about 52px,
             all of it out of a log line that was already truncating. */}
         <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">

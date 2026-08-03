@@ -58,7 +58,6 @@ src/
 │   ├── UiScaleControl.tsx           # UI 拡大率の [-] [100%] [+]。Menu パネルのヘッダー
 │   ├── CalibrationPanel.tsx         # Input Calib Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── InputCalibratorPanel.tsx     # Input Calibrator（実測最小二乗 / スペック計算）。CH00-15 を1ウィンドウで扱い、HX711/ADS1115 の別は ch 番号から決まる
-│   ├── ModbusConfigPanel.tsx        # 固定リンク設定（slave id/シリアル/精度/ポーリング）の読み取り専用表示（UI 名: Connection Config）。設定は不可 — 変更する画面ではない
 │   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
 │   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
@@ -131,7 +130,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
     - **ストライドは締切ではなく単純なカウンタ**。読取り失敗で1回飛んでも 10Hz のトレースの位相が 100ms ずれるだけで、TSV の1行欠落とは重みが違う
   - （履歴）Polling Rate がまだ選択肢だった頃、20ms は実機で保たなかったため候補は 25ms が最速だった（v4.1 の実測）。1 サイクルの下限が「フレーム時間 + `minMessageIntervalMs`(最低 10ms)」で、38400bps・AI 16ch の i16 読みなら 11.7ms + 10ms ≒ 22ms のため。**固定 100ms の現行構成ではこの余裕は問題にならない** — 25/50ms の速い側の選択肢を再び足す場合はこの制約が再び効く
   - **理由は FB 制御**。AO を叩くスクリプトは polling が更新した AI 値を読む。ここを保存周期に縛ると、「ディスクには1分に1点で十分だが制御は速く回したい」という真っ当な要求が「1分に1回しか入力が更新されない制御ループ」になる。ファイルサイズと制御品質は別の関心事
-  - **Save Rate の下限 200ms はポーリングレートと無関係の固定値**。これ以上速く書いても読み返す人はおらず、行あたりのコストだけが計測ループの真ん中に落ちる。**この下限が最も速いポーリング周期より遅いことが、2つのリストを互いに独立にしている** — 200ms より遅いポーリングを足すならクランプが要る。**置き場所を Connection Config に戻さないこと** — ポーリングはデバイスに対して一度決めるもの、保存周期は計測ごとに選ぶもの
+  - **Save Rate の下限 200ms はポーリングレートと無関係の固定値**。これ以上速く書いても読み返す人はおらず、行あたりのコストだけが計測ループの真ん中に落ちる。**この下限が最も速いポーリング周期より遅いことが、2つのリストを互いに独立にしている** — 200ms より遅いポーリングを足すならクランプが要る。**置き場所は Start Save の隣のまま** — ポーリングはデバイスに対して一度決めるもの、保存周期は計測ごとに選ぶもの
   - **記録の判定はポーリング回数のカウンタではなく「次に記録すべき時刻」(`nextRecordAtRef`)**。読み取り失敗やファイルピッカー中はポーリング自体が飛ぶため、カウンタ方式だと以降の全行の位相がずれ、失敗した回がたまたま N 回目だと**その行が丸ごと落ちる**。時刻締切なら遅れは最大1ポーリング周期で、位相は自動的に復帰する。判定は締切の半ポーリング周期手前から（締切に一番近いポーリングを選ぶため。1周期未満なので連続2回が同時に due になることはない）
   - 締切を **0 へリセット**（＝「次のポーリングを即記録」）するのは **計測開始時・切断時・保存開始/停止時・Save Rate 変更時**の4系統だけ
     - **`scheduleImmediatePoll` でリセットしてはならない**。これは `visibilitychange` からも呼ばれるため、30分保存中にユーザーが10回タブを切り替えると10行の余計な行が中途半端な位置に入る。締切は絶対時刻なので**凍結明けは放っておけば「期限切れ」として catch-up 節が張り直す** — 手当ては要らない（v4.1 で混入し修正）
@@ -140,7 +139,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。固定 100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
   - 表示は**フッター右端**の `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗はヘッダーの点数カウンタが示す
     - **sticky ヘッダーから外した**（v4.x）。sticky ヘッダーの幅は全セッションぶんチャンネルグリッドから引かれる一方、この値を見るのは限られた場面。フッターなら削るのは元から truncate 済みのログ行だけで済む
-    - **ブレークポイントで隠さないこと**。この値はアプリ内の他のどこにも出ておらず、幅が最も無い構成（スマホ + WebUSB。Connection Config も Script Runner も開けない）がまさに他に答えるものが無い場面。実測 52px、横スクロールは 320px でも発生しない
+    - **ブレークポイントで隠さないこと**。この値はアプリ内の他のどこにも出ておらず、幅が最も無い構成（スマホ + WebUSB。Script Runner も開けない）がまさに他に答えるものが無い場面。実測 52px、横スクロールは 320px でも発生しない
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ）
   - **AI 側の上限はポーリング回数に比例させる**（`INPUT_READ_MAX_FAILURE_RATIO` = 10%、下限 `INPUT_READ_MAX_FAILURES_PER_WINDOW` = 10回）。固定10回はポーリング周期が保存周期に縛られていた時代の設計で、遅い設定なら10回貯まるのに数分かかった。10Hz 固定（現行の Polling Rate = 100ms）になった今では**完全に死んだデバイスで1秒**で発火し、以後ウィンドウから失敗が抜けるまで全読取りをスキップする＝最大1分の空白、200ms 保存なら300行の欠落。**「応答しない」は回数ではなく割合**である。10% / 100ms なら 60回 ＝ 完全断で6秒後にバックオフ、数%のフレーム落ちでは発火しない（v4.1 で顕在化し修正）
@@ -298,7 +297,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 | `READOUT_PUBLISH_INTERVAL_MS` | 250 | 実測レート・保存点数を React へ渡す間隔 |
 | `INPUT_READ_MAX_FAILURE_RATIO` | 0.1 | AI 読取り失敗予算をポーリング頻度に比例させる係数（下限は `INPUT_READ_MAX_FAILURES_PER_WINDOW`） |
 
-**UI の選択肢配列はこの表とファイルの対象外**: `DEFAULT_POLLING_RATE_MS`（Connection Config 表示用の固定値。選択肢は無い） / `SAVE_RATE_OPTIONS` / `DEFAULT_SAVE_RATE_MS` / `AO_FULL_SCALE_MV` は `App.tsx` にある。`constants.ts` は「挙動を決めるチューニング値」を持つ場所で、ドロップダウンの中身は UI の一部として使う側に置いてある。下の「定数の一元化」ルールはこの区別を前提にしている。
+**UI の選択肢配列はこの表とファイルの対象外**: `DEFAULT_POLLING_RATE_MS`（固定値。選択肢は無い） / `SAVE_RATE_OPTIONS` / `DEFAULT_SAVE_RATE_MS` / `AO_FULL_SCALE_MV` は `App.tsx` にある。`constants.ts` は「挙動を決めるチューニング値」を持つ場所で、ドロップダウンの中身は UI の一部として使う側に置いてある。下の「定数の一元化」ルールはこの区別を前提にしている。
 
 ## 変更時の注意
 
@@ -321,7 +320,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
 - **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
-- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ModbusConfigPanel` = Connection Config、`ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
+- **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
 - **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
 - **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe バイナリは**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
