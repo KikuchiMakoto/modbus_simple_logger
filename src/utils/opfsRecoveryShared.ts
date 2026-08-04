@@ -22,7 +22,10 @@
  */
 
 /** Directory under the OPFS root that holds in-progress mirrors. */
-export const RECOVERY_DIR = 'tsv-recovery';
+/** App-scoped: OPFS is per-origin, and modbus_extra_logger mirrors into its own
+ * recovery directory — a shared name would let one app offer the other's
+ * unfinished run as its own recovery candidate. */
+export const RECOVERY_DIR = 'modbus-simple-logger-tsv-recovery';
 
 /** Metadata recovered from a mirror's filename. */
 export interface RecoveryNameParts {

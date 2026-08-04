@@ -8,7 +8,12 @@ const CACHE_VERSION = 'dev';
 // prompt can tell the user which version they would switch to. Stays empty
 // for unbuilt `vite dev`.
 const APP_VERSION = '';
-const CACHE_NAME = `modbus-logger-${CACHE_VERSION}`;
+// App-scoped prefix: the CacheStorage is per-origin, so an unscoped name shared
+// with modbus_extra_logger would put both apps' shells in one namespace — and
+// the activate handler below, which deletes every cache carrying this prefix
+// except the current one, would take the other app's precache with it.
+const CACHE_PREFIX = 'modbus-simple-logger-';
+const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
 const BASE_PATH = '/modbus_simple_logger/';
 const ISOLATION_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -86,7 +91,8 @@ self.addEventListener('activate', (event) => {
       .then((cacheNames) =>
         Promise.all(
           cacheNames.map((name) => {
-            if (name !== CACHE_NAME) {
+            // Only our own older versions — see CACHE_PREFIX above.
+            if (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME) {
               console.log('[SW] Deleting old cache:', name);
               return caches.delete(name);
             }

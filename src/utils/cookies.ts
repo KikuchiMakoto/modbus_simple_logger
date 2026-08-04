@@ -4,8 +4,17 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 
 const isBrowser = typeof window !== 'undefined';
 
+// App-scoped prefix. modbus_extra_logger is a separate app from the same
+// lineage, so on any origin both can reach (the same loopback port, the same
+// dev port, one deployment host) an unscoped key means one app's labels,
+// calibration and script contents silently overwrite the other's.
+// No migration from the old unscoped `modbus_logger_` keys: reading them back
+// here is exactly the sharing this prefix exists to end, since those keys may
+// just as well have been written by modbus_extra_logger.
+const KEY_PREFIX = 'modbus_simple_logger_';
+
 function getKey(key: string): string {
-  return `modbus_logger_${key}`;
+  return `${KEY_PREFIX}${key}`;
 }
 
 // Reads the bare-key cookie that writeCookieFallback() below parks values in.

@@ -1,4 +1,8 @@
-const DB_NAME = 'ModbusLoggerDB';
+// Scoped to this app. modbus_extra_logger keeps its own database; a shared
+// name would mean a shared object store whenever both are served from the same
+// origin, and a schema change in either would upgrade the other's database out
+// from under it.
+const DB_NAME = 'ModbusSimpleLoggerDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'dataPoints';
 

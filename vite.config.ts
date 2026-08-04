@@ -186,12 +186,27 @@ export default defineConfig(({ command, isPreview }) => ({
     chunkSizeWarningLimit: 1800,
   },
   server: {
+    // Dedicated dev origin. modbus_extra_logger runs on 5273 for the same
+    // reason: sharing a port means sharing an origin, and therefore sharing one
+    // Service Worker registration (scope '/'), one CacheStorage and one
+    // localStorage. Switching between the two projects then leaves the other
+    // app's SW controlling the page, which serves its precached index.html and
+    // vendor chunks into this app's module graph — surfacing as
+    // "Cannot read properties of null (reading 'useMemo')", i.e. React hooks
+    // running against a second, foreign React copy. strictPort so a stray
+    // listener fails loudly instead of silently moving us to another port.
+    port: 5173,
+    strictPort: true,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
   preview: {
+    // Same reasoning as `server.port` above — and it matters more here, because
+    // `vite preview` serves a real build with the Service Worker active.
+    port: 4173,
+    strictPort: true,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
