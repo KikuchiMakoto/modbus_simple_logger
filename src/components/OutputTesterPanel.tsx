@@ -88,7 +88,7 @@ export function OutputTesterPanel({
     <FloatingWindow
       open={open}
       onClose={onClose}
-      title="Output Tester"
+      title="Output Setter"
       subtitle="Manual AO output (GP8403, 0-10 V)"
       accent="blue"
       defaultWidth={400}
