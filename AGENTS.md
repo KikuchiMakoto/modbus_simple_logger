@@ -51,6 +51,7 @@ src/
 │   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・フッターの2面で共有（行は memo 済み）
 │   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ（タブ切替）／実行・停止・Output ログ・API 一覧（UI 名: Script Runner。言語は Python 固定でセレクタ無し）
+│   ├── ParamEditorPanel.tsx         # Param Editor: Default + Present の 16ch 行。UI 名: Param Editor。`scriptRunner.scriptRunning` 中はロック
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
@@ -59,9 +60,9 @@ src/
 │   ├── CalibrationPanel.tsx         # Input Calib Value ウィンドウ（a·x²+b·x+c 直接編集・Tare・Save/Load）
 │   ├── InputCalibratorPanel.tsx     # Input Calibrator（実測最小二乗 / スペック計算）。CH00-15 を1ウィンドウで扱い、HX711/ADS1115 の別は ch 番号から決まる
 │   ├── InputConfigPanel.tsx         # Input Config = AI レンジ／表示モード設定（チャネルタイプ別フィルタ）
-│   ├── OutputTesterPanel.tsx        # Output Tester = AO(GP8403) の手動出力（プリセット即出力＋手入力 Apply）
+│   ├── OutputTesterPanel.tsx        # Output Setter = AO(GP8403) の手動出力（UI 名: Output Setter。プリセット即出力＋手入力 Apply）
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
-│   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Tester の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
+│   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Setter の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
 └── utils/
@@ -80,6 +81,7 @@ src/
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
     ├── cookies.ts                   # 設定の永続化（localStorage 本体・Cookie は旧値の読込移行とフォールバックのみ）
     ├── uiScale.ts                   # UI 拡大率（#root の CSS zoom）。localStorage 永続・共有ストア。UiScaleControl が操作し FloatingWindow が座標補正に使う
+    ├── paramStartup.ts              # Param 起動時デフォルト値（`param_startup_values_v1`）。App.tsx が起動時に1回だけ SAB へ書く
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
 public/
 ├── sw.js                            # Service Worker（COOP/COEP ヘッダー注入付き）
@@ -208,6 +210,11 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **実行結果は `useScriptRunner` の `scriptRun`（`ScriptRunInfo`）と System Log（`utils/systemLog.ts`）に記録する**。`scriptRun` は **ref にもミラーする**（Worker のメッセージハンドラは React のレンダリング外で走るため、state だけでは直前の失敗を取り逃す）。ログ側は元々モジュールレベルなので同じ問題を持たない
 - **ログは実行開始時にクリアしない**。同じログにリンク断や保存失敗が入っており、Run がそれを消してよい理由はない。代わりに `Run started (<言語>)` の行を出して区切る
 - **`pyodide.setInterruptBuffer()` は init の最後に呼ぶこと**。Pyodide は `runPython()` のたびに割込みバッファを見るため、Pyodide ロード中に Stop された状態（`interruptBuffer[0] === 2`）で先に arm すると `RUNNER_SETUP` 実行時に KeyboardInterrupt が飛び、**init 自体が失敗して Worker が再起動まで使えなくなる**
+
+### Param Editor（`ParamEditorPanel.tsx` + `utils/paramStartup.ts`）
+
+- **列名は UI の表記に合わせて Default / Present**（内部の prop 名は `paramStartupValues` のまま）。**Default 列**＝起動時デフォルト値（`param_startup_values_v1`、`localStorage` 不通時は Cookie lifeboat）。編集しても**その場では SAB に触れない** — App.tsx が起動時に1回だけ（空 deps の effect で）SAB へ seed する。**Present 列**＝ライブ SAB への即時書き込み
+- **Default 列を編集しても即座に SAB へ反映してはいけない**。スクリプトが読んでいる最中の Parameter を、次回起動用の準備作業が書き換えることになるため。セッション中に値を変えたいなら Present 列がその窓口
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
@@ -347,7 +354,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
   - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。TSV エクスポートはウィンドウ名がチップを示さなくなったため、`Sensor` キーで HX711/ADS1115 を別途記録する。
-- **Output Tester**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と ScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
+- **Output Setter**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。UI 名: Output Setter。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と ScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
 
 ## package.json のバージョン更新の絶対的なルール
 

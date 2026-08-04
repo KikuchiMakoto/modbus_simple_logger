@@ -23,7 +23,10 @@ const MENU_ITEMS = [
   // A mixer/knob panel rather than the old ⚡: what this sets is each channel's
   // range, and a lightning bolt read as "power".
   { key: 'inputConfig', label: 'Input Config', icon: '🎛️', wip: false },
-  { key: 'outputTester', label: 'Output Tester', icon: '🎚️', wip: false },
+  { key: 'outputTester', label: 'Output Setter', icon: '🎚️', wip: false },
+  // 🔢 rather than a second ⚙️: Input Calib Value already owns the gear, and
+  // what this window edits is a table of numbers per channel.
+  { key: 'paramEditor', label: 'Param Editor', icon: '🔢', wip: false },
   { key: 'scriptRunner', label: 'Script Runner', icon: '📜', wip: false },
   // Directly under the runner, because it is still the runner's other half: the
   // window where a script is written, and the window where what it said is

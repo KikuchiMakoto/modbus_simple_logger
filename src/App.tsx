@@ -113,9 +113,11 @@ import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
+import { ParamEditorPanel } from './components/ParamEditorPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
 import { FooterBar } from './components/FooterBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
+import { loadParamStartupValues, saveParamStartupValues } from './utils/paramStartup';
 import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
@@ -422,6 +424,7 @@ function App() {
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
+  const [paramEditorPanelOpen, setParamEditorPanelOpen] = useState(false);
   const [systemLogPanelOpen, setSystemLogPanelOpen] = useState(false);
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
@@ -446,6 +449,11 @@ function App() {
     return m;
   }, [aiFreeLabels, paramFreeLabels]);
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
+  // The Param Editor's "Default" column: written to the SAB once at app
+  // startup. Editing here does NOT touch the SAB until the next launch - the
+  // live SAB is the "Present" column. The two are deliberately separate so
+  // each kind of edit has its own obvious target.
+  const [paramStartupValues, setParamStartupValues] = useState<number[]>(() => loadParamStartupValues());
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
   // AO and Parameter start collapsed: AI is what a session is normally watching,
   // and the other two are only opened when they are actually being driven. The
@@ -570,6 +578,8 @@ function App() {
       setManualPanelOpen(true);
     } else if (item === 'scriptRunner') {
       setScriptRunnerPanelOpen(true);
+    } else if (item === 'paramEditor') {
+      setParamEditorPanelOpen(true);
     } else if (item === 'systemLog') {
       setSystemLogPanelOpen(true);
     }
@@ -1043,6 +1053,27 @@ function App() {
     }, 200);
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
+
+  // Seed the Parameter SAB with the persisted "Default" column, once, on mount.
+  // useScriptRunner() is called above this effect, so its own mount effect (the
+  // one that allocates the shares) has already run by the time this fires - the
+  // SAB is there unless the page is not cross-origin isolated, in which case
+  // there is nothing to seed at all.
+  //
+  // Deliberately empty deps: a later edit to the Default column is for the
+  // *next* launch, and must not reach into the SAB mid-session while a script
+  // may be reading it. The live "Present" column is the in-session writer.
+  useEffect(() => {
+    const share = scriptRunner.paramShareRef.current;
+    if (!share) return;
+    for (let i = 0; i < share.length; i += 1) {
+      share[i] = paramStartupValues[i] ?? 0;
+    }
+    // Force one immediate paramValues refresh so the panel's "Present" column
+    // reflects the seed before the first 200 ms tick.
+    setParamValues(Array.from(share));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // What the System Log window puts in its subtitle, shared with slot 3. The
   // log itself covers the whole app now; this line still names the run,
@@ -2607,6 +2638,30 @@ function App() {
         onClose={() => setScriptRunnerPanelOpen(false)}
         scriptRunner={scriptRunner}
         channelLabels={{ ai: aiFreeLabels, ao: aoFreeLabels, param: paramFreeLabels }}
+      />
+
+      <ParamEditorPanel
+        open={paramEditorPanelOpen}
+        onClose={() => setParamEditorPanelOpen(false)}
+        locked={scriptRunner.scriptRunning}
+        paramValues={paramValues}
+        paramFreeLabels={paramFreeLabels}
+        paramStartupValues={paramStartupValues}
+        onApplyParamValue={(idx, value) => {
+          const share = scriptRunner.paramShareRef.current;
+          if (!share) return;
+          if (idx < 0 || idx >= share.length) return;
+          share[idx] = value;
+          setParamValues(Array.from(share));
+        }}
+        onStartupValueChange={(idx, value) => {
+          setParamStartupValues((prev) => {
+            const next = [...prev];
+            next[idx] = value;
+            saveParamStartupValues(next);
+            return next;
+          });
+        }}
       />
 
       {/* Opened separately from the runner: the two are meant to sit side by
