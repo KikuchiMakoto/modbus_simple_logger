@@ -41,7 +41,35 @@ export type ScriptLanguage = {
   promptIntro: string;
   /** The rules a generated script is wrong without. */
   promptRules: string[];
+  /** How a script should be shaped once it is correct. See RUNNER_GUIDELINES. */
+  promptGuidelines: string[];
 };
+
+/**
+ * Guidelines the RUNNER imposes, not the language.
+ *
+ * They are separate from `promptRules` because they are a different kind of
+ * claim: a script that breaks a rule fails or freezes, while a script that
+ * ignores a guideline works once and then bites on the second Start, on a
+ * restart, or when someone needs to see what it did. They are separate from
+ * the API list because none of them can be inferred from the call signatures —
+ * that Param survives a run and module state must not be relied on, that a
+ * Stop can land at any await, that Output shares a bounded log, are facts
+ * about this app that an assistant has no way to guess.
+ */
+const RUNNER_GUIDELINES: string[] = [
+  'Feedback control loops run at 0.2 s per iteration unless the task calls for something else.',
+  'The script must survive Stop and a later Start: keep run state in Param (SetParam/GetParam), not in variables. Assign every variable the script reads at the top of the script — the namespace outlives a run, so an unassigned name can silently carry the previous run\'s value and then break after a reload.',
+  'Multi-step sequences: one step per function, one loop per function, and a phase number in its own Param channel. Read that phase at startup and skip the steps already finished.',
+  'Elapsed() restarts at 0 on every Start. For a deadline that survives a restart, keep the REMAINING seconds in Param and count down, instead of comparing with an absolute Elapsed() target.',
+  'SetAo() and SetAiTare() are applied asynchronously: do not read back with GetAo() in the same iteration to confirm them.',
+  'Clamp the AO command to 0-10 V, clamp the integral term of any PI loop, and start from the present GetAo() so a restart does not step the output.',
+  'If a channel the script needs has no label below, ask the user to label it before writing the script — at minimum every AI and AO channel the script touches. A script written against unlabeled channels can only be checked by running it on the rig.',
+  'Define the channel numbers as named constants at the top with a comment table of what each AI / AO / Param channel is, and put the values the user is meant to tune in Param rather than in the code.',
+  'End with a checklist to complete BEFORE pressing Start: the Param channels to RENAME (the script gives them meanings their labels do not carry yet) and the Param values to SET in Param Editor. The values especially — Param Editor is locked while a run is in progress, so a value not set beforehand cannot be corrected without stopping.',
+  'print() sparingly: it shares a bounded System Log, so a line every iteration pushes everything else out. Print on state changes, and otherwise every Nth iteration, with Elapsed() in the line.',
+  'State in a header comment what the outputs do when the script is stopped: AO channels hold their last value unless the script sets them.',
+];
 
 const INSTRUMENT_API: ScriptApiDoc[] = [
   { name: 'GetAiRaw(ch)', desc: 'Raw AI value. ch: 0-15.' },
@@ -76,29 +104,46 @@ const PYTHON: ScriptLanguage = {
     { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait, in SECONDS. NEVER time.sleep().' },
   ],
   promptIntro: `Write a Python ${pythonVersion} script for ModbusSimpleLogger Script Runner (Pyodide; async context, top-level await OK).`,
+  // Written so that breaking any one of them is a failure the author can see:
+  // a frozen tab, a script that will not start, or a NameError. Everything
+  // whose cost only shows up later belongs in RUNNER_GUIDELINES instead.
   promptRules: [
-    'Wait only with `await asyncio.sleep(s)`. NEVER time.sleep().',
+    'Begin with `import asyncio`, and import nothing beyond `asyncio` and `math` — there is no network, so micropip / numpy / pandas cannot load.',
+    'Wait only with `await asyncio.sleep(s)`. NEVER time.sleep(), a busy-wait loop, threading, or input(): they hold the runtime until they return, and Stop cannot get in.',
+    'EVERY path through EVERY loop, nested loops included, must reach an `await asyncio.sleep(s)`. Put the sleep at the end of the loop body and never `continue` past it. Break long computations into chunks that await between them.',
+    'Never sleep for less than 0.1 s: the readings only refresh once per Modbus poll, so a faster loop re-reads the same values.',
     'Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
     'The instrument API is PascalCase (GetAiPhy, SetAo), not snake_case.',
   ],
-  // The two rules a script cannot be written correctly without, and nothing
-  // else. The call list used to be repeated here as five more comment lines,
-  // which is the same text the panel's API Reference already holds — an editor
-  // that opens mostly full of documentation buries the example it is there to
-  // show.
-  defaultScript: `# Wait ONLY with \`await asyncio.sleep(s)\`
+  // The runner's guidelines plus the one that is about Python itself: Stop is
+  // delivered as an exception, so the usual defensive `except` around a control
+  // loop is the thing that would keep it running.
+  promptGuidelines: [
+    ...RUNNER_GUIDELINES,
+    'Do not swallow exceptions with a bare `except:` or `except BaseException:` — Stop arrives as an exception and would be caught with them.',
+  ],
+  // The rules a script cannot be written correctly without, and nothing else.
+  // The call list used to be repeated here as five more comment lines, which is
+  // the same text the panel's API Reference already holds — an editor that opens
+  // mostly full of documentation buries the example it is there to show.
+  //
+  // The example carries no state of its own (Elapsed() rather than a counter it
+  // has to accumulate) for the same reason the guidelines ask for: the script
+  // someone edits into their own should already be one that a Stop and a Start
+  // resume cleanly.
+  defaultScript: `# Wait ONLY with \`await asyncio.sleep(s)\`, never below 0.1 s.
 #   NEVER time.sleep() - it freezes the browser.
-# Loop with a plain while/for. Press Stop to halt at any time.
+# Every loop needs one, on every path through it.
+# Keep state in Param, so Stop -> Start resumes.
+# Press Stop to halt at any time.
 
 import asyncio
 import math
 
-t = 0.0
 while True:
     # example: slow sine wave on Parameter ch0
-    SetParam(0, math.sin(t))
-    t += 0.1
-    await asyncio.sleep(1)`,
+    SetParam(0, math.sin(Elapsed()))
+    await asyncio.sleep(0.2)`,
 };
 
 export const SCRIPT_LANGUAGES: Record<ScriptLanguageId, ScriptLanguage> = {
@@ -130,6 +175,13 @@ export const buildAiPrompt = (
     '',
     'Absolute rules:',
     ...language.promptRules.map((rule) => `- ${rule}`),
+    '',
+    // Kept as a second heading rather than folded into the rules above: an
+    // assistant handed one flat list treats a violated rule and a skipped
+    // preference the same way, and the rules are the half that must not be
+    // traded away for a shorter answer.
+    'Design guidelines (follow unless the task rules them out):',
+    ...language.promptGuidelines.map((line) => `- ${line}`),
     '',
     'Channel labels (JSON; index = ch, "" = unlabeled):',
     JSON.stringify(channelLabels),
