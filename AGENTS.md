@@ -191,7 +191,9 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
 - **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではない、という判断）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
 - **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。1エントリの Record になっているが、`ScriptLanguageId` を型として保つのは `scriptTabs.ts` の永続化コードが `isScriptLanguageId` で古い `'basic'`/`'lua'` の保存値を弾くため。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
+- **「Copy for AI」のプロンプトは2段構成**（`buildAiPrompt`）。`promptRules` は**破ると目に見えて壊れるもの**だけ（フリーズ・起動失敗・NameError）、`RUNNER_GUIDELINES` は**後で効いてくるもの**（Stop→Start の再開性・Param への状態退避・ログ量・出力の後始末）。混ぜて1つの箇条書きにしないこと — 助言側は平坦なリストを渡されると「守らなかったルール」と「省いた推奨」を同じ重さで扱う。またガイドライン側は**言語ではなくランナーの制約**なので、言語が増えても各言語エントリで共有する
 - **Worker は生成後、保持し続ける**。Pyodide は起動に数秒かかるので、都度破棄すると次に開いたときに壊れて見える
+- **Python のグローバル名前空間は run をまたいで残る**（`eval_code_async(code, globals=globals())` ＋ Worker 保持）。前回実行の変数が生きているため、初期化漏れのスクリプトが「動いてしまい」リロード後に壊れる。プロンプト側で「読む変数は冒頭で必ず代入」「状態は Param に置く」を要求しているのはこのため
 - **Stop は「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること
 - **待ちの単位は「秒」**（`asyncio.sleep`）。ミリ秒での取り違えは静かに Modbus リンクを叩き続ける事故になるので、単位はここで固定してある
 
