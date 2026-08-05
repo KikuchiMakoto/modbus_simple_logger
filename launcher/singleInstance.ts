@@ -9,6 +9,10 @@
 // The lock is a loopback TCP listener rather than a lock file: the OS releases
 // it when the process dies, however it dies, so a crash or a kill from Task
 // Manager can never leave a stale lock that keeps the app from starting again.
+// 8764 is this app's alone; modbus_extra_logger locks on 8774. The lock must
+// stop a second copy of THIS exe, not stop the two loggers from running side by
+// side — a shared port would make whichever started second report "already
+// running" and exit.
 const LOCK_PORT = 8764;
 // Identifies the listener as ours. A fixed port can always be squatted by an
 // unrelated program, and refusing to start because *something* holds 8764 would
