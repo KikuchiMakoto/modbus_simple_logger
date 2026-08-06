@@ -1,12 +1,13 @@
 {
   "name": "modbus_simple_logger",
-  "version": "6.6",
+  "version": "6.7",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "bunx vite dev",
     "build": "bunx vite build",
     "preview": "bunx vite preview",
+    "deploy": "bun run build && bun run scripts/deploy-gh-pages.ts",
     "launcher:dev": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/main.ts",
     "launcher:build": "bun run build && bun run launcher/generate-embed.ts && bun run launcher/build.ts"
   },

@@ -84,9 +84,22 @@ bun install
 bun run dev      # 開発サーバー（http://localhost:5173）
 bun run build    # dist/ へ出力
 bun run preview  # ビルド成果物をプレビュー
+bun run deploy   # ビルドして GitHub Pages（gh-pages ブランチ）へ公開
 ```
 
 必要環境: [Bun](https://bun.sh/) と Chromium 系最新ブラウザ（Chrome / Edge）。
+
+### Web 版の公開（`bun run deploy`）
+
+**公開されるのは手元でビルドした `dist/` です**（exe と同じで、「誰かが動かしてから出したもの」が本番になります）。GitHub Pages の Source は **`gh-pages` ブランチ / `(root)`** に設定してあり、CI での自動デプロイは行いません。
+
+- `bun run deploy` = `bun run build` → `scripts/deploy-gh-pages.ts`
+- スクリプトは **`git checkout` を一切しません**。使い捨ての index に `dist/` を足して orphan commit を作り、それを `gh-pages` へ force push するだけなので、**作業ツリーが汚れていても安全**に実行できます
+- `gh-pages` は常に**1コミットだけ**の履歴です（毎回 orphan で上書き。Pyodide の 13MB がデプロイの度に積み上がらないように）
+- `dist/` のビルド元バージョンが `package.json` と食い違う場合は**中断します**（古い `dist/` を新バージョンの名前で公開する事故防止）
+- Jekyll 抑止の `.nojekyll` はスクリプトが自動で入れます
+
+反映は push から1〜2分（GitHub 側のブランチ公開処理）。**リリース時は `bun run deploy` まで実行して初めて Web 版が更新されます**。
 
 ---
 

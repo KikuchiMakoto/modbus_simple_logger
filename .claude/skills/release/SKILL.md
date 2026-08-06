@@ -1,6 +1,6 @@
 ---
 name: release
-description: このリポジトリのリリース操作を一括実行する。ユーザーが「リリース」「Release」「push」「minor version update with tag and push」と言った場合に使用。バージョン更新 → ビルド検証 → コミット → 注釈付きタグ → push（必要ならmainへマージ）→ exe生成 → GitHub Release作成 → exe添付、までを行う。
+description: このリポジトリのリリース操作を一括実行する。ユーザーが「リリース」「Release」「push」「minor version update with tag and push」と言った場合に使用。バージョン更新 → ビルド検証 → コミット → 注釈付きタグ → push（必要ならmainへマージ）→ Web版公開（gh-pages）→ exe生成 → GitHub Release作成 → exe添付、までを行う。
 ---
 
 # リリース手順
@@ -66,6 +66,21 @@ git push origin v3.17
 ```
 
 フィーチャーブランチ上での作業なら、この流れの中で `main` へ**マージコミット付きでマージ**してから push する。
+
+## 5.5. Web 版の公開（`bun run deploy`）
+
+```
+bun run deploy
+```
+
+`bun run build` → `scripts/deploy-gh-pages.ts` で、**手元でビルドした `dist/` を `gh-pages` ブランチへ
+force push** する。GitHub Pages の Source はこのブランチなので、**main への push では Web 版は更新されない**
+（CI デプロイは撤去済み。理由は `AGENTS.md`「Web 版の公開」を参照）。
+
+- スクリプトは `git checkout` をせず、使い捨て index と orphan commit で publish するので、作業ツリーが
+  汚れていても安全
+- `dist/` のビルド元バージョンが `package.json` と食い違うと中断する。その場合は `bun run build` からやり直す
+- 反映は push から1〜2分。**ここを飛ばすと、タグと Release だけ新しく Web 版が旧版のまま残る**
 
 ## 6. GitHub Release 作成 + exe 添付
 

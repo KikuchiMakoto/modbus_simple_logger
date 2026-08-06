@@ -87,6 +87,8 @@ public/
 ├── sw.js                            # Service Worker（COOP/COEP ヘッダー注入付き）
 ├── manifest.json                    # PWA マニフェスト
 └── icon.svg                         # アプリアイコン
+scripts/
+└── deploy-gh-pages.ts               # `bun run deploy`。手元の dist/ を gh-pages ブランチへ orphan commit で force push
 ```
 
 ## アーキテクチャ上の重要点
@@ -403,11 +405,31 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
    `git tag --sort=-v:refname | head` で確認し、番号を採番する）
 5. ブランチとタグの両方を push（`git push origin <branch>` + `git push origin v3.4`）
 6. 作業がフィーチャーブランチ上なら、この流れの中で `main` へ**マージコミット付きでマージ**する
-7. `bun run launcher:build` で exe を生成する（成果物は `launcher/bin/modbus_simple_logger.exe`）
-8. GitHub Release を作成し、その exe を **`modbus_simple_logger.exe` という名前で**添付する
+7. **`bun run deploy` で Web 版を公開する**（`dist/` を `gh-pages` ブランチへ force push）。
+   **main への push では公開されない** — Pages の Source はブランチであり、CI は関与しない
+8. `bun run launcher:build` で exe を生成する（成果物は `launcher/bin/modbus_simple_logger.exe`）
+9. GitHub Release を作成し、その exe を **`modbus_simple_logger.exe` という名前で**添付する
    （`gh release create <tag> launcher/bin/modbus_simple_logger.exe --title <tag> --generate-notes
    --notes-start-tag <前バージョンタグ> --latest`）
 
 バージョン更新とタグを伴わない push は、デプロイ済み PWA の Application Info が古いバージョンを表示し続ける
 ため不可。また、タグだけ打って GitHub Release と exe が欠けた状態も未完了とみなす（v2.14 以降は
-全バージョンに exe 付き Release が揃っている状態を維持する）。
+全バージョンに exe 付き Release が揃っている状態を維持する）。**`bun run deploy` を欠いた状態も同様に未完了**
+（タグと Release だけ新しく、Web 版だけ旧バージョンのまま残る）。
+
+### Web 版の公開（`scripts/deploy-gh-pages.ts`）
+
+- **Pages の Source は `gh-pages` ブランチ / `(root)`**。GitHub Actions によるデプロイは**使っていない**
+  （`.github/workflows/deploy.yml` は撤去済み）。公開されるのは**手元でビルドした `dist/`** で、exe と
+  同じ「出す前に誰かが動かしたもの」を本番にする方針
+  - 旧構成（`actions/deploy-pages`）を戻さないこと。artifact は attempt ではなく **run** に属するため、
+    build と deploy が1ジョブだと**再実行の度に同名 artifact が増え**、`deploy-pages` は同名が2つ以上ある
+    run を拒否する（v6.6 の run #251 が attempt 1 のデプロイタイムアウト後、この理由で2回続けて失敗した）
+- **`git checkout` をしない**のが要点。使い捨ての `GIT_INDEX_FILE` に `dist/` を `add --force`（`dist` は
+  `.gitignore` 済み）→ `write-tree` → 親なしの `commit-tree` → そのオブジェクトを直接 push する。HEAD も
+  index も作業ツリーも触らないので、**作業中でも安全に実行できる**
+- **毎回 orphan commit で force push**（`gh-pages` は常に1コミット）。Pyodide の 13MB がデプロイ毎に
+  履歴へ積み上がるのを避けるため。内容が同じファイルは blob が再利用されるので再 push は安い
+- **`.nojekyll` はスクリプトが書く**。ブランチ配信は Jekyll を通すため（artifact 配信では通らなかった）
+- **`dist/sw.js` の `APP_VERSION` と `package.json` の不一致で中断する**。古い `dist/` を新バージョンの
+  名前で公開する事故は、公開後に見分けが付かない
