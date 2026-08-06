@@ -135,12 +135,12 @@ export function ParamEditorPanel({
       <div className="flex-1 overflow-y-auto p-2">
         {locked && !acceptRisk && (
           <div className="mb-1.5 rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[0.7rem] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            Script running: editing is locked. Check "Accept Risk" above to edit anyway — a manual edit can race the script's own writes to the same channel.
+            Script running: editing is locked. Check "Accept Risk" above to edit Present anyway — a manual edit can race the script's own writes to that channel. Default (next-launch seed) stays locked either way, since it never touches the running script.
           </div>
         )}
         {locked && acceptRisk && (
           <div className="mb-1.5 rounded border border-amber-400 bg-amber-50 px-2 py-1 text-[0.7rem] font-medium text-amber-700 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300">
-            Editing while the script is running — your edits can race the script's own writes to the same channel.
+            Editing Present while the script is running — your edits can race the script's own writes to that channel.
           </div>
         )}
         <div className="space-y-0.5">
@@ -163,7 +163,7 @@ export function ParamEditorPanel({
                     <ParamCell
                       value={startup}
                       onChange={(v) => onStartupValueChange(idx, v)}
-                      disabled={effectiveLocked}
+                      disabled={locked}
                       ariaLabel={`CH${label} default`}
                     />
                   </div>

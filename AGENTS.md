@@ -218,7 +218,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 - **列名は UI の表記に合わせて Default / Present**（内部の prop 名は `paramStartupValues` のまま）。**Default 列**＝起動時デフォルト値（`param_startup_values_v1`、`localStorage` 不通時は Cookie lifeboat）。編集しても**その場では SAB に触れない** — App.tsx が起動時に1回だけ（空 deps の effect で）SAB へ seed する。**Present 列**＝ライブ SAB への即時書き込み
 - **Default 列を編集しても即座に SAB へ反映してはいけない**。スクリプトが読んでいる最中の Parameter を、次回起動用の準備作業が書き換えることになるため。セッション中に値を変えたいなら Present 列がその窓口
-- **ヘッダーの `Accept Risk` チェックボックスは実行中ロックの明示的な解除**。既定では ScriptRunner 実行中は Default/Present とも編集不可（`locked`）だが、手動チューニングをその場で見たい場面があるため、チェックを入れると `effectiveLocked = locked && !acceptRisk` で両セルを解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
+- **ヘッダーの `Accept Risk` チェックボックスは Present 列だけの実行中ロック解除**。既定では ScriptRunner 実行中は Default/Present とも編集不可（`locked`）だが、チェックを入れると `effectiveLocked = locked && !acceptRisk` で **Present だけ**を解放する。**Default（次回起動シード）は Accept Risk を入れても常にロックされたまま** — SAB に触れず実行中スクリプトと競合しようがないので、解放してもリスクの受け入れにならない。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
