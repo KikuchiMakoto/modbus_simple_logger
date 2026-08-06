@@ -76,6 +76,78 @@ export const sanitizeTabName = (name: string): string => {
   return trimmed === '' ? 'main' : trimmed;
 };
 
+/**
+ * The largest script this app will take from disk, in bytes.
+ *
+ * Not a storage limit: the editor is a <textarea> with a Prism overlay that
+ * re-highlights the whole document on every keystroke, so a multi-megabyte
+ * paste does not fail — it just makes the panel unusable with no way back
+ * except closing the tab. A quarter of a megabyte is some thousands of lines
+ * of Python, well past anything this runner is for.
+ */
+export const SCRIPT_IMPORT_MAX_BYTES = 256 * 1024;
+
+/**
+ * A file name turned into a tab name: directory parts and the extension
+ * dropped, then the ordinary name rules (collapse whitespace, cap the length).
+ *
+ * Only the LAST extension goes — `sweep.v2.py` is `sweep.v2`, because the `v2`
+ * is part of what the user called it. A name that is nothing but an extension
+ * (`.py`) falls back to the default, same as an empty one.
+ */
+export const tabNameFromFileName = (fileName: string): string => {
+  const base = fileName.split(/[\\/]/).pop() ?? '';
+  return sanitizeTabName(base.replace(/\.[^.]+$/, ''));
+};
+
+/**
+ * `desired`, or `desired-2`, `desired-3`, … — the first name in that series not
+ * already taken by a tab in the same language.
+ *
+ * Importing twice from the same file is a normal thing to do (edit on disk,
+ * bring it back in), and two tabs with one name is a strip you cannot navigate.
+ * Renaming silently rather than refusing: the import succeeded, and the name is
+ * a label the user can change in a double-click.
+ */
+export const uniqueTabName = (
+  desired: string,
+  existing: ScriptTab[],
+  language: ScriptLanguageId,
+): string => {
+  const taken = new Set(
+    tabsOfLanguage(existing, language).map((tab) => tab.name.toLowerCase()),
+  );
+  if (!taken.has(desired.toLowerCase())) return desired;
+  for (let n = 2; n <= SCRIPT_TABS_MAX + 1; n += 1) {
+    const suffix = `-${n}`;
+    // The cap counts the suffix, so the stem gives way rather than the number:
+    // a truncated `-12` is a name that collides again.
+    const stem = desired.slice(0, SCRIPT_TAB_NAME_MAX - suffix.length);
+    const candidate = `${stem}${suffix}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return sanitizeTabName(`${desired.slice(0, 8)}-${newTabId()}`);
+};
+
+/**
+ * File name for an exported tab.
+ *
+ * The tab name is the user's, so it can hold anything typing allows —
+ * including the characters Windows refuses in a file name and the leading dot
+ * that hides a file on Unix. Everything unsafe becomes `_`; the extension comes
+ * from the language table.
+ */
+export const scriptFileName = (name: string, extension: string): string => {
+  const safe = name
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_')
+    // Trailing dots and spaces are legal to type and silently dropped by
+    // Windows, which turns "run ." into a name the app did not choose.
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .slice(0, SCRIPT_TAB_NAME_MAX);
+  return `${safe === '' ? 'script' : safe}${extension}`;
+};
+
 /** `main`, then `main2`, … — the first name not already on a tab. */
 export const defaultTabName = (language: ScriptLanguageId, existing: ScriptTab[]): string => {
   const taken = new Set(

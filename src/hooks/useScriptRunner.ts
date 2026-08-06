@@ -10,9 +10,11 @@ import {
   SCRIPT_TABS_MAX,
   createTab,
   loadScriptTabs,
+  newTabId,
   sanitizeTabName,
   saveScriptTabs,
   tabsOfLanguage,
+  uniqueTabName,
   type ScriptTab,
 } from '../utils/scriptTabs';
 
@@ -412,6 +414,40 @@ export function useScriptRunner(
   }, []);
 
   /**
+   * A script from disk, as a new tab in front.
+   *
+   * Always a NEW tab, never the one on screen: an import that overwrote the
+   * open script would be the one destructive operation in this panel with no
+   * gesture in front of it. `desired` is a suggestion — it is deduplicated
+   * against the strip, since importing the same file twice is normal.
+   *
+   * Returns the name the tab actually got, or null when it was refused (the
+   * strip is full, or a script is running — see the panel's disabled state; the
+   * check is repeated here because the file picker is asynchronous and a run
+   * can start while it is open).
+   */
+  const importTab = useCallback((desired: string, code: string): string | null => {
+    const state = tabStateRef.current;
+    const language = activeTabOf(state).language;
+    if (scriptExecutingRef.current) return null;
+    if (tabsOfLanguage(state.tabs, language).length >= SCRIPT_TABS_MAX) return null;
+    // Minted out here for the same reason addTab does it: an updater has to be
+    // pure, and StrictMode runs it twice.
+    const tab: ScriptTab = {
+      id: newTabId(),
+      name: uniqueTabName(sanitizeTabName(desired), state.tabs, language),
+      language,
+      code,
+    };
+    setTabState((prev) =>
+      tabsOfLanguage(prev.tabs, language).length >= SCRIPT_TABS_MAX
+        ? prev
+        : { ...prev, tabs: [...prev.tabs, tab], activeId: tab.id },
+    );
+    return tab.name;
+  }, []);
+
+  /**
    * Close a tab. Refused for the running one — closing it would leave a script
    * executing with no editor to read it in and no tab to stop it from — and for
    * the last one in its language, since selecting that language has to land
@@ -475,6 +511,7 @@ export function useScriptRunner(
     canCloseTab: languageTabs.length > 1,
     selectTab,
     addTab,
+    importTab,
     closeTab,
     renameTab,
     /** False while the tab in front is the one executing: its editor is frozen. */

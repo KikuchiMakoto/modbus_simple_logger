@@ -35,6 +35,14 @@ export type ScriptLanguage = {
   badge: string;
   /** localStorage key for this language's editor contents. */
   storageKey: string;
+  /**
+   * Extension an exported tab is written with, and what the import picker
+   * offers. Tab NAMES stay bare (see scriptTabs.ts) — this is only the file
+   * that leaves the app, where the extension is what makes it openable.
+   */
+  fileExtension: string;
+  /** `accept` for the import picker: extension plus the MIME types browsers use. */
+  fileAccept: string;
   defaultScript: string;
   apiDocs: ScriptApiDoc[];
   /** First line of the "Copy for AI" prompt. */
@@ -66,7 +74,7 @@ const RUNNER_GUIDELINES: string[] = [
   'Clamp the AO command to 0-10 V, clamp the integral term of any PI loop, and start from the present GetAo() so a restart does not step the output.',
   'Define the channel numbers as named constants at the top with a comment table of what each AI / AO / Param channel is, and put the values the user is meant to tune in Param rather than in the code.',
   'Param is a scarce, visible resource, not a general-purpose variable store: only 16 channels, each shown live in the Parameter panel and logged to TSV every sample. Route a value through Param only when it must survive Stop/Start, the user tunes it, or it is worth watching in the log — keep everything else as an ordinary local/module variable.',
-  'End with a checklist to complete BEFORE pressing Start: the Param channels to RENAME (the script gives them meanings their labels do not carry yet) and the Param values to SET in Param Editor. The values especially — Param Editor is locked while a run is in progress, so a value not set beforehand cannot be corrected without stopping.',
+  'End with a checklist to complete BEFORE pressing Start: the Param channels to RENAME (the script gives them meanings their labels do not carry yet) and the Param values to SET in Param Editor. Both matter, because Param Editor is locked while a run is in progress: labels cannot be edited at all until the run ends (only SetParamLabel can change them), and a value not set beforehand takes an explicit "Accept Risk" to correct.',
   'print() sparingly: it shares a bounded System Log, so a line every iteration pushes everything else out. Print on state changes, and otherwise every Nth iteration, with Elapsed() in the line.',
   'State in a header comment what the outputs do when the script is stopped: AO channels hold their last value unless the script sets them.',
 ];
@@ -103,6 +111,11 @@ const PYTHON: ScriptLanguage = {
   // vite.config.ts injects it. AppInfoPanel reads the same variable.
   badge: `Pyodide ${import.meta.env.VITE_PYODIDE_VERSION ?? ''}`.trim(),
   storageKey: 'scriptRunnerCode',
+  fileExtension: '.py',
+  // text/plain is in the list because that is what Windows reports for .py on
+  // machines with no Python installed, and a picker that greys out the file the
+  // user is looking at is worse than one that shows a few extra.
+  fileAccept: '.py,text/x-python,application/x-python-code,text/plain',
   apiDocs: [
     ...INSTRUMENT_API,
     { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait, in SECONDS. NEVER time.sleep().' },

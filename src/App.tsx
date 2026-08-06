@@ -117,7 +117,6 @@ import { ParamEditorPanel } from './components/ParamEditorPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
 import { FooterBar } from './components/FooterBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
-import { loadParamStartupValues, saveParamStartupValues } from './utils/paramStartup';
 import { SlideToConfirm } from './components/SlideToConfirm';
 import { useTheme } from './hooks/useTheme';
 import { useChartAxes } from './hooks/useChartAxes';
@@ -242,6 +241,20 @@ const createAoChannels = (): AoChannel[] =>
 
 const formatAiChannelDisplayLabel = (idx: number): string =>
   `CH ${idx.toString().padStart(2, '0')}`;
+
+// Every free-text channel label — AI, AO and Parameter, on this page and in the
+// Param Editor — is frozen while a script runs.
+//
+// Not for the same reason the values are: a label steers nothing. It is that a
+// script can rename Parameter channels itself (SetParamLabel), the names it
+// writes are how its own log and the TSV header read, and a run whose channel
+// names changed halfway through is a record nobody can line up afterwards. The
+// AI and AO labels have no script writing them, but the rule is worth being one
+// rule: "labels are what this run was called" holds for the whole page or it is
+// a detail to look up per panel.
+const LABEL_LOCKED_TITLE = 'Locked while a script is running';
+const LABEL_LOCKED_CLASS =
+  'disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:disabled:bg-slate-800 dark:disabled:text-slate-500';
 
 // The hard limits below come from the converter ICs, not from this app: they
 // cannot be raised by changing an Input Config range or a calibration coefficient,
@@ -449,11 +462,6 @@ function App() {
     return m;
   }, [aiFreeLabels, paramFreeLabels]);
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
-  // The Param Editor's "Default" column: written to the SAB once at app
-  // startup. Editing here does NOT touch the SAB until the next launch - the
-  // live SAB is the "Present" column. The two are deliberately separate so
-  // each kind of edit has its own obvious target.
-  const [paramStartupValues, setParamStartupValues] = useState<number[]>(() => loadParamStartupValues());
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
   // AO and Parameter start collapsed: AI is what a session is normally watching,
   // and the other two are only opened when they are actually being driven. The
@@ -1055,26 +1063,9 @@ function App() {
     return () => window.clearInterval(intervalId);
   }, [scriptRunner.paramShareRef]);
 
-  // Seed the Parameter SAB with the persisted "Default" column, once, on mount.
-  // useScriptRunner() is called above this effect, so its own mount effect (the
-  // one that allocates the shares) has already run by the time this fires - the
-  // SAB is there unless the page is not cross-origin isolated, in which case
-  // there is nothing to seed at all.
-  //
-  // Deliberately empty deps: a later edit to the Default column is for the
-  // *next* launch, and must not reach into the SAB mid-session while a script
-  // may be reading it. The live "Present" column is the in-session writer.
-  useEffect(() => {
-    const share = scriptRunner.paramShareRef.current;
-    if (!share) return;
-    for (let i = 0; i < share.length; i += 1) {
-      share[i] = paramStartupValues[i] ?? 0;
-    }
-    // Force one immediate paramValues refresh so the panel's "Present" column
-    // reflects the seed before the first 200 ms tick.
-    setParamValues(Array.from(share));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // The Parameter SAB starts at zero and stays wherever the session leaves it.
+  // There used to be a persisted "Default" column seeded in here once on mount;
+  // it is gone with the Param Editor's second column — see ParamEditorPanel.
 
   // What the System Log window puts in its subtitle, shared with slot 3. The
   // log itself covers the whole app now; this line still names the run,
@@ -2385,8 +2376,10 @@ function App() {
                     type="text"
                     value={aiFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
+                    disabled={scriptRunner.scriptRunning}
+                    title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
                     placeholder="Label"
-                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
                   />
                 </div>
                 <div className="space-y-0 pt-px text-base leading-none">
@@ -2455,8 +2448,10 @@ function App() {
                     type="text"
                     value={aoFreeLabels[ch.id] ?? ''}
                     onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
+                    disabled={scriptRunner.scriptRunning}
+                    title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
                     placeholder="Label"
-                    className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
                   />
                 </div>
                 <div className="pt-px text-base leading-none">
@@ -2499,8 +2494,10 @@ function App() {
                   type="text"
                   value={paramFreeLabels[idx] ?? ''}
                   onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
+                  disabled={scriptRunner.scriptRunning}
+                  title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
                   placeholder="Label"
-                  className="min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
                 />
               </div>
               <div className="pt-px text-base leading-none">
@@ -2647,7 +2644,6 @@ function App() {
         locked={scriptRunner.scriptRunning}
         paramValues={paramValues}
         paramFreeLabels={paramFreeLabels}
-        paramStartupValues={paramStartupValues}
         onApplyParamValue={(idx, value) => {
           const share = scriptRunner.paramShareRef.current;
           if (!share) return;
@@ -2655,13 +2651,18 @@ function App() {
           share[idx] = value;
           setParamValues(Array.from(share));
         }}
-        onStartupValueChange={(idx, value) => {
-          setParamStartupValues((prev) => {
-            const next = [...prev];
-            next[idx] = value;
-            saveParamStartupValues(next);
-            return next;
-          });
+        onParamLabelChange={handleParamFreeLabelChange}
+        onClearAll={() => {
+          const share = scriptRunner.paramShareRef.current;
+          if (share) {
+            share.fill(0);
+            setParamValues(Array.from(share));
+          } else {
+            // No SAB (page is not cross-origin isolated): nothing writes the
+            // values in that build, but the displayed row still has to go to 0.
+            setParamValues(Array(PARAM_CHANNELS).fill(0));
+          }
+          setParamFreeLabels(Array(PARAM_CHANNELS).fill(''));
         }}
       />
 

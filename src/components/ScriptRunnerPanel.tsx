@@ -1,9 +1,14 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { useScriptRunner } from '../hooks/useScriptRunner';
 import { CodeEditor } from './CodeEditor';
 import { CollapseButton } from './CollapseButton';
 import { SCRIPT_LANGUAGES, buildAiPrompt } from '../utils/scriptLanguages';
-import { SCRIPT_TAB_NAME_MAX } from '../utils/scriptTabs';
+import {
+  SCRIPT_IMPORT_MAX_BYTES,
+  SCRIPT_TAB_NAME_MAX,
+  scriptFileName,
+  tabNameFromFileName,
+} from '../utils/scriptTabs';
 import { FloatingWindow } from './FloatingWindow';
 import { HoldToConfirm } from './HoldToConfirm';
 
@@ -33,6 +38,10 @@ export function ScriptRunnerPanel({
   // one field is more ceremony than the edit deserves.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  // The import picker. A hidden <input type="file"> rather than
+  // showOpenFilePicker(): the launcher serves this app over plain HTTP to other
+  // machines on the LAN, where the File System Access API is not available.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // `tabs` is the selected language's strip only; `runningTab` comes from the
   // hook because the script executing may belong to a strip that is not on
   // screen.
@@ -63,6 +72,50 @@ export function ScriptRunnerPanel({
     });
   };
 
+  // A tab's code exists nowhere but this app — no file behind it, and only
+  // localStorage keeping it between sessions. Export is the way out of that:
+  // one tab, one .py, named after the tab. Not a bundle of all of them, because
+  // what leaves here is meant to be opened in an editor or committed somewhere,
+  // and a zip of a dozen scripts is neither.
+  const exportActiveTab = () => {
+    const tab = scriptRunner.activeTab;
+    const blob = new Blob([tab.code], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = scriptFileName(tab.name, SCRIPT_LANGUAGES[tab.language].fileExtension);
+    anchor.click();
+    // Not revoked in the same tick: Chromium starts the download from the URL
+    // asynchronously after click(), and revoking immediately cancels it.
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+
+  const importFile = async (file: File) => {
+    if (file.size > SCRIPT_IMPORT_MAX_BYTES) {
+      window.alert(
+        `"${file.name}" is ${Math.round(file.size / 1024)} kB. The editor takes scripts up to ${Math.round(SCRIPT_IMPORT_MAX_BYTES / 1024)} kB.`,
+      );
+      return;
+    }
+    let code: string;
+    try {
+      code = await file.text();
+    } catch (err) {
+      window.alert(`Could not read "${file.name}": ${(err as Error).message}`);
+      return;
+    }
+    // The name is a suggestion — the hook truncates it and renames around a
+    // collision, so a long or duplicate file name imports rather than failing.
+    const name = scriptRunner.importTab(tabNameFromFileName(file.name), code);
+    if (name === null) {
+      window.alert(
+        scriptRunner.scriptRunning
+          ? 'Stop the running script before importing.'
+          : 'No room for another tab: close one first.',
+      );
+    }
+  };
+
   return (
     <FloatingWindow
       open={open}
@@ -73,6 +126,62 @@ export function ScriptRunnerPanel({
       defaultHeight={620}
       headerActions={
         <>
+          {/* Import / Export sit together, first, and disappear together.
+              They are the only controls here that are about the file on disk
+              rather than the run, and they are the ones this header can do
+              without: below `@md` (a window of roughly 470 px) the title and
+              Run/Stop are what has to stay legible. Nothing is lost while they
+              are hidden — the window widens back.
+
+              Both are refused while a script runs, Export included. Reading the
+              editor would be harmless, but the pair is one idea ("move this
+              script between here and disk") and a run is not the moment for it;
+              a half-exported script that does not match what is executing is
+              exactly the confusion the frozen editor already avoids. */}
+          <span className="hidden shrink-0 items-center gap-1 @md:flex">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={language.fileAccept}
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                // Cleared first: picking the same file twice in a row fires no
+                // change event otherwise, and re-importing the file you just
+                // edited is the normal case.
+                event.target.value = '';
+                if (file) void importFile(file);
+              }}
+            />
+            <button
+              type="button"
+              className="button-secondary py-1 text-xs disabled:opacity-50"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={scriptRunner.scriptRunning || !scriptRunner.canAddTab}
+              title={
+                scriptRunner.scriptRunning
+                  ? 'Stop the script before importing'
+                  : scriptRunner.canAddTab
+                    ? `Open a ${language.fileExtension} file as a new tab`
+                    : 'No room for another tab'
+              }
+            >
+              Import
+            </button>
+            <button
+              type="button"
+              className="button-secondary py-1 text-xs disabled:opacity-50"
+              onClick={exportActiveTab}
+              disabled={scriptRunner.scriptRunning}
+              title={
+                scriptRunner.scriptRunning
+                  ? 'Stop the script before exporting'
+                  : `Download ${scriptFileName(scriptRunner.activeTab.name, language.fileExtension)}`
+              }
+            >
+              Export
+            </button>
+          </span>
           {/* Was a slide-to-confirm, which cost the width of a track this header
               no longer has to spare. Held instead of swiped: the gesture is
               smaller but it is still a gesture, which is what this needs — it
