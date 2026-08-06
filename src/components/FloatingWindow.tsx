@@ -155,8 +155,14 @@ export function FloatingWindow({
           {/* Title bar of every floating panel. It is pure chrome — it must not
               cost more vertical space than a row of the content it frames, so
               the type matches the app's section headings (text-sm) rather than
-              being a size of its own. */}
-          <div className="flex items-center justify-between border-b border-slate-200 px-2 py-1 dark:border-slate-700">
+              being a size of its own.
+
+              A container, so `headerActions` can drop its optional controls at
+              narrow widths (`@md:` and friends) instead of squeezing the title
+              to nothing. The window is resizable down to 280 px and remembers
+              whatever size it was left at, so this is a state every panel is
+              one drag away from. */}
+          <div className="@container flex items-center justify-between border-b border-slate-200 px-2 py-1 dark:border-slate-700">
             <div className="floating-window-drag-handle min-w-0 flex-1 cursor-move touch-none select-none">
               <h2 className={`truncate text-sm font-bold leading-tight ${accentColor}`}>
                 {title}
