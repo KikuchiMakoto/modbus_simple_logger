@@ -62,6 +62,7 @@ const IDLE_RUN: ScriptRunInfo = {
 export function useScriptRunner(
   setAo: (ch: number, data: number) => void,
   onAiCalibTare: (ch: number) => void,
+  setParamLabel: (ch: number, text: string) => void,
 ) {
   const scriptRunnerSupported = typeof SharedArrayBuffer !== 'undefined' && window.crossOriginIsolated;
   // Open documents, and which one is in front. One state object rather than two:
@@ -223,6 +224,7 @@ export function useScriptRunner(
       const message = event.data as
         | { type: 'set_ao'; ch: number; data: number }
         | { type: 'set_ai_tare'; ch: number }
+        | { type: 'set_param_label'; ch: number; text: string }
         | { type: 'status'; message: string }
         | { type: 'output'; stream: 'stdout' | 'stderr'; text: string }
         | { type: 'done'; message?: string }
@@ -232,6 +234,8 @@ export function useScriptRunner(
         setAo(message.ch, message.data);
       } else if (message.type === 'set_ai_tare') {
         onAiCalibTare(message.ch);
+      } else if (message.type === 'set_param_label') {
+        setParamLabel(message.ch, message.text);
       } else if (message.type === 'status') {
         setScriptRunnerStatus(message.message);
       } else if (message.type === 'output') {
@@ -282,7 +286,7 @@ export function useScriptRunner(
 
     workersRef.current.set(language, worker);
     return worker;
-  }, [ensureShares, setAo, onAiCalibTare, appendLog, settleRun, markRunFinished]);
+  }, [ensureShares, setAo, onAiCalibTare, setParamLabel, appendLog, settleRun, markRunFinished]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
     if (interruptBufferRef.current) {

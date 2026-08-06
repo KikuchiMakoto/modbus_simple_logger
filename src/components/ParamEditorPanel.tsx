@@ -101,6 +101,15 @@ export function ParamEditorPanel({
   onApplyParamValue,
   onStartupValueChange,
 }: ParamEditorPanelProps) {
+  // Re-armed every time a run starts locking the editor, rather than kept
+  // across runs: accepting the race for one run should not silently carry
+  // into the next one.
+  const [acceptRisk, setAcceptRisk] = useState(false);
+  useEffect(() => {
+    if (locked) setAcceptRisk(false);
+  }, [locked]);
+  const effectiveLocked = locked && !acceptRisk;
+
   return (
     <FloatingWindow
       open={open}
@@ -109,8 +118,31 @@ export function ParamEditorPanel({
       subtitle="Default applies at next launch, Present applies now"
       defaultWidth={420}
       defaultHeight={460}
+      headerActions={
+        locked && (
+          <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium text-amber-600 dark:text-amber-400">
+            <input
+              type="checkbox"
+              checked={acceptRisk}
+              onChange={(e) => setAcceptRisk(e.target.checked)}
+              className="h-3 w-3 accent-amber-500"
+            />
+            Accept Risk
+          </label>
+        )
+      }
     >
       <div className="flex-1 overflow-y-auto p-2">
+        {locked && !acceptRisk && (
+          <div className="mb-1.5 rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[0.7rem] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            Script running: editing is locked. Check "Accept Risk" above to edit Present anyway — a manual edit can race the script's own writes to that channel. Default (next-launch seed) stays locked either way, since it never touches the running script.
+          </div>
+        )}
+        {locked && acceptRisk && (
+          <div className="mb-1.5 rounded border border-amber-400 bg-amber-50 px-2 py-1 text-[0.7rem] font-medium text-amber-700 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300">
+            Editing Present while the script is running — your edits can race the script's own writes to that channel.
+          </div>
+        )}
         <div className="space-y-0.5">
           {CHANNEL_LABELS.map((label, idx) => {
             const value = paramValues[idx] ?? 0;
@@ -140,7 +172,7 @@ export function ParamEditorPanel({
                     <ParamCell
                       value={value}
                       onChange={(v) => onApplyParamValue(idx, v)}
-                      disabled={locked}
+                      disabled={effectiveLocked}
                       ariaLabel={`CH${label} present`}
                     />
                   </div>

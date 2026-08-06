@@ -64,8 +64,8 @@ const RUNNER_GUIDELINES: string[] = [
   'Elapsed() restarts at 0 on every Start. For a deadline that survives a restart, keep the REMAINING seconds in Param and count down, instead of comparing with an absolute Elapsed() target.',
   'SetAo() and SetAiTare() are applied asynchronously: do not read back with GetAo() in the same iteration to confirm them.',
   'Clamp the AO command to 0-10 V, clamp the integral term of any PI loop, and start from the present GetAo() so a restart does not step the output.',
-  'If a channel the script needs has no label below, ask the user to label it before writing the script — at minimum every AI and AO channel the script touches. A script written against unlabeled channels can only be checked by running it on the rig.',
   'Define the channel numbers as named constants at the top with a comment table of what each AI / AO / Param channel is, and put the values the user is meant to tune in Param rather than in the code.',
+  'Param is a scarce, visible resource, not a general-purpose variable store: only 16 channels, each shown live in the Parameter panel and logged to TSV every sample. Route a value through Param only when it must survive Stop/Start, the user tunes it, or it is worth watching in the log — keep everything else as an ordinary local/module variable.',
   'End with a checklist to complete BEFORE pressing Start: the Param channels to RENAME (the script gives them meanings their labels do not carry yet) and the Param values to SET in Param Editor. The values especially — Param Editor is locked while a run is in progress, so a value not set beforehand cannot be corrected without stopping.',
   'print() sparingly: it shares a bounded System Log, so a line every iteration pushes everything else out. Print on state changes, and otherwise every Nth iteration, with Elapsed() in the line.',
   'State in a header comment what the outputs do when the script is stopped: AO channels hold their last value unless the script sets them.',
@@ -88,6 +88,10 @@ const INSTRUMENT_API: ScriptApiDoc[] = [
     name: 'SetParam(ch, val)',
     desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.',
   },
+  {
+    name: 'SetParamLabel(ch, text)',
+    desc: 'Set Param ch\'s free-text label. Shown in Parameter panel; persisted like a UI edit. Pass "" to clear it — there is no separate clear call. Applied async.',
+  },
   { name: 'Elapsed()', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
 ];
 
@@ -105,8 +109,9 @@ const PYTHON: ScriptLanguage = {
   ],
   promptIntro: `Write a Python ${pythonVersion} script for ModbusSimpleLogger Script Runner (Pyodide; async context, top-level await OK).`,
   // Written so that breaking any one of them is a failure the author can see:
-  // a frozen tab, a script that will not start, or a NameError. Everything
-  // whose cost only shows up later belongs in RUNNER_GUIDELINES instead.
+  // a frozen tab, a script that will not start, a NameError, or the rig
+  // moving/reading the wrong way. Everything whose cost only shows up later
+  // belongs in RUNNER_GUIDELINES instead.
   promptRules: [
     'Begin with `import asyncio`, and import nothing beyond `asyncio` and `math` — there is no network, so micropip / numpy / pandas cannot load.',
     'Wait only with `await asyncio.sleep(s)`. NEVER time.sleep(), a busy-wait loop, threading, or input(): they hold the runtime until they return, and Stop cannot get in.',
@@ -114,6 +119,8 @@ const PYTHON: ScriptLanguage = {
     'Never sleep for less than 0.1 s: the readings only refresh once per Modbus poll, so a faster loop re-reads the same values.',
     'Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
     'The instrument API is PascalCase (GetAiPhy, SetAo), not snake_case.',
+    'Before writing any code whose logic depends on the sign of an AI or AO channel, ask the user which direction is positive and which is negative for that channel on THIS rig (e.g. compression vs. expansion, push-in vs. pull-out) — never assume a polarity convention. A channel label alone does not say which sign is which.',
+    'If a channel the script needs has no label below, or its identity is otherwise uncertain, do not guess: stop and get the user to add a label for it in the app and to calibrate it before writing the script — at minimum every AI and AO channel the script touches. Where possible, have them put the unit in the label itself (e.g. "Force (N)", "Stroke [mm]"), since the Phy value display carries no unit of its own. A script written against an unlabeled or uncalibrated channel can only be checked by running it on the rig.',
   ],
   // The runner's guidelines plus the one that is about Python itself: Stop is
   // delivered as an exception, so the usual defensive `except` around a control
