@@ -754,6 +754,7 @@ function App() {
   }, []);
 
   const handleParamFreeLabelChange = useCallback((idx: number, value: string) => {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= PARAM_CHANNELS) return;
     setParamFreeLabels((prev) => {
       const next = [...prev];
       next[idx] = value;
@@ -1026,7 +1027,7 @@ function App() {
     });
   }, [applyCalibrationToChannels]);
 
-  const scriptRunner = useScriptRunner(setAo, handleTareCalibration);
+  const scriptRunner = useScriptRunner(setAo, handleTareCalibration, handleParamFreeLabelChange);
 
   // Mirror AO values into the ScriptRunner share so GetAo() can read them, in
   // volts to match the unit SetAo() takes (AO state is held in millivolts).

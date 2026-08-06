@@ -189,9 +189,10 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 - **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイル**。実行系が増えても契約だけ揃えれば `useScriptRunner` は同一に扱える、という前提で作られている（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）
 - **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
-- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではない、という判断）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
+- **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetParamLabel` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではない、という判断）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
+- **`SetParamLabel(ch, text)` は Param ch の自由テキストラベルを書き換える**。値そのもの（`SetParam`）と同じ非同期メッセージ経路（`set_param_label` → `App.tsx` の `handleParamFreeLabelChange`）で、SAB ではなく `paramFreeLabels` state（Cookie 永続化）を書く。**専用の clear 呼び出しは無い** — `SetParamLabel(ch, "")` が消去を兼ねる。Copy for AI の API 一覧にもその旨を明記
 - **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。1エントリの Record になっているが、`ScriptLanguageId` を型として保つのは `scriptTabs.ts` の永続化コードが `isScriptLanguageId` で古い `'basic'`/`'lua'` の保存値を弾くため。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
-- **「Copy for AI」のプロンプトは2段構成**（`buildAiPrompt`）。`promptRules` は**破ると目に見えて壊れるもの**だけ（フリーズ・起動失敗・NameError）、`RUNNER_GUIDELINES` は**後で効いてくるもの**（Stop→Start の再開性・Param への状態退避・ログ量・出力の後始末）。混ぜて1つの箇条書きにしないこと — 助言側は平坦なリストを渡されると「守らなかったルール」と「省いた推奨」を同じ重さで扱う。またガイドライン側は**言語ではなくランナーの制約**なので、言語が増えても各言語エントリで共有する
+- **「Copy for AI」のプロンプトは2段構成**（`buildAiPrompt`）。`promptRules` は**破ると壊れる、または壊れているのに気づけないもの**（フリーズ・起動失敗・NameError に加え、極性を確認せずに書いたコードやラベル/キャリブレーション未確認のチャンネルが実機を誤った方向へ動かす類）、`RUNNER_GUIDELINES` は**後で効いてくるもの**（Stop→Start の再開性・Param 濫用の抑制・ログ量・出力の後始末）。混ぜて1つの箇条書きにしないこと — 助言側は平坦なリストを渡されると「守らなかったルール」と「省いた推奨」を同じ重さで扱う。またガイドライン側は**言語ではなくランナーの制約**なので、言語が増えても各言語エントリで共有する
 - **Worker は生成後、保持し続ける**。Pyodide は起動に数秒かかるので、都度破棄すると次に開いたときに壊れて見える
 - **Python のグローバル名前空間は run をまたいで残る**（`eval_code_async(code, globals=globals())` ＋ Worker 保持）。前回実行の変数が生きているため、初期化漏れのスクリプトが「動いてしまい」リロード後に壊れる。プロンプト側で「読む変数は冒頭で必ず代入」「状態は Param に置く」を要求しているのはこのため
 - **Stop は「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること
@@ -217,6 +218,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 - **列名は UI の表記に合わせて Default / Present**（内部の prop 名は `paramStartupValues` のまま）。**Default 列**＝起動時デフォルト値（`param_startup_values_v1`、`localStorage` 不通時は Cookie lifeboat）。編集しても**その場では SAB に触れない** — App.tsx が起動時に1回だけ（空 deps の effect で）SAB へ seed する。**Present 列**＝ライブ SAB への即時書き込み
 - **Default 列を編集しても即座に SAB へ反映してはいけない**。スクリプトが読んでいる最中の Parameter を、次回起動用の準備作業が書き換えることになるため。セッション中に値を変えたいなら Present 列がその窓口
+- **ヘッダーの `Accept Risk` チェックボックスは実行中ロックの明示的な解除**。既定では ScriptRunner 実行中は Default/Present とも編集不可（`locked`）だが、手動チューニングをその場で見たい場面があるため、チェックを入れると `effectiveLocked = locked && !acceptRisk` で両セルを解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）

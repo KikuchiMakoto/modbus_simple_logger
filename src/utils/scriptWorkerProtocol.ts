@@ -41,7 +41,9 @@ export type ScriptWorkerResponse =
   | { type: 'error'; message: string; traceback?: string }
   /** Volts. Routed through the main thread's AO write path, never direct. */
   | { type: 'set_ao'; ch: number; data: number }
-  | { type: 'set_ai_tare'; ch: number };
+  | { type: 'set_ai_tare'; ch: number }
+  /** Free-text label for a Param channel, persisted like a UI edit. Empty text clears it. */
+  | { type: 'set_param_label'; ch: number; text: string };
 
 /**
  * Interrupt buffer states. One byte, shared, polled by the runtime.

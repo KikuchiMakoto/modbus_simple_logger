@@ -176,6 +176,12 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   registerApi('SetParam', (ch: number, data: number) => {
     writeParamValue(paramShare, Number(ch), Number(data));
   });
+  // The label itself lives in App.tsx state (persisted like any other UI
+  // edit), not the SAB, so it goes over the same postMessage path as SetAo /
+  // SetAiTare rather than a direct write.
+  registerApi('SetParamLabel', (ch: number, text: string) => {
+    postWorkerMessage({ type: 'set_param_label', ch: Number(ch), text: String(text) });
+  });
   // Monotonic seconds since this worker started, so it has no midnight
   // discontinuity — the one a multi-day consolidation stage would otherwise
   // walk straight into.

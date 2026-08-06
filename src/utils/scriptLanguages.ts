@@ -88,6 +88,10 @@ const INSTRUMENT_API: ScriptApiDoc[] = [
     name: 'SetParam(ch, val)',
     desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.',
   },
+  {
+    name: 'SetParamLabel(ch, text)',
+    desc: 'Set Param ch\'s free-text label. Shown in Parameter panel; persisted like a UI edit. Pass "" to clear it — there is no separate clear call. Applied async.',
+  },
   { name: 'Elapsed()', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
 ];
 
