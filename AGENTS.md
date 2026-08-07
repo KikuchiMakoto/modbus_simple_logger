@@ -401,7 +401,8 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 1. 上記ルールに従って `package.json` の `version` を更新（小規模変更ならマイナーをインクリメント）。
    バージョンはビルド時に `vite.config.ts` から `VITE_APP_VERSION` / `sw.js` の `APP_VERSION` へ
    注入されるため、**他のファイルを書き換える必要はない**
-2. `npm run build` を通してから進める（壊れたリリースにタグを打たないため）
+2. `bun run build` を通してから進める（壊れたリリースにタグを打たないため。exe も出すなら
+   `bun run launcher:build` が build を兼ねる）
 3. 変更とバージョン更新を同一コミットに含めてコミット
 4. 注釈付きタグを作成: `git tag -a v3.4 -m "v3.4: <一行要約>"`（既存タグは
    `git tag --sort=-v:refname | head` で確認し、番号を採番する）
