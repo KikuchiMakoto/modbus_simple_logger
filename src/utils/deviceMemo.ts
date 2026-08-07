@@ -55,7 +55,10 @@ export const deviceMemoFileName = (at: Date = new Date()): string =>
  * the headings the AI prompt goes on to ask about anyway, so the memo starts as
  * the shape of the answer rather than as a blank.
  */
-export const DEVICE_MEMO_TEMPLATE = `# Machine
+export const DEVICE_MEMO_TEMPLATE = `# 日本語でOK・中文可 — write in whatever language you think in.
+# Overwrite these headings freely; they are a starting point, not a form.
+
+# Machine
 (maker / model / what it does)
 
 # Actuator

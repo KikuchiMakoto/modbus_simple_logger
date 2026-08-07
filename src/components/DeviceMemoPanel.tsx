@@ -74,7 +74,7 @@ export function DeviceMemoPanel({
       // Says where the text goes, because that is the part a notepad cannot
       // show by itself: someone who does not know it is copied into the prompt
       // has no reason to write anything here rather than on a sticky note.
-      subtitle="Free notes about this rig · included in Copy AI Prompt"
+      subtitle="Free notes about this rig · 日本語でOK · included in Copy AI Prompt"
       defaultWidth={520}
       defaultHeight={480}
       headerActions={
@@ -131,7 +131,13 @@ export function DeviceMemoPanel({
           value={memo}
           onChange={(e) => onChange(e.target.value.slice(0, DEVICE_MEMO_MAX))}
           spellCheck={false}
-          placeholder="What this machine is, what is on each channel, which way is positive, what the limits are, what was calibrated and when."
+          // Says it in the languages it is granting permission for, because a
+          // line reading "any language is fine" in English is still an English
+          // box asking to be filled in in English. The rest of the app is in
+          // English and stays that way; this is the one field whose content is
+          // the user's own words, and rough notes in a first language beat
+          // careful notes in a second — or, far more likely, no notes at all.
+          placeholder="What this machine is, what is on each channel, which way is positive, what the limits are, what was calibrated and when.&#10;&#10;日本語でOK・中文可 — any language is fine. Rough notes beat none."
           className="min-h-0 w-full flex-1 resize-none rounded-lg border border-slate-300 bg-white p-2 font-mono text-xs leading-relaxed text-slate-800 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         />
         {/* The counter appears only once it is close enough to matter: sitting
