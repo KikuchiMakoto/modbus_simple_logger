@@ -120,12 +120,20 @@ const RUNNER_GUIDELINES: string[] = [
  * interrogation, and on a rig the questions it skips are the ones whose wrong
  * answer costs a specimen or a load cell. Planning mode is asked for by name
  * because it is the one mode where a wrong assumption is still only text.
+ *
+ * The "copy the prompt again" line is about this text's own staleness. The
+ * channel labels below are a snapshot taken at the moment the button was
+ * pressed, so a prompt copied before the user labelled and calibrated their
+ * channels carries the empty strings forever, and the assistant reading it has
+ * no way to notice that the rig has since been described. Nothing else in the
+ * conversation can repair that — only another press of the button.
  */
 const CALIBRATION_PREREQUISITES: string[] = [
   'STRONGLY RECOMMENDED: run this in a planning mode (Claude Code plan mode, or any mode that produces a plan for approval before it writes code), and do not leave that mode until the user has approved the plan. Everything here is cheaper to get wrong in a plan than in a script that has already moved the actuator.',
   'While planning, interrogate the rig in detail — do not infer it and do not proceed on one round of questions. Ask, at minimum: what the machine is and what test this is; every AI channel the script will read (number, what sensor, what unit, full scale, which sign is which physically) and every AO channel it will drive (number, what it commands, what the voltage means at 0 V and at 10 V); what the specimen or target is and what destroys it; the safe limits — force, pressure, stroke, speed — and what the script should do on reaching one; where the mechanical end stops are; whether there is an E-stop and what it cuts. Ask follow-ups until you could predict what each channel will read before the run.',
   'Before writing the test script the user asked for, establish what has already been calibrated on this rig, and by what: ask. A channel label is not evidence that a calibration exists, and neither is a previous script.',
   'When a prerequisite below is missing, do not fold a guess into the test script. Write the calibration script as a separate script for the user to run first, tell them which numbers to read off it, and write the test script against those numbers afterwards.',
+  'Whenever you send the user away to do something in the app — label channels, calibrate them, run a calibration script, fix hardware settings — end that message by asking them to press "Copy AI Prompt" again and paste the new prompt when they come back. The channel labels at the bottom of this prompt are a snapshot from the moment the button was pressed: if they were empty or wrong then, they stay that way here no matter what the user has done to the rig since, and you cannot tell from inside the conversation that they are stale.',
   'Motor-driven actuator under SPEED control: a command-voltage-to-speed calibration (V -> mm/min, over the speed range the test actually uses, measured in both directions if the test moves both ways) and a rough proportional-only loop calibration are both required first. Start from P alone; add I only if a steady-state offset that matters remains, and treat D as a last resort on a rig whose speed signal is differentiated from position.',
   'Motor-driven actuator under FORCE or PRESSURE control: the speed calibration above is still required — the force loop commands speed, so without it the loop gain has no units — and on top of it the force loop (PID, or MPC where the user is using one) must be tuned on a DUMMY specimen of similar stiffness, never on the real one. Ask what the dummy is and what force and rate are safe on it before writing the tuning script.',
   'Motor drive settings — gear ratio, gearbox or pulley change, lead screw, and every driver setting (gain, acceleration/deceleration ramp, current or torque limit, electronic gearing, encoder resolution, command scaling) — must NEVER be changed once calibrated. Every constant above is a property of that exact drive train: change any of it and the V -> mm/min calibration and the loop gains are void, not merely shifted. State this in the script header, and if the user says anything was touched, stop and have them re-run the calibration before the test script is used again.',
@@ -292,7 +300,10 @@ export const buildAiPrompt = (
     'Plan and calibration prerequisites (settle these BEFORE writing the requested script):',
     ...CALIBRATION_PREREQUISITES.map((line) => `- ${line}`),
     '',
-    'Channel labels (JSON; index = ch, "" = unlabeled):',
+    // Says "snapshot" at the point of use, not only in the prerequisites: this
+    // is the block an assistant will scroll back to when it wonders whether a
+    // channel is labelled, and that is the moment the caveat has to be there.
+    'Channel labels (JSON; index = ch, "" = unlabeled). Snapshot from when this prompt was copied — ask for a fresh copy after any labelling or calibration work:',
     JSON.stringify(channelLabels),
     '',
     'Task: <your request here>',
