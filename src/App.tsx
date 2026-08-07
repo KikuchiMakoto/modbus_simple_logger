@@ -83,6 +83,7 @@ import {
   requestPersistentStorage,
 } from './utils/opfsRecovery';
 import { readJsonStorage, writeJsonStorage } from './utils/cookies';
+import { formatFloat32 } from './utils/floatFormat';
 import {
   clearStatusSource,
   logSystem,
@@ -2501,10 +2502,19 @@ function App() {
                 />
               </div>
               <div className="pt-px text-base leading-none">
-                <div className="flex items-center justify-between leading-none">
+                <div className="flex items-center justify-between gap-1 leading-none">
                   <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
-                  <span className="text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {value.toFixed(3)}
+                  {/* Same rule as the Param Editor's cells (formatFloat32): a
+                      fixed 3 decimals turned a 2.5e-5 gain into "0.000" in the
+                      one place it is meant to be watched, and made the same
+                      channel read differently in two windows. Long values
+                      truncate rather than widen the card — the full string is
+                      in the title, and the Editor shows it untruncated. */}
+                  <span
+                    title={formatFloat32(value)}
+                    className="min-w-0 truncate text-right text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400"
+                  >
+                    {formatFloat32(value)}
                   </span>
                 </div>
               </div>

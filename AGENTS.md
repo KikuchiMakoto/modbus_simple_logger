@@ -227,6 +227,8 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **値は即時反映しない。`Set`（または Enter）が唯一の書込み**。Escape で破棄、**blur は何もしない**。Input Calib は「確定＝適用」だが、あちらが書くのは localStorage の係数で、こちらが書くのは**実行中のスクリプトが装置を動かしている SAB** である。半端に入力したセルから離れたクリックが書込みになるのは、ここでは事故の形をしている
   - 未確定のドラフトは**値が下から動いても消さない**（スクリプトが 200ms ごとに同じ ch を書いていても、打ちかけの数字はユーザーの唯一のコピー）。確定・破棄で live 値のミラーへ戻る。未確定は amber、パースできない入力は rose
 - **表示は `formatFloat32`（`utils/floatFormat.ts`）＝ 読み戻して同じ float32 になる最短の10進文字列**。Parameter は `Float32Array`（SAB）なので `0.3` は `0.30000001192092896` として出てくる。**`toFixed(3)` で丸めて隠さないこと** — 桁を固定すると 2.5e-5 も 120000.5 も嘘の値で表示され、「書き戻すのと違う値を見せるエディタ」になる。最短往復表記なら `0.3` は `0.3`、本当に9桁要る値は9桁出る（JS が double に対してやっているのと同じ規則を1段下で適用しているだけ）
+  - **Parameter の値が出る場所は全部このルール**（v6.9〜）: Param Editor のセル・**メインページの Parameter カード**（`App.tsx`）・**TSV の `par_*` 列**（`tsvFormat.ts`）。以前カードと TSV だけ `toFixed(3)` だったため、**同じ ch が窓では `0.000025`、カードと保存ファイルでは `0`** という状態になっていた。AI 側の `toFixed(physicalPrecision)` を Parameter に流用しないこと — あちらは分解能の宣言された物理量、こちらはスクリプトが勝手にスケールを決める無単位の値で、3桁に根拠が無い
+  - カードは幅が固定なので `truncate` + `title` で溢れを処理する（**カードを広げない**。16枚が横一列に並ぶレイアウトが崩れる）。全桁を見る場所は Param Editor
 - **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中はメインページのラベル入力が編集不可（Param Editor 側はそもそも表示専用）。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE` / `LABEL_LOCKED_CLASS`）
 - **ヘッダーの `Accept Risk` チェックボックスは値だけの実行中ロック解除**。既定では ScriptRunner 実行中はラベルも値も編集不可（`locked`）だが、チェックを入れると `valuesLocked = locked && !acceptRisk` で**値だけ**を解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
 - **最下部の全消去は `SlideToConfirm`**（16ch の値を 0 に。**ラベルには触らない** — 表示しかしていないパネルが名前を消すのはおかしい）。**スクロール領域の外**に置くこと — 中に入れると「一番下までスクロールしたときだけ現れる操作」になり、スクロールの延長で手が届いてしまう。実行中（`locked`）は Accept Risk に関係なく無効（全消去は狙ったセルへの編集ではない）
@@ -247,7 +249,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
   - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
-  - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は常に `toString()` の整数（i16 レジスタなので）
+  - `ai_phy_*` / `ai_vlt_*` は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` / `ao_raw_*` は常に `toString()` の整数（i16 レジスタ / 整数 mV なので）。**`par_*` だけは `formatFloat32`**（`physicalPrecision` を掛けない。理由は Param Editor の項）
   - `Float32Array` / `number[]` の両方を受け付ける
 - **OPFS クラッシュリカバリ**（`utils/opfsRecoveryShared.ts` + `opfsRecovery.ts` + `tsvWriterWorker.ts`）: ピッカーで選んだファイルは `FileSystemWritableFileStream` がスワップファイルへ溜め、`close()` で初めて実体へ swing する。つまり **Stop Save まで対象ファイルは 0 バイト**で、途中でクラッシュすると全損する。そこで全行を OPFS へも同期追記する（`createSyncAccessHandle()` は OPFS 限定・Worker 限定・スワップ無し・追記可能）
   - **ダーティビットは「ミラーファイルが存在すること」そのもの**。別フラグは持たない — クラッシュとは2つの書込みが食い違いうる瞬間そのものであり、この機能が絶対に許容できないのは「別の run の名前や時刻を持つ復旧ファイル」だから。メタデータ（元ファイル名・開始時刻）も**ミラー自身のファイル名にエンコードする**（サイドカーや localStorage にしない）。正常な Stop Save が消すので、起動時に残っているものは定義上「終わらなかった run」

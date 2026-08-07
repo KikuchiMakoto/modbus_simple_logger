@@ -91,10 +91,13 @@ const INSTRUMENT_API: ScriptApiDoc[] = [
     name: 'SetAo(ch, vlt)',
     desc: 'Set AO voltage [V], clamped to 0-10. Applied async; GetAo() updates slightly later.',
   },
-  { name: 'GetParam(ch)', desc: 'Scratch value. ch: 0-15. Starts at 0.' },
+  {
+    name: 'GetParam(ch)',
+    desc: 'Scratch value. ch: 0-15. Starts at 0. Stored as float32, so what comes back is the rounded value: after SetParam(0, 0.3), GetParam(0) is 0.30000001192092896 and "== 0.3" is False. Compare with a tolerance (abs(GetParam(0) - 0.3) < 1e-6), never with == .',
+  },
   {
     name: 'SetParam(ch, val)',
-    desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted.',
+    desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted. val is rounded to float32 (~7 significant digits) on the way in — do not accumulate a counter or an integrator across many iterations in Param and expect the exact sum; keep the running total in a Python float and SetParam it for display.',
   },
   {
     name: 'SetParamLabel(ch, text)',
