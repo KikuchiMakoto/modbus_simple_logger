@@ -9,7 +9,25 @@
 
 export type ScriptLanguageId = 'python';
 
-export type ScriptApiDoc = { name: string; desc: string };
+export type ScriptApiDoc = {
+  name: string;
+  /**
+   * The panel's one-liner. Kept short enough to sit on ONE line next to the
+   * name chip at the window's default width, because the reference is read by
+   * scanning down the left column for a call: a description that wraps to
+   * three lines pushes the next name off the screen and makes the list look
+   * like prose instead of a table. Long entries next to two-word ones read as
+   * if the long ones matter more, which is not what the length was measuring.
+   */
+  desc: string;
+  /**
+   * What the AI prompt says instead, where the call has a trap that costs more
+   * to hit than the panel has room to explain (float32 rounding, mainly). The
+   * panel is read by someone who can try the call and see; the prompt is read
+   * once by something that cannot.
+   */
+  promptDesc?: string;
+};
 
 // Which Python the Pyodide build actually runs, derived from the pinned package
 // version rather than written out twice: pyodide's version tracks the CPython it
@@ -125,30 +143,36 @@ const CALIBRATION_PREREQUISITES: string[] = [
 ];
 
 const INSTRUMENT_API: ScriptApiDoc[] = [
-  { name: 'GetAiRaw(ch)', desc: 'Raw AI value. ch: 0-15.' },
-  { name: 'GetAiPhy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
+  { name: 'GetAiRaw(ch)', desc: 'Raw AI value, before calibration. ch: 0-15.' },
+  { name: 'GetAiPhy(ch)', desc: 'Calibrated AI value: a·Raw²+b·Raw+c. ch: 0-15.' },
   {
     name: 'SetAiTare(ch)',
-    desc: 'Tare AI ch: set offset c so the current phy reads 0 (a, b kept). Applied async.',
+    desc: 'Set offset c so AI ch reads 0 now (a, b kept). Applied async.',
   },
-  { name: 'GetAo(ch)', desc: 'AO voltage [V]. ch: 0-7.' },
+  { name: 'GetAo(ch)', desc: 'AO voltage [V], as last applied. ch: 0-7.' },
   {
     name: 'SetAo(ch, vlt)',
-    desc: 'Set AO voltage [V], clamped to 0-10. Applied async; GetAo() updates slightly later.',
+    desc: 'Set AO voltage [V], clamped to 0-10. Async: GetAo() updates later.',
   },
   {
     name: 'GetParam(ch)',
-    desc: 'Scratch value. ch: 0-15. Starts at 0. Stored as float32, so what comes back is the rounded value: after SetParam(0, 0.3), GetParam(0) is 0.30000001192092896 and "== 0.3" is False. Compare with a tolerance (abs(GetParam(0) - 0.3) < 1e-6), never with == .',
+    desc: 'Scratch value, float32. ch: 0-15, starts at 0. Compare with a tolerance, never ==.',
+    promptDesc:
+      'Scratch value. ch: 0-15. Starts at 0. Stored as float32, so what comes back is the rounded value: after SetParam(0, 0.3), GetParam(0) is 0.30000001192092896 and "== 0.3" is False. Compare with a tolerance (abs(GetParam(0) - 0.3) < 1e-6), never with == .',
   },
   {
     name: 'SetParam(ch, val)',
-    desc: 'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted. val is rounded to float32 (~7 significant digits) on the way in — do not accumulate a counter or an integrator across many iterations in Param and expect the exact sum; keep the running total in a Python float and SetParam it for display.',
+    desc: 'Set scratch value (float32). Shown in Parameter panel, logged to TSV. Not persisted.',
+    promptDesc:
+      'Set scratch value. Shown in Parameter panel, logged to TSV. Not persisted. val is rounded to float32 (~7 significant digits) on the way in — do not accumulate a counter or an integrator across many iterations in Param and expect the exact sum; keep the running total in a Python float and SetParam it for display.',
   },
   {
     name: 'SetParamLabel(ch, text)',
-    desc: 'Set Param ch\'s free-text label. Shown in Parameter panel; persisted like a UI edit. Pass "" to clear it — there is no separate clear call. Applied async.',
+    desc: 'Set Param ch\'s label; "" clears it. Persisted like a UI edit. Applied async.',
+    promptDesc:
+      'Set Param ch\'s free-text label. Shown in Parameter panel; persisted like a UI edit. Pass "" to clear it — there is no separate clear call. Applied async.',
   },
-  { name: 'Elapsed()', desc: 'Seconds since the script started. Monotonic - no midnight rollover.' },
+  { name: 'Elapsed()', desc: 'Seconds since Start. Monotonic - no midnight rollover.' },
 ];
 
 const PYTHON: ScriptLanguage = {
@@ -164,9 +188,17 @@ const PYTHON: ScriptLanguage = {
   // machines with no Python installed, and a picker that greys out the file the
   // user is looking at is worse than one that shows a few extra.
   fileAccept: '.py,text/x-python,application/x-python-code,text/plain',
+  // sleep goes FIRST, ahead of the instrument calls. The list is otherwise
+  // ordered by what it acts on, but this is the one call every script has to
+  // contain and the one whose absence hangs the browser — putting it last, as
+  // a footnote to the language, is the wrong place for the entry a reader most
+  // needs to have seen before writing their first loop.
   apiDocs: [
+    {
+      name: 'await asyncio.sleep(s)',
+      desc: 'Non-blocking wait, in SECONDS. Never below 0.1 s. NEVER time.sleep().',
+    },
     ...INSTRUMENT_API,
-    { name: 'await asyncio.sleep(s)', desc: 'Non-blocking wait, in SECONDS. NEVER time.sleep().' },
   ],
   promptIntro: `Write a Python ${pythonVersion} script for ModbusSimpleLogger Script Runner (Pyodide; async context, top-level await OK).`,
   // Written so that breaking any one of them is a failure the author can see:
@@ -239,7 +271,9 @@ export const buildAiPrompt = (
     language.promptIntro,
     '',
     'API:',
-    ...language.apiDocs.map((api) => `- ${api.name}: ${api.desc}`),
+    // The prompt takes the long form where there is one: the panel's line is
+    // sized for a window, and nothing about a prompt is.
+    ...language.apiDocs.map((api) => `- ${api.name}: ${api.promptDesc ?? api.desc}`),
     '',
     'Absolute rules:',
     ...language.promptRules.map((rule) => `- ${rule}`),
