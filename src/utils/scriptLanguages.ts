@@ -79,6 +79,42 @@ const RUNNER_GUIDELINES: string[] = [
   'State in a header comment what the outputs do when the script is stopped: AO channels hold their last value unless the script sets them.',
 ];
 
+/**
+ * What has to exist on the rig BEFORE the requested test script is worth
+ * writing, by what the actuator is and what is being controlled.
+ *
+ * Separate from both the rules and the guidelines because it is not about the
+ * script at all: a control script is a function from a command to a physical
+ * outcome, and every one of those functions has constants in it — V per mm/min,
+ * V per kPa, V per N, a loop gain — that only a measurement on THIS rig can
+ * supply. An assistant handed "hold 5 kN" with no such constants will invent
+ * plausible ones, and the first place the invention shows up is the specimen.
+ * So the order is always: find out what is calibrated, produce the missing
+ * calibration script first, then write the test against the numbers it gave.
+ *
+ * The dummy-specimen requirement is the same argument one step further: a
+ * force or pressure loop cannot be tuned without driving the loop past where
+ * it is stable, and that has to happen against something the user is willing
+ * to break.
+ */
+const CALIBRATION_PREREQUISITES: string[] = [
+  'Before writing the test script the user asked for, establish what has already been calibrated on this rig, and by what: ask. A channel label is not evidence that a calibration exists, and neither is a previous script.',
+  'When a prerequisite below is missing, do not fold a guess into the test script. Write the calibration script as a separate script for the user to run first, tell them which numbers to read off it, and write the test script against those numbers afterwards.',
+  'Motor-driven actuator under SPEED control: a command-voltage-to-speed calibration (V -> mm/min, over the speed range the test actually uses, measured in both directions if the test moves both ways) and a rough proportional-only loop calibration are both required first. Start from P alone; add I only if a steady-state offset that matters remains, and treat D as a last resort on a rig whose speed signal is differentiated from position.',
+  'Motor-driven actuator under FORCE or PRESSURE control: the speed calibration above is still required — the force loop commands speed, so without it the loop gain has no units — and on top of it the force loop (PID, or MPC where the user is using one) must be tuned on a DUMMY specimen of similar stiffness, never on the real one. Ask what the dummy is and what force and rate are safe on it before writing the tuning script.',
+  'Pneumatic or hydraulic actuator: ask for the pressure calibration FIRST, before anything else about the test — command voltage to pressure (V -> kPa) and, where the test is specified in force, command voltage to force (V -> N) on the actual cylinder and area in use. These rigs have no meaningful open-loop relation the script can fall back on.',
+  'Pneumatic or hydraulic actuator under DISPLACEMENT or POSITION control: the pressure calibration is worth having and worth asking for, but whether to require it is the user\'s call — say what it buys them (the loop output becomes a real pressure rather than an arbitrary command) and accept a no. Tuning the position loop (PID, or MPC) on a DUMMY specimen is NOT optional: run it against the dummy first.',
+  'Pneumatic and hydraulic hardware settings — supply/regulator pressure, servo-valve or driver gain and dither, relief and dead-band settings — must be identical on every run, because the calibration is only valid for the settings it was taken under. Have the user fix them once and never adjust them per test.',
+  // The paper record is the one item here the app cannot enforce, which is
+  // exactly why the prompt has to push it: the coefficients live in browser
+  // storage on one machine, the hardware settings live only in the knobs
+  // themselves, and neither survives a wiped profile, a swapped PC, or the
+  // next person to touch the regulator. A number nobody can reconstruct
+  // silently invalidates every result taken under it.
+  'PRESS this every time, in every case: the calibration values must leave the screen and exist on paper. That means the Input Calib Value coefficients (a, b, c per AI channel — Save them to file from the Input Calib Value panel AND print or hand-write them), the PID/MPC gains, the V -> mm/min, V -> kPa and V -> N constants, and the fixed hardware settings, each with the date and who measured it. Tell the user to attach that note physically to the machine and to keep the saved calibration file alongside the test data.',
+  'Say plainly why: the coefficients are held in this browser\'s storage on this one PC. Clearing site data, moving to another machine, or another operator turning a knob loses them with no warning and no way to reconstruct what past results were taken under.',
+];
+
 const INSTRUMENT_API: ScriptApiDoc[] = [
   { name: 'GetAiRaw(ch)', desc: 'Raw AI value. ch: 0-15.' },
   { name: 'GetAiPhy(ch)', desc: 'Calibrated AI value. ch: 0-15.' },
@@ -205,6 +241,13 @@ export const buildAiPrompt = (
     // traded away for a shorter answer.
     'Design guidelines (follow unless the task rules them out):',
     ...language.promptGuidelines.map((line) => `- ${line}`),
+    '',
+    // Not folded into either list above, and not held per-language: this
+    // section is about the rig rather than the script, and it is the only part
+    // of the prompt whose right answer can be "do not write the requested
+    // script yet".
+    'Calibration prerequisites (settle these BEFORE writing the requested script):',
+    ...CALIBRATION_PREREQUISITES.map((line) => `- ${line}`),
     '',
     'Channel labels (JSON; index = ch, "" = unlabeled):',
     JSON.stringify(channelLabels),
