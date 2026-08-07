@@ -5,6 +5,8 @@
  * both the main thread and the TSV writer Web Worker (src/tsvWriterWorker.ts).
  */
 
+import { formatFloat32 } from './floatFormat';
+
 /**
  * Format a timestamp as a human-readable string
  * Format: YYYY/MM/DD HH:mm:ss.fff
@@ -87,6 +89,13 @@ export function formatTsvRow(
   appendFormatted(parts, aiPhysical, fmt);
   appendFormatted(parts, aiVoltage, fmt);
   appendFormatted(parts, aoRaw, intStr);
-  appendFormatted(parts, paramValues, fmt);
+  // Parameter does NOT get physicalPrecision. The AI columns are a measured
+  // physical quantity, where three decimals is a stated resolution; a Parameter
+  // is a unit-less scratch value a script chose the scale of, so the same three
+  // decimals is an arbitrary cut that logged a 2.5e-5 gain as "0" while the
+  // screen showed it. Shortest-round-trip keeps the column exactly as wide as
+  // the value needs — the same rule the Param Editor and the Parameter cards
+  // display by.
+  appendFormatted(parts, paramValues, formatFloat32);
   return parts.join('\t') + '\n';
 }

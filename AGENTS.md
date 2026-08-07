@@ -51,7 +51,7 @@ src/
 │   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・フッターの2面で共有（行は memo 済み）
 │   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ（タブ切替）／実行・停止・Import/Export・API 一覧（UI 名: Script Runner。言語は Python 固定でセレクタ無し）
-│   ├── ParamEditorPanel.tsx         # Param Editor: ラベル + 値 + Set の 16ch 行 ＋ 最下部の全消去スライダ。UI 名: Param Editor。`scriptRunner.scriptRunning` 中はロック
+│   ├── ParamEditorPanel.tsx         # Param Editor: ラベル(表示のみ) + 値 + Set の 16ch 行 ＋ 最下部の値全消去スライダ。UI 名: Param Editor。`scriptRunner.scriptRunning` 中はロック
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
 │   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
@@ -192,7 +192,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイル**。実行系が増えても契約だけ揃えれば `useScriptRunner` は同一に扱える、という前提で作られている（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）
 - **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
 - **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetParamLabel` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではない、という判断）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
-- **`SetParamLabel(ch, text)` は Param ch の自由テキストラベルを書き換える**。値そのもの（`SetParam`）と同じ非同期メッセージ経路（`set_param_label` → `App.tsx` の `handleParamFreeLabelChange`）で、SAB ではなく `paramFreeLabels` state（Cookie 永続化）を書く。**専用の clear 呼び出しは無い** — `SetParamLabel(ch, "")` が消去を兼ねる。Copy for AI の API 一覧にもその旨を明記。**実行中にラベルを変えられるのはこの API だけ**（UI 側のラベル入力は run 中ロック。Param Editor の項を参照）
+- **`SetParamLabel(ch, text)` は Param ch の自由テキストラベルを書き換える**。値そのもの（`SetParam`）と同じ非同期メッセージ経路（`set_param_label` → `App.tsx` の `handleParamFreeLabelChange`）で、SAB ではなく `paramFreeLabels` state（Cookie 永続化）を書く。**専用の clear 呼び出しは無い** — `SetParamLabel(ch, "")` が消去を兼ねる。Copy for AI の API 一覧にもその旨を明記。**実行中にラベルを変えられるのはこの API だけ**（UI 側のラベル入力＝Parameter グリッドは run 中ロック。Param Editor は表示専用。Param Editor の項を参照）
 - **言語メタデータは `utils/scriptLanguages.ts` の表**（ラベル・既定スクリプト・API 一覧・AI プロンプト）。1エントリの Record になっているが、`ScriptLanguageId` を型として保つのは `scriptTabs.ts` の永続化コードが `isScriptLanguageId` で古い `'basic'`/`'lua'` の保存値を弾くため。ただし **Worker の生成だけは `useScriptRunner` に置く** — `new Worker(new URL(...))` は静的リテラルでないとバンドラが Worker を発見・出力できないため、パスを表から引くことはできない
 - **Import / Export はヘッダーの左端、`@md`（≒窓幅 470px）未満で消える**。タブのコードはこのアプリの中にしか無い（ファイルの裏付けは無く、`localStorage` だけが持っている）ので、Export はそこからの唯一の出口 — **1タブ1ファイル**（`scriptFileName` でタブ名を安全なファイル名にし、拡張子は `scriptLanguages` の `fileExtension`）。Import は**必ず新しいタブ**を作る（開いているスクリプトを黙って上書きするのは、このパネルで唯一ジェスチャ無しの破壊操作になってしまう）。ファイル名は `tabNameFromFileName` で拡張子を落として 24 文字へ切り、衝突したら `uniqueTabName` が `-2` を付けて改名する（拒否ではなく改名 — 同じファイルを編集して入れ直すのは普通の使い方）。上限 `SCRIPT_IMPORT_MAX_BYTES`(256KB) はストレージ制限ではなく**エディタが打鍵ごとに全文をハイライトし直す**ため
   - **どちらも実行中は不許可**（Export も含む）。読むだけの Export は無害だが、この2つは「スクリプトをディスクとやり取りする」1つの機能であり、実行中のコードと食い違うファイルが出ていくのは実行中タブを読み取り専用にしているのと同じ理由で避ける
@@ -222,14 +222,16 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 ### Param Editor（`ParamEditorPanel.tsx` + `utils/floatFormat.ts`）
 
-- **1行 = `CH` ＋ 自由テキストラベル ＋ 値 ＋ `Set`**。ラベルはメインページの Parameter グリッドと同じ store（`paramFreeLabels`）で、どちらから編集しても同じもの
+- **1行 = `CH` ＋ 自由テキストラベル（表示のみ）＋ 値 ＋ `Set`**。ラベルはメインページの Parameter グリッドと同じ store（`paramFreeLabels`）を読むだけで、**このパネルからは編集できない**（v6.9〜）。同じ1つのフィールドに編集口が3つ（Parameter グリッド・この窓・`SetParamLabel`）あるのは多すぎで、フローティング窓での改名は誰も見ていない所で名前が変わる操作になる。**改名は Parameter グリッド1箇所**、この窓は値のための窓
 - **Default 列は廃止した**（旧 `utils/paramStartup.ts` / `param_startup_values_v1`）。Parameter は走っている実験のつまみであって、**リロードしないと効かない値**は同じ16スロットに2つ目の意味を持たせるだけだった。空いた場所にはラベルを置いてある — セッションをまたいで持ち越す価値があるのは値ではなくラベルの方（来週見た `3` は何も語らないが `preload_N` は語る）。**「起動時に SAB を seed する」経路そのものが無くなった**ので、App.tsx に空 deps の seed effect を復活させないこと
 - **値は即時反映しない。`Set`（または Enter）が唯一の書込み**。Escape で破棄、**blur は何もしない**。Input Calib は「確定＝適用」だが、あちらが書くのは localStorage の係数で、こちらが書くのは**実行中のスクリプトが装置を動かしている SAB** である。半端に入力したセルから離れたクリックが書込みになるのは、ここでは事故の形をしている
   - 未確定のドラフトは**値が下から動いても消さない**（スクリプトが 200ms ごとに同じ ch を書いていても、打ちかけの数字はユーザーの唯一のコピー）。確定・破棄で live 値のミラーへ戻る。未確定は amber、パースできない入力は rose
 - **表示は `formatFloat32`（`utils/floatFormat.ts`）＝ 読み戻して同じ float32 になる最短の10進文字列**。Parameter は `Float32Array`（SAB）なので `0.3` は `0.30000001192092896` として出てくる。**`toFixed(3)` で丸めて隠さないこと** — 桁を固定すると 2.5e-5 も 120000.5 も嘘の値で表示され、「書き戻すのと違う値を見せるエディタ」になる。最短往復表記なら `0.3` は `0.3`、本当に9桁要る値は9桁出る（JS が double に対してやっているのと同じ規則を1段下で適用しているだけ）
-- **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中は Param Editor でもメインページでも編集不可。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE` / `LABEL_LOCKED_CLASS`）
+  - **Parameter の値が出る場所は全部このルール**（v6.9〜）: Param Editor のセル・**メインページの Parameter カード**（`App.tsx`）・**TSV の `par_*` 列**（`tsvFormat.ts`）。以前カードと TSV だけ `toFixed(3)` だったため、**同じ ch が窓では `0.000025`、カードと保存ファイルでは `0`** という状態になっていた。AI 側の `toFixed(physicalPrecision)` を Parameter に流用しないこと — あちらは分解能の宣言された物理量、こちらはスクリプトが勝手にスケールを決める無単位の値で、3桁に根拠が無い
+  - カードは幅が固定なので `truncate` + `title` で溢れを処理する（**カードを広げない**。16枚が横一列に並ぶレイアウトが崩れる）。全桁を見る場所は Param Editor
+- **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中はメインページのラベル入力が編集不可（Param Editor 側はそもそも表示専用）。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE` / `LABEL_LOCKED_CLASS`）
 - **ヘッダーの `Accept Risk` チェックボックスは値だけの実行中ロック解除**。既定では ScriptRunner 実行中はラベルも値も編集不可（`locked`）だが、チェックを入れると `valuesLocked = locked && !acceptRisk` で**値だけ**を解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
-- **最下部の全消去は `SlideToConfirm`**（16ch の値を 0、ラベルを空に）。**スクロール領域の外**に置くこと — 中に入れると「一番下までスクロールしたときだけ現れる操作」になり、スクロールの延長で手が届いてしまう。実行中（`locked`）は Accept Risk に関係なく無効（全消去は狙ったセルへの編集ではないし、ラベルも巻き込む）
+- **最下部の全消去は `SlideToConfirm`**（16ch の値を 0 に。**ラベルには触らない** — 表示しかしていないパネルが名前を消すのはおかしい）。**スクロール領域の外**に置くこと — 中に入れると「一番下までスクロールしたときだけ現れる操作」になり、スクロールの延長で手が届いてしまう。実行中（`locked`）は Accept Risk に関係なく無効（全消去は狙ったセルへの編集ではない）
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
@@ -247,7 +249,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
   - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
-  - 浮動小数列は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` は常に `toString()` の整数（i16 レジスタなので）
+  - `ai_phy_*` / `ai_vlt_*` は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` / `ao_raw_*` は常に `toString()` の整数（i16 レジスタ / 整数 mV なので）。**`par_*` だけは `formatFloat32`**（`physicalPrecision` を掛けない。理由は Param Editor の項）
   - `Float32Array` / `number[]` の両方を受け付ける
 - **OPFS クラッシュリカバリ**（`utils/opfsRecoveryShared.ts` + `opfsRecovery.ts` + `tsvWriterWorker.ts`）: ピッカーで選んだファイルは `FileSystemWritableFileStream` がスワップファイルへ溜め、`close()` で初めて実体へ swing する。つまり **Stop Save まで対象ファイルは 0 バイト**で、途中でクラッシュすると全損する。そこで全行を OPFS へも同期追記する（`createSyncAccessHandle()` は OPFS 限定・Worker 限定・スワップ無し・追記可能）
   - **ダーティビットは「ミラーファイルが存在すること」そのもの**。別フラグは持たない — クラッシュとは2つの書込みが食い違いうる瞬間そのものであり、この機能が絶対に許容できないのは「別の run の名前や時刻を持つ復旧ファイル」だから。メタデータ（元ファイル名・開始時刻）も**ミラー自身のファイル名にエンコードする**（サイドカーや localStorage にしない）。正常な Stop Save が消すので、起動時に残っているものは定義上「終わらなかった run」
@@ -399,7 +401,8 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 1. 上記ルールに従って `package.json` の `version` を更新（小規模変更ならマイナーをインクリメント）。
    バージョンはビルド時に `vite.config.ts` から `VITE_APP_VERSION` / `sw.js` の `APP_VERSION` へ
    注入されるため、**他のファイルを書き換える必要はない**
-2. `npm run build` を通してから進める（壊れたリリースにタグを打たないため）
+2. `bun run build` を通してから進める（壊れたリリースにタグを打たないため。exe も出すなら
+   `bun run launcher:build` が build を兼ねる）
 3. 変更とバージョン更新を同一コミットに含めてコミット
 4. 注釈付きタグを作成: `git tag -a v3.4 -m "v3.4: <一行要約>"`（既存タグは
    `git tag --sort=-v:refname | head` で確認し、番号を採番する）
