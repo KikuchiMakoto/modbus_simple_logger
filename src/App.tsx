@@ -2651,7 +2651,6 @@ function App() {
           share[idx] = value;
           setParamValues(Array.from(share));
         }}
-        onParamLabelChange={handleParamFreeLabelChange}
         onClearAll={() => {
           const share = scriptRunner.paramShareRef.current;
           if (share) {
@@ -2662,7 +2661,8 @@ function App() {
             // values in that build, but the displayed row still has to go to 0.
             setParamValues(Array(PARAM_CHANNELS).fill(0));
           }
-          setParamFreeLabels(Array(PARAM_CHANNELS).fill(''));
+          // Labels are left alone: Param Editor only displays them now, so it
+          // has no business wiping names the Parameter grid owns.
         }}
       />
 
