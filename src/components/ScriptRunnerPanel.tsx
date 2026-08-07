@@ -358,7 +358,10 @@ export function ScriptRunnerPanel({
                 onClick={copyAiPrompt}
                 title="Copy an AI-ready prompt of this API reference to the clipboard"
               >
-                {promptCopied ? 'Copied!' : 'Copy for AI'}
+                {/* The confirmation names the destination rather than just the
+                    act: the prompt goes somewhere the app cannot show, so
+                    "Copied to Clipboard!" tells the reader where to paste it. */}
+                {promptCopied ? 'Copied to Clipboard!' : 'Copy AI Prompt'}
               </button>
               <CollapseButton
                 collapsed={!apiOpen}
