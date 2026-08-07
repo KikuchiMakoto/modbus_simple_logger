@@ -140,11 +140,13 @@ const RUNNER_GUIDELINES: string[] = [
 const CALIBRATION_PREREQUISITES: string[] = [
   'STRONGLY RECOMMENDED: run this in a planning mode (Claude Code plan mode, or any mode that produces a plan for approval before it writes code), and do not leave that mode until the user has approved the plan. Everything here is cheaper to get wrong in a plan than in a script that has already moved the actuator.',
   'While planning, interrogate the rig in detail — do not infer it and do not proceed on one round of questions. Ask, at minimum: what the machine is and what test this is; every AI channel the script will read (number, what sensor, what unit, full scale, which sign is which physically) and every AO channel it will drive (number, what it commands, what the voltage means at 0 V and at 10 V); what the specimen or target is and what destroys it; the safe limits — force, pressure, stroke, speed — and what the script should do on reaching one; where the mechanical end stops are; whether there is an E-stop and what it cuts. Ask follow-ups until you could predict what each channel will read before the run.',
+  'Push everything you learn back into the Device Memo (Menu -> Device Memo, free text, always editable, saved in the browser and exportable as a .txt). Every time the user answers one of the questions above — a channel\'s sensor and unit, which sign is which, a limit, a gear ratio, a calibration constant, the AO volts-per-unit conversions the app itself stores nowhere — tell them to write it there, and give them the exact line to paste. Ask them at the end of a session too, for whatever the run taught. It costs the user a moment now and saves the whole interrogation next time, since the memo is copied into this prompt.',
+  'Read the Device Memo at the bottom of this prompt before asking anything, and do not ask for what it already answers. Where the memo and the rest of this prompt disagree, the memo wins — a human wrote it about their own machine.',
   'Before writing the test script the user asked for, establish what has already been calibrated on this rig, and by what: ask. A channel label is not evidence that a calibration exists, and neither is a previous script.',
   'When a prerequisite below is missing, do not fold a guess into the test script. Write the calibration script as a separate script for the user to run first, tell them which numbers to read off it, and write the test script against those numbers afterwards.',
   'You can see what a calibration or check script measured, so design for that. Everything print()ed lands in the System Log (Menu -> System Log), and the Copy button in that window\'s header puts the WHOLE log on the clipboard — every level, in full, regardless of the level shown on screen, so the user can read at INFO and still hand you everything. Ask for that paste; it is the only way a result gets back to you.',
   'So a calibration or check script is written to be read back, not just watched: print one line per measurement point, the same fields in the same order every time, with units and Elapsed() in the line, and a clearly marked line at the end holding the numbers you actually want (the fitted slope, the gains, the offsets). Then tell the user in plain steps: press Start, wait for it to finish, press Copy in the System Log window, paste it here.',
-  'Whenever you send the user away to do something in the app — label channels, calibrate them, run a calibration script, fix hardware settings — end that message by asking them to press "Copy AI Prompt" again and paste the new prompt when they come back. The channel labels at the bottom of this prompt are a snapshot from the moment the button was pressed: if they were empty or wrong then, they stay that way here no matter what the user has done to the rig since, and you cannot tell from inside the conversation that they are stale.',
+  'Whenever you send the user away to do something in the app — label channels, calibrate them, run a calibration script, fix hardware settings — end that message by asking them to press "Copy AI Prompt" again and paste the new prompt when they come back. The channel labels AND the Device Memo at the bottom of this prompt are a snapshot from the moment the button was pressed: if they were empty or wrong then, they stay that way here no matter what the user has done to the rig since, and you cannot tell from inside the conversation that they are stale.',
   'Motor-driven actuator under SPEED control: a command-voltage-to-speed calibration (V -> mm/min, over the speed range the test actually uses, measured in both directions if the test moves both ways) and a rough proportional-only loop calibration are both required first. Start from P alone; add I only if a steady-state offset that matters remains, and treat D as a last resort on a rig whose speed signal is differentiated from position.',
   'Motor-driven actuator under FORCE or PRESSURE control: the speed calibration above is still required — the force loop commands speed, so without it the loop gain has no units — and on top of it the force loop (PID, or MPC where the user is using one) must be tuned on a DUMMY specimen of similar stiffness, never on the real one. Ask what the dummy is and what force and rate are safe on it before writing the tuning script.',
   'Motor drive settings — gear ratio, gearbox or pulley change, lead screw, and every driver setting (gain, acceleration/deceleration ramp, current or torque limit, electronic gearing, encoder resolution, command scaling) — must NEVER be changed once calibrated. Every constant above is a property of that exact drive train: change any of it and the V -> mm/min calibration and the loop gains are void, not merely shifted. State this in the script header, and if the user says anything was touched, stop and have them re-run the calibration before the test script is used again.',
@@ -298,6 +300,7 @@ export const isScriptLanguageId = (value: unknown): value is ScriptLanguageId =>
 export const buildAiPrompt = (
   language: ScriptLanguage,
   channelLabels: { ai: string[]; ao: string[]; param: string[] },
+  deviceMemo: string,
 ): string =>
   [
     language.promptIntro,
@@ -329,6 +332,15 @@ export const buildAiPrompt = (
     // channel is labelled, and that is the moment the caveat has to be there.
     'Channel labels (JSON; index = ch, "" = unlabeled). Snapshot from when this prompt was copied — ask for a fresh copy after any labelling or calibration work:',
     JSON.stringify(channelLabels),
+    '',
+    // Verbatim and last of the context blocks, right before the task: it is the
+    // only part of this prompt a human wrote about their own machine, so it
+    // outranks anything above that it contradicts, and it should be the freshest
+    // thing in view when the request is read.
+    'Device Memo — the user\'s own free-text notes on this rig, written in the app (Menu -> Device Memo). Where it disagrees with anything above, it wins:',
+    deviceMemo.trim() === ''
+      ? '(empty — the user has written nothing yet. Ask them to open Menu -> Device Memo and fill it in, then copy this prompt again.)'
+      : deviceMemo.trim(),
     '',
     'Task: <your request here>',
   ].join('\n');

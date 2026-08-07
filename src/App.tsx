@@ -116,6 +116,8 @@ import { ManualPanel } from './components/ManualPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { ParamEditorPanel } from './components/ParamEditorPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
+import { DeviceMemoPanel } from './components/DeviceMemoPanel';
+import { loadDeviceMemo, saveDeviceMemo } from './utils/deviceMemo';
 import { FooterBar } from './components/FooterBar';
 import { SCRIPT_LANGUAGES } from './utils/scriptLanguages';
 import { SlideToConfirm } from './components/SlideToConfirm';
@@ -440,6 +442,8 @@ function App() {
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [paramEditorPanelOpen, setParamEditorPanelOpen] = useState(false);
   const [systemLogPanelOpen, setSystemLogPanelOpen] = useState(false);
+  const [deviceMemoPanelOpen, setDeviceMemoPanelOpen] = useState(false);
+  const [deviceMemo, setDeviceMemo] = useState<string>(() => loadDeviceMemo());
   const [voltageConfig, setVoltageConfig] = useState<VoltageMode[]>(() => loadVoltageConfig());
   const [aiFreeLabels, setAiFreeLabels] = useState<string[]>(() => loadAiFreeLabels());
   const [aoFreeLabels, setAoFreeLabels] = useState<string[]>(() => loadAoFreeLabels());
@@ -591,6 +595,8 @@ function App() {
       setParamEditorPanelOpen(true);
     } else if (item === 'systemLog') {
       setSystemLogPanelOpen(true);
+    } else if (item === 'deviceMemo') {
+      setDeviceMemoPanelOpen(true);
     }
   };
 
@@ -733,6 +739,10 @@ function App() {
   useEffect(() => {
     saveParamFreeLabels(paramFreeLabels);
   }, [paramFreeLabels]);
+
+  useEffect(() => {
+    saveDeviceMemo(deviceMemo);
+  }, [deviceMemo]);
 
   useEffect(() => {
     writeJsonStorage('ai_collapsed', aiCollapsed);
@@ -2646,6 +2656,14 @@ function App() {
         onClose={() => setScriptRunnerPanelOpen(false)}
         scriptRunner={scriptRunner}
         channelLabels={{ ai: aiFreeLabels, ao: aoFreeLabels, param: paramFreeLabels }}
+        deviceMemo={deviceMemo}
+      />
+
+      <DeviceMemoPanel
+        open={deviceMemoPanelOpen}
+        onClose={() => setDeviceMemoPanelOpen(false)}
+        memo={deviceMemo}
+        onChange={setDeviceMemo}
       />
 
       <ParamEditorPanel

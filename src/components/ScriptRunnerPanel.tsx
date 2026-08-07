@@ -23,6 +23,8 @@ type ScriptRunnerPanelProps = {
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
   channelLabels: ChannelLabels;
+  /** Menu -> Device Memo, copied into the AI prompt as-is. */
+  deviceMemo: string;
 };
 
 export function ScriptRunnerPanel({
@@ -30,6 +32,7 @@ export function ScriptRunnerPanel({
   onClose,
   scriptRunner,
   channelLabels,
+  deviceMemo,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
   const [apiOpen, setApiOpen] = useState(false);
@@ -66,7 +69,7 @@ export function ScriptRunnerPanel({
   };
 
   const copyAiPrompt = () => {
-    navigator.clipboard.writeText(buildAiPrompt(language, channelLabels)).then(() => {
+    navigator.clipboard.writeText(buildAiPrompt(language, channelLabels, deviceMemo)).then(() => {
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
     });
