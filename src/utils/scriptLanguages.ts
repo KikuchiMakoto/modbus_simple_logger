@@ -93,7 +93,7 @@ const RUNNER_GUIDELINES: string[] = [
   'Define the channel numbers as named constants at the top with a comment table of what each AI / AO / Param channel is, and put the values the user is meant to tune in Param rather than in the code.',
   'Param is a scarce, visible resource, not a general-purpose variable store: only 16 channels, each shown live in the Parameter panel and logged to TSV every sample. Route a value through Param only when it must survive Stop/Start, the user tunes it, or it is worth watching in the log — keep everything else as an ordinary local/module variable.',
   'End with a checklist to complete BEFORE pressing Start: the Param channels to RENAME (the script gives them meanings their labels do not carry yet) and the Param values to SET in Param Editor. Both matter, because renaming happens in the Parameter grid (Param Editor only displays labels) and both are locked while a run is in progress: labels cannot be edited at all until the run ends (only SetParamLabel can change them), and a value not set beforehand takes an explicit "Accept Risk" to correct.',
-  'print() sparingly: it shares a bounded System Log, so a line every iteration pushes everything else out. Print on state changes, and otherwise every Nth iteration, with Elapsed() in the line.',
+  'print() sparingly: it shares a bounded System Log, so a line every iteration pushes everything else out. Print on state changes, and otherwise every Nth iteration, with Elapsed() in the line. The log is also the only path a result takes back to you — the user copies it out of the System Log window — so print anything you will need to read later in a stable, parseable shape, and keep the loop quiet enough that a long run cannot push those lines off the top.',
   'State in a header comment what the outputs do when the script is stopped: AO channels hold their last value unless the script sets them.',
 ];
 
@@ -121,6 +121,14 @@ const RUNNER_GUIDELINES: string[] = [
  * answer costs a specimen or a load cell. Planning mode is asked for by name
  * because it is the one mode where a wrong assumption is still only text.
  *
+ * The round trip is spelled out because the loop above is only usable if the
+ * numbers can come back: the assistant writes a calibration script, the user
+ * runs it, and the System Log's Copy button is what carries the result to the
+ * other end. It copies every level in full whatever the on-screen threshold
+ * is, which is the part worth stating — an assistant that assumes the copy is
+ * filtered will ask the user to change the level first, or worse, print at a
+ * level it thinks will survive.
+ *
  * The "copy the prompt again" line is about this text's own staleness. The
  * channel labels below are a snapshot taken at the moment the button was
  * pressed, so a prompt copied before the user labelled and calibrated their
@@ -133,6 +141,8 @@ const CALIBRATION_PREREQUISITES: string[] = [
   'While planning, interrogate the rig in detail — do not infer it and do not proceed on one round of questions. Ask, at minimum: what the machine is and what test this is; every AI channel the script will read (number, what sensor, what unit, full scale, which sign is which physically) and every AO channel it will drive (number, what it commands, what the voltage means at 0 V and at 10 V); what the specimen or target is and what destroys it; the safe limits — force, pressure, stroke, speed — and what the script should do on reaching one; where the mechanical end stops are; whether there is an E-stop and what it cuts. Ask follow-ups until you could predict what each channel will read before the run.',
   'Before writing the test script the user asked for, establish what has already been calibrated on this rig, and by what: ask. A channel label is not evidence that a calibration exists, and neither is a previous script.',
   'When a prerequisite below is missing, do not fold a guess into the test script. Write the calibration script as a separate script for the user to run first, tell them which numbers to read off it, and write the test script against those numbers afterwards.',
+  'You can see what a calibration or check script measured, so design for that. Everything print()ed lands in the System Log (Menu -> System Log), and the Copy button in that window\'s header puts the WHOLE log on the clipboard — every level, in full, regardless of the level shown on screen, so the user can read at INFO and still hand you everything. Ask for that paste; it is the only way a result gets back to you.',
+  'So a calibration or check script is written to be read back, not just watched: print one line per measurement point, the same fields in the same order every time, with units and Elapsed() in the line, and a clearly marked line at the end holding the numbers you actually want (the fitted slope, the gains, the offsets). Then tell the user in plain steps: press Start, wait for it to finish, press Copy in the System Log window, paste it here.',
   'Whenever you send the user away to do something in the app — label channels, calibrate them, run a calibration script, fix hardware settings — end that message by asking them to press "Copy AI Prompt" again and paste the new prompt when they come back. The channel labels at the bottom of this prompt are a snapshot from the moment the button was pressed: if they were empty or wrong then, they stay that way here no matter what the user has done to the rig since, and you cannot tell from inside the conversation that they are stale.',
   'Motor-driven actuator under SPEED control: a command-voltage-to-speed calibration (V -> mm/min, over the speed range the test actually uses, measured in both directions if the test moves both ways) and a rough proportional-only loop calibration are both required first. Start from P alone; add I only if a steady-state offset that matters remains, and treat D as a last resort on a rig whose speed signal is differentiated from position.',
   'Motor-driven actuator under FORCE or PRESSURE control: the speed calibration above is still required — the force loop commands speed, so without it the loop gain has no units — and on top of it the force loop (PID, or MPC where the user is using one) must be tuned on a DUMMY specimen of similar stiffness, never on the real one. Ask what the dummy is and what force and rate are safe on it before writing the tuning script.',
