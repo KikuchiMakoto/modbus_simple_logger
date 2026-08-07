@@ -471,15 +471,23 @@ function ChartPanelComponent({
           No data — connect device and start polling
         </div>
       ) : (
-        <NormalizedPlot
-          key={purgeEpoch}
-          data={plot.traces}
-          layout={plotLayout}
-          config={plotConfig}
-          style={{ width: '100%', height: PLOT_HEIGHT }}
-          onInitialized={handleGraphDiv}
-          onUpdate={handleGraphDiv}
-        />
+        // translate="no" on the wrapper rather than on the plot: Plotly writes
+        // its own SVG <text> for the axis titles, ticks and legend, and those
+        // are DOM text nodes a page translation will happily rewrite — axis
+        // titles being the user's own channel labels. The attribute is
+        // inherited, so wrapping is enough and nothing has to be reapplied when
+        // Plotly redraws.
+        <div translate="no">
+          <NormalizedPlot
+            key={purgeEpoch}
+            data={plot.traces}
+            layout={plotLayout}
+            config={plotConfig}
+            style={{ width: '100%', height: PLOT_HEIGHT }}
+            onInitialized={handleGraphDiv}
+            onUpdate={handleGraphDiv}
+          />
+        </div>
       )}
     </section>
   );

@@ -247,7 +247,9 @@ export function ScriptRunnerPanel({
         {/* One row, scrolled sideways rather than wrapped: a strip that grows a
             second line steals the height the editor is here for, and the tab
             count is capped low enough that scrolling stays short. */}
-        <div role="tablist" aria-label="Scripts" className="flex shrink-0 items-center gap-1 overflow-x-auto pb-0.5">
+        {/* Tab names are the user's own, and a translated one no longer matches
+            the file it exports to or the name the log prints. */}
+        <div translate="no" role="tablist" aria-label="Scripts" className="flex shrink-0 items-center gap-1 overflow-x-auto pb-0.5">
           {tabs.map((tab) => {
             const active = tab.id === activeTabId;
             const running = tab.id === runningTabId;

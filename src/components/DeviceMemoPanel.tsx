@@ -128,6 +128,12 @@ export function DeviceMemoPanel({
     >
       <div className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
         <textarea
+          // Never translated. The whole point of this box is that it holds the
+          // user's own words, in their own language, and gets copied verbatim
+          // into the AI prompt — a translation layer rewriting it would change
+          // what the assistant is told the machine is. It also protects the
+          // placeholder, which is deliberately more than one language.
+          translate="no"
           value={memo}
           onChange={(e) => onChange(e.target.value.slice(0, DEVICE_MEMO_MAX))}
           spellCheck={false}

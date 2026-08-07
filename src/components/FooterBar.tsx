@@ -74,6 +74,8 @@ function LogLine({ rung, animation }: { rung: Rung; animation: string }) {
     // of the bar: the line enters from below its bottom edge rather than from
     // one text-height up, which is what makes it read as arriving from off-bar.
     <div
+      // Never translated — this is the System Log's newest line, verbatim.
+      translate="no"
       className={`absolute inset-0 flex items-center gap-1.5 font-mono ${rung.color} ${animation}`}
     >
       {/* Time and source roll WITH the message, unlike the `›` gutter mark: they
@@ -225,7 +227,7 @@ export function FooterBar({
             the setup with nothing else
             that could answer "is the link keeping up". It costs about 52px,
             all of it out of a log line that was already truncating. */}
-        <span className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
+        <span translate="no" className="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">
           Polling: {pollIntervalMs > 0 ? `${pollIntervalMs} ms` : '-'}
         </span>
       </div>

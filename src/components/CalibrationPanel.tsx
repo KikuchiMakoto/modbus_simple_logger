@@ -118,7 +118,10 @@ export function CalibrationPanel({
             Script running: scale coefficients a and b, and Load, are locked. Only offset c and Tare can be adjusted.
           </div>
         )}
-        <div className="space-y-0.5">
+        {/* Never translated: channel numbers and coefficients. A locale-aware
+            pass that turns "1.5" into "1,5" in a field the app parses back as a
+            number is a calibration silently rewritten. */}
+        <div translate="no" className="space-y-0.5">
           {aiCalibration.map((cal, idx) => (
             <div
               key={idx}

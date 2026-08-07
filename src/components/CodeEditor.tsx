@@ -62,6 +62,11 @@ export function CodeEditor({
   // away from code that cannot move with them.
   return (
     <div
+      // Never translated. A page-translate pass over this box rewrites
+      // identifiers, string literals and the highlighted <pre> behind the
+      // textarea — and the result is a script that no longer runs, presented as
+      // if it were the one the user wrote.
+      translate="no"
       // The frozen state is dimmed rather than only announced in words: the
       // editor looks identical whether or not it accepts keys, and finding out
       // by typing a line that goes nowhere is the wrong way to learn it.
