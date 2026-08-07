@@ -157,6 +157,9 @@ const CALIBRATION_PREREQUISITES: string[] = [
   // next person to touch the regulator. A number nobody can reconstruct
   // silently invalidates every result taken under it.
   'PRESS this every time, in every case: the calibration values must leave the screen and exist on paper. That means the Input Calib Value coefficients (a, b, c per AI channel — Save them to file from the Input Calib Value panel AND print or hand-write them), the PID/MPC gains, the V -> mm/min, V -> kPa and V -> N constants, and the fixed hardware settings the calibration is only valid under (gear ratio and driver settings on a motor rig, supply pressure and valve settings on a pneumatic or hydraulic one), each with the date and who measured it. Tell the user to attach that note physically to the machine and to keep the saved calibration file alongside the test data.',
+  'Choose the control method for the user in front of you, and say why you chose it. PID is the default and needs no justification: it is what most tests want, and it is the one the user can re-tune themselves without coming back. Start at P, add I only for a steady-state offset that matters, add D only where you can defend it on this rig.',
+  'Offer MPC (model-predictive control) when the ask is precision, very low speed, or a profile that has to be FOLLOWED rather than merely reached — the cases where a PID is fighting the plant\'s lag instead of its gain. It runs on the calibration constants above as its model, so it is only on the table once those exist. Optimal control (LQR and similar) is worth proposing where it fits, but leave the decision to the user and do not adopt it unasked.',
+  'NEVER bang-bang / on-off control on an AO channel that commands a magnitude. The loop runs at about 5 Hz (0.2 s), so a full-scale command stands uncorrected for 200 ms at a time — that is not control, it is an oscillation with the specimen inside it. The one legitimate on-off use is an AO standing in for a digital output — an enable, a direction, a valve that is genuinely open or shut — where the two levels (0 V and 5 V) are the whole signal and there is nothing to modulate; that is fine, and the coarseness costs nothing there.',
   'Say plainly why: the coefficients are held in this browser\'s storage on this one PC. Clearing site data, moving to another machine, or another operator turning a knob loses them with no warning and no way to reconstruct what past results were taken under.',
 ];
 
@@ -229,6 +232,8 @@ const PYTHON: ScriptLanguage = {
     'EVERY path through EVERY loop, nested loops included, must reach an `await asyncio.sleep(s)`. Put the sleep at the end of the loop body and never `continue` past it. Break long computations into chunks that await between them.',
     'Never sleep for less than 0.1 s: the readings only refresh once per Modbus poll, so a faster loop re-reads the same values.',
     'Repeat/feedback control only with a plain `while`/`for` loop awaiting asyncio.sleep(s) each iteration. No timers, callbacks or threads.',
+    'Write plain, sequential Python and nothing cleverer. `await asyncio.sleep(s)` inside one ordinary loop IS the whole concurrency model here. Do NOT use asyncio.run(), create_task(), ensure_future(), gather(), wait(), TaskGroup, Queue, Event, async generators, threading, multiprocessing, concurrent.futures or run_in_executor: the script is already running inside the event loop, there is one thread and no OS behind it, and anything spawned outside the main flow keeps running after Stop or hides the loop that Stop relies on. Two things at once means one loop that does both, in order.',
+    'No `while True:` without a break, unless the user explicitly asked for a script that runs until Stop is pressed. Give every loop a condition that ends it — a deadline, a target reached, a step count — and print why it ended. Stop always works, but a loop whose only exit is Stop cannot say whether it finished or was interrupted.',
     'The instrument API is PascalCase (GetAiPhy, SetAo), not snake_case.',
     'Before writing any code whose logic depends on the sign of an AI or AO channel, ask the user which direction is positive and which is negative for that channel on THIS rig (e.g. compression vs. expansion, push-in vs. pull-out) — never assume a polarity convention. A channel label alone does not say which sign is which.',
     'If a channel the script needs has no label below, or its identity is otherwise uncertain, do not guess: stop and get the user to add a label for it in the app and to calibrate it before writing the script — at minimum every AI and AO channel the script touches. Where possible, have them put the unit in the label itself (e.g. "Force (N)", "Stroke [mm]"), since the Phy value display carries no unit of its own. A script written against an unlabeled or uncalibrated channel can only be checked by running it on the rig.',
@@ -249,19 +254,27 @@ const PYTHON: ScriptLanguage = {
   // has to accumulate) for the same reason the guidelines ask for: the script
   // someone edits into their own should already be one that a Stop and a Start
   // resume cleanly.
+  //
+  // It ends on its own rather than looping forever, because the prompt now
+  // asks scripts not to run on `while True:` alone, and the example someone
+  // copies is a stronger statement of the house style than the rule that says
+  // so. Stop still works at any moment; the deadline is about the script being
+  // able to say it finished.
   defaultScript: `# Wait ONLY with \`await asyncio.sleep(s)\`, never below 0.1 s.
 #   NEVER time.sleep() - it freezes the browser.
 # Every loop needs one, on every path through it.
+# Give every loop a way to end; Stop works either way.
 # Keep state in Param, so Stop -> Start resumes.
-# Press Stop to halt at any time.
 
 import asyncio
 import math
 
-while True:
-    # example: slow sine wave on Parameter ch0
+# example: slow sine wave on Parameter ch0, for 60 s
+while Elapsed() < 60:
     SetParam(0, math.sin(Elapsed()))
-    await asyncio.sleep(0.2)`,
+    await asyncio.sleep(0.2)
+
+print("done")`,
 };
 
 export const SCRIPT_LANGUAGES: Record<ScriptLanguageId, ScriptLanguage> = {
