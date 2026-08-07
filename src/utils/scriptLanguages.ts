@@ -96,8 +96,16 @@ const RUNNER_GUIDELINES: string[] = [
  * force or pressure loop cannot be tuned without driving the loop past where
  * it is stable, and that has to happen against something the user is willing
  * to break.
+ *
+ * The plan-first opening is here rather than at the top of the prompt because
+ * it is the same argument again: what an assistant most wants to skip is the
+ * interrogation, and on a rig the questions it skips are the ones whose wrong
+ * answer costs a specimen or a load cell. Planning mode is asked for by name
+ * because it is the one mode where a wrong assumption is still only text.
  */
 const CALIBRATION_PREREQUISITES: string[] = [
+  'STRONGLY RECOMMENDED: run this in a planning mode (Claude Code plan mode, or any mode that produces a plan for approval before it writes code), and do not leave that mode until the user has approved the plan. Everything here is cheaper to get wrong in a plan than in a script that has already moved the actuator.',
+  'While planning, interrogate the rig in detail — do not infer it and do not proceed on one round of questions. Ask, at minimum: what the machine is and what test this is; every AI channel the script will read (number, what sensor, what unit, full scale, which sign is which physically) and every AO channel it will drive (number, what it commands, what the voltage means at 0 V and at 10 V); what the specimen or target is and what destroys it; the safe limits — force, pressure, stroke, speed — and what the script should do on reaching one; where the mechanical end stops are; whether there is an E-stop and what it cuts. Ask follow-ups until you could predict what each channel will read before the run.',
   'Before writing the test script the user asked for, establish what has already been calibrated on this rig, and by what: ask. A channel label is not evidence that a calibration exists, and neither is a previous script.',
   'When a prerequisite below is missing, do not fold a guess into the test script. Write the calibration script as a separate script for the user to run first, tell them which numbers to read off it, and write the test script against those numbers afterwards.',
   'Motor-driven actuator under SPEED control: a command-voltage-to-speed calibration (V -> mm/min, over the speed range the test actually uses, measured in both directions if the test moves both ways) and a rough proportional-only loop calibration are both required first. Start from P alone; add I only if a steady-state offset that matters remains, and treat D as a last resort on a rig whose speed signal is differentiated from position.',
@@ -246,7 +254,7 @@ export const buildAiPrompt = (
     // section is about the rig rather than the script, and it is the only part
     // of the prompt whose right answer can be "do not write the requested
     // script yet".
-    'Calibration prerequisites (settle these BEFORE writing the requested script):',
+    'Plan and calibration prerequisites (settle these BEFORE writing the requested script):',
     ...CALIBRATION_PREREQUISITES.map((line) => `- ${line}`),
     '',
     'Channel labels (JSON; index = ch, "" = unlabeled):',
