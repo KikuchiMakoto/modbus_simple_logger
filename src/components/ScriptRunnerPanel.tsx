@@ -23,6 +23,8 @@ type ScriptRunnerPanelProps = {
   onClose: () => void;
   scriptRunner: ReturnType<typeof useScriptRunner>;
   channelLabels: ChannelLabels;
+  /** Menu -> Device Memo, copied into the AI prompt as-is. */
+  deviceMemo: string;
 };
 
 export function ScriptRunnerPanel({
@@ -30,6 +32,7 @@ export function ScriptRunnerPanel({
   onClose,
   scriptRunner,
   channelLabels,
+  deviceMemo,
 }: ScriptRunnerPanelProps) {
   const [promptCopied, setPromptCopied] = useState(false);
   const [apiOpen, setApiOpen] = useState(false);
@@ -66,7 +69,7 @@ export function ScriptRunnerPanel({
   };
 
   const copyAiPrompt = () => {
-    navigator.clipboard.writeText(buildAiPrompt(language, channelLabels)).then(() => {
+    navigator.clipboard.writeText(buildAiPrompt(language, channelLabels, deviceMemo)).then(() => {
       setPromptCopied(true);
       window.setTimeout(() => setPromptCopied(false), 1500);
     });
@@ -244,7 +247,9 @@ export function ScriptRunnerPanel({
         {/* One row, scrolled sideways rather than wrapped: a strip that grows a
             second line steals the height the editor is here for, and the tab
             count is capped low enough that scrolling stays short. */}
-        <div role="tablist" aria-label="Scripts" className="flex shrink-0 items-center gap-1 overflow-x-auto pb-0.5">
+        {/* Tab names are the user's own, and a translated one no longer matches
+            the file it exports to or the name the log prints. */}
+        <div translate="no" role="tablist" aria-label="Scripts" className="flex shrink-0 items-center gap-1 overflow-x-auto pb-0.5">
           {tabs.map((tab) => {
             const active = tab.id === activeTabId;
             const running = tab.id === runningTabId;
@@ -358,7 +363,10 @@ export function ScriptRunnerPanel({
                 onClick={copyAiPrompt}
                 title="Copy an AI-ready prompt of this API reference to the clipboard"
               >
-                {promptCopied ? 'Copied!' : 'Copy for AI'}
+                {/* The confirmation names the destination rather than just the
+                    act: the prompt goes somewhere the app cannot show, so
+                    "Copied to Clipboard!" tells the reader where to paste it. */}
+                {promptCopied ? 'Copied to Clipboard!' : 'Copy AI Prompt'}
               </button>
               <CollapseButton
                 collapsed={!apiOpen}

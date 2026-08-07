@@ -34,6 +34,10 @@ const MENU_ITEMS = [
   // and it carries the app's own events — link, save, storage — as well now,
   // which is why it is no longer named after scripts.
   { key: 'systemLog', label: 'System Log', icon: '🧾', wip: false },
+  // With the runner and the log rather than with the reference material below:
+  // what is written here is copied into the runner's AI prompt, so it belongs
+  // beside the window that copies it, not beside the manual.
+  { key: 'deviceMemo', label: 'Device Memo', icon: '📝', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
 ];

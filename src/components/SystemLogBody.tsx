@@ -109,6 +109,11 @@ const LogRow = memo(function LogRow({
   return (
     <div
       onClick={() => onToggle(entry.seq)}
+      // Never translated: a row is a timestamp, a subsystem name and either a
+      // script's own print() or a Python traceback. All of it is either data or
+      // something the user will paste back to an assistant, and a translated
+      // traceback names lines that do not exist.
+      translate="no"
       className="flex cursor-pointer gap-2 px-2 hover:bg-slate-100 dark:hover:bg-slate-800/60"
       title={expanded ? 'Click to collapse' : 'Click to show the whole line'}
     >

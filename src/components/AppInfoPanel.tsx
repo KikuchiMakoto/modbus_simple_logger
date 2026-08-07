@@ -83,7 +83,7 @@ export function AppInfoPanel({
           <dl className="space-y-1">
             <div className="flex justify-between">
               <dt className="text-slate-500 dark:text-slate-400">Version</dt>
-              <dd className="font-mono font-semibold">v{APP_VERSION}</dd>
+              <dd translate="no" className="font-mono font-semibold">v{APP_VERSION}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500 dark:text-slate-400">Author</dt>
@@ -166,6 +166,9 @@ export function AppInfoPanel({
             {LIBRARIES.map((lib) => (
               <li
                 key={lib.name}
+                // Package names, versions and SPDX licence ids — identifiers,
+                // every one of them.
+                translate="no"
                 className="flex items-center justify-between rounded px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-700/50"
               >
                 <span className="font-medium">{lib.name}</span>

@@ -444,7 +444,8 @@ export function InputCalibratorPanel({
         {/* Scrolling middle: the variable-length content. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-3">
           {method === 'measure' ? (
-            <div className="space-y-1 pb-2">
+            // The measured points: row numbers and two decimal fields per row.
+            <div translate="no" className="space-y-1 pb-2">
               {draft.points.map((row, idx) => (
                 <div key={idx} className="flex items-center gap-1">
                   <span className="w-4 shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
@@ -599,7 +600,7 @@ export function InputCalibratorPanel({
           <div className="rounded border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800">
             <div className="mb-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">Preview</div>
             {result ? (
-              <div className="grid grid-cols-3 gap-1.5 tabular-nums">
+              <div translate="no" className="grid grid-cols-3 gap-1.5 tabular-nums">
                 <div>
                   <div className="text-[10px] text-slate-400 dark:text-slate-500">a</div>
                   <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">{formatCoeff(result.a)}</div>
@@ -636,7 +637,7 @@ export function InputCalibratorPanel({
 
           {downloaded && method === 'measure' && (
             <div className="truncate rounded border border-sky-300 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300">
-              Saved {downloaded}
+              Saved <span translate="no">{downloaded}</span>
             </div>
           )}
 

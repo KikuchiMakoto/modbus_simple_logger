@@ -99,6 +99,8 @@ export function OutputTesterPanel({
         <div className="flex items-center gap-1.5">
           <span className="shrink-0 text-xs font-semibold text-slate-700 dark:text-slate-200">Channel</span>
           <select
+            // Channel numbers plus the user's own labels.
+            translate="no"
             value={channel}
             onChange={(e) => setChannel(Number(e.target.value))}
             className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
