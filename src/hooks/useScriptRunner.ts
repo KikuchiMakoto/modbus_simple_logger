@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
-import { clearBackgroundTimer, setBackgroundTimeout } from '../utils/backgroundTimer';
 import { logSystem, SOURCE, type SystemLogLevel } from '../utils/systemLog';
 import {
   SCRIPT_LANGUAGES,
@@ -17,6 +16,12 @@ import {
   uniqueTabName,
   type ScriptTab,
 } from '../utils/scriptTabs';
+import {
+  INTERRUPT_NONE,
+  INTERRUPT_PENDING,
+  type ScriptWorkerRequest,
+  type ScriptWorkerResponse,
+} from '../utils/scriptWorkerProtocol';
 
 /**
  * What a worker's output stream means in log terms.
@@ -222,16 +227,8 @@ export function useScriptRunner(
     // entry point and emits it, so the path cannot come from the table in
     // scriptLanguages.ts.
     const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (event: MessageEvent) => {
-      const message = event.data as
-        | { type: 'set_ao'; ch: number; data: number }
-        | { type: 'set_ai_tare'; ch: number }
-        | { type: 'set_param_label'; ch: number; text: string }
-        | { type: 'status'; message: string }
-        | { type: 'output'; stream: 'stdout' | 'stderr'; text: string }
-        | { type: 'done'; message?: string }
-        | { type: 'interrupted'; message?: string }
-        | { type: 'error'; message: string; traceback?: string };
+    worker.onmessage = (event: MessageEvent<ScriptWorkerResponse>) => {
+      const message = event.data;
       if (message.type === 'set_ao') {
         setAo(message.ch, message.data);
       } else if (message.type === 'set_ai_tare') {
@@ -277,14 +274,15 @@ export function useScriptRunner(
       settleRun('error', event.message);
     };
 
-    worker.postMessage({
+    const init: ScriptWorkerRequest = {
       type: 'init',
       rawSab,
       phySab,
       aoSab,
       paramSab,
       intSab,
-    });
+    };
+    worker.postMessage(init);
 
     workersRef.current.set(language, worker);
     return worker;
@@ -292,13 +290,14 @@ export function useScriptRunner(
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
     if (interruptBufferRef.current) {
-      interruptBufferRef.current[0] = 2;
+      interruptBufferRef.current[0] = INTERRUPT_PENDING;
       // Only the worker that is actually executing. Every runtime reads the
       // shared byte directly, but the message is what covers the case where the
       // runtime has not started yet (Pyodide still booting), and sending it to
       // an idle worker would arm a Stop for that worker's next run.
       const language = runningLanguageRef.current;
-      if (language) workersRef.current.get(language)?.postMessage({ type: 'interrupt' });
+      const interrupt: ScriptWorkerRequest = { type: 'interrupt' };
+      if (language) workersRef.current.get(language)?.postMessage(interrupt);
     }
     const wasRunning = scriptExecutingRef.current;
     markRunFinished();
@@ -328,7 +327,7 @@ export function useScriptRunner(
     logSourceRef.current = tab.name;
     try {
       const worker = ensureWorkerReady(language);
-      if (interruptBufferRef.current) interruptBufferRef.current[0] = 0;
+      if (interruptBufferRef.current) interruptBufferRef.current[0] = INTERRUPT_NONE;
       scriptExecutingRef.current = true;
       runningLanguageRef.current = language;
       runningTabIdRef.current = tab.id;
@@ -340,7 +339,8 @@ export function useScriptRunner(
       // destroying — so this line is what separates one run's output from the
       // last one's.
       appendLog('system', `Run started (${SCRIPT_LANGUAGES[language].label})`);
-      worker.postMessage({ type: 'run', code: codeOverride ?? tab.code });
+      const run: ScriptWorkerRequest = { type: 'run', code: codeOverride ?? tab.code };
+      worker.postMessage(run);
       return info;
     } catch (err) {
       const text = (err as Error).message;
