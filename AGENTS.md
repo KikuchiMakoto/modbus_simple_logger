@@ -18,8 +18,14 @@
 ```bash
 bun install
 bun run dev
-bun run build
+bun run build            # typecheck -> vite build
+bun run typecheck        # アプリ（src/）
+bun run typecheck:launcher   # launcher/ + scripts/ + vite.config.ts（generate-embed の実行後でないと通らない）
 ```
+
+- **`bun run build` は `tsc --noEmit` を先に通す**。vite は型を見ないので、これを外すと型エラーがそのままリリースまで乗る（実際 v7.0 時点で3件乗っていた）
+- **tsconfig は2本**。`tsconfig.json` がブラウザ向けの `src/`、`tsconfig.launcher.json` が Bun 向けの `launcher/` / `scripts/` / `vite.config.ts`。グローバルも lib も別物なので分けてある。exe を作る当のコードが長く一度も型チェックされていなかった
+- 両方 `noUnusedLocals` / `noUnusedParameters` 有効。未使用の import や変数はビルドを止める
 
 ## ディレクトリ構造
 
@@ -86,7 +92,7 @@ src/
 public/
 ├── sw.js                            # Service Worker（COOP/COEP ヘッダー注入付き）
 ├── manifest.json                    # PWA マニフェスト
-└── icon.svg                         # アプリアイコン
+└── icon.png                         # アプリアイコン（512x512 PNG。旧 icon.svg は PNG を <image> で包んだだけの 197KB だった）
 scripts/
 └── deploy-gh-pages.ts               # `bun run deploy`。手元の dist/ を gh-pages ブランチへ orphan commit で force push
 ```
@@ -190,6 +196,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が増えても崩れない設計:
 
 - **メッセージ契約は `utils/scriptWorkerProtocol.ts` の1ファイル**。実行系が増えても契約だけ揃えれば `useScriptRunner` は同一に扱える、という前提で作られている（共有バッファを受け取り、文字列を実行し、結果を報告し、Worker にできない副作用をメインスレッドへ依頼する）
+  - **両端から必ず import すること**。BASIC/Lua を落とした後、このファイルは誰からも import されないまま残り、`pyodideWorker.ts` と `useScriptRunner.ts` がそれぞれ同じ union を手書きし、割込みバイトも生の `2` を各自書いていた（v7.0 で復旧）。片方だけ直せばズレる、という状態そのものがこのファイルの存在理由
+  - 割込みバイトは `INTERRUPT_NONE` / `INTERRUPT_PENDING` を使う。数値リテラルを直接書かない
 - **読み取りは同期（SAB 直読み）・書き込みはメッセージ**。Modbus の転送ミューテックスと最小フレーム間隔がメインスレッドにあるため、ここを迂回させない。結果として `SetAo` 直後の `GetAo` は前の値を返す
 - **計測 API の名前は PascalCase**（`GetAiRaw` `GetAiPhy` `GetAo` `GetParam` `SetAo` `SetParam` `SetParamLabel` `SetAiTare` `Elapsed`）。**Python の snake_case 慣習にはあえて従っていない**（これらは計器の呼び出しであって Python ライブラリの呼び出しではない、という判断）。なお `{ type: 'set_ao' }` 等の**Worker メッセージ型名は別物**で、スクリプトからは見えないので変更しない
 - **`SetParamLabel(ch, text)` は Param ch の自由テキストラベルを書き換える**。値そのもの（`SetParam`）と同じ非同期メッセージ経路（`set_param_label` → `App.tsx` の `handleParamFreeLabelChange`）で、SAB ではなく `paramFreeLabels` state（Cookie 永続化）を書く。**専用の clear 呼び出しは無い** — `SetParamLabel(ch, "")` が消去を兼ねる。Copy for AI の API 一覧にもその旨を明記。**実行中にラベルを変えられるのはこの API だけ**（UI 側のラベル入力＝Parameter グリッドは run 中ロック。Param Editor は表示専用。Param Editor の項を参照）
@@ -237,6 +245,13 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **ヘッダーの `Accept Risk` チェックボックスは値だけの実行中ロック解除**。既定では ScriptRunner 実行中はラベルも値も編集不可（`locked`）だが、チェックを入れると `valuesLocked = locked && !acceptRisk` で**値だけ**を解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
 - **最下部の全消去は `SlideToConfirm`**（16ch の値を 0 に。**ラベルには触らない** — 表示しかしていないパネルが名前を消すのはおかしい）。**スクロール領域の外**に置くこと — 中に入れると「一番下までスクロールしたときだけ現れる操作」になり、スクロールの延長で手が届いてしまう。実行中（`locked`）は Accept Risk に関係なく無効（全消去は狙ったセルへの編集ではない）
 
+### アセット埋め込みと配信（`launcher/generate-embed.ts` + `launcher/server.ts`）
+- **dist/ の各ファイルを `import … with { type: 'file' }` で exe に焼く**。アーカイブ／展開ステップは持たない
+- **圧縮して得のあるものは gzip 済みで埋め込み、`Content-Encoding: gzip` を付けて返す**（`COMPRESSED` セット）。exe はこのバイト列を永久に持ち歩くうえ、ブラウザ側はどのみち展開するため。現状 19.5MB → 11.0MB（大半は `pyodide.asm.wasm` 9.6→3.6MB と Plotly の vendor チャンク 1.45→0.49MB）。**woff2 / png / `python_stdlib.zip` のような既圧縮形式は 2% しか縮まないので対象外**（`MIN_GAIN`）
+- **`index.html` だけは非圧縮**。実行時に `stampRuntimeMarker` で書き換えるため。裏を返すと `loadAssets()` がメモリに載せるのはこの1ファイルだけでよく、**残りは `Bun.file()` をそのまま Response のボディに渡す**（起動時に dist 全体 19MB をメモリへ展開していたのをやめた。ScriptRunner を開くとは限らないユーザーにも Pyodide の展開コストを、しかもブラウザ起動より前に払わせていた）
+- gzip を受け付けないクライアントには展開して返す経路を残してある。Edge/Chrome しか相手にしないので実際には通らないが、通らなかった場合に出るのは「バイナリが画面に表示される」であって切り分けが難しい
+- **`launcher/embedded-gz/` は毎回作り直す**。dist のファイル名は毎デプロイでハッシュが変わるので、消さないと古いファイルが埋め込まれ続ける
+
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）
 - ポートが埋まっていても**それが自分たちのロックか確認してから諦める**（`LOCK_MARKER` を返すかどうか）。無関係なソフトが 8764 を握っているだけで起動不能になる方が、二重起動より重大な障害のため
@@ -272,7 +287,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 ### PWA / Service Worker
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
-- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.svg`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
+- **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.png`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
   - `CACHE_VERSION` も同プラグインがマニフェスト内容のハッシュへ置換（`'dev'` → 8桁ハッシュ）。デプロイ毎に新キャッシュへ切替わり旧キャッシュは activate で削除
   - 未ビルドの `vite dev` ではプレースホルダのまま（空配列／`'dev'`）。dev は base が `/` で BASE_PATH 不一致のため SW は実質無効、問題なし
@@ -341,7 +356,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **`detectRenderBackend()`（`ChartPanel.tsx`）の GPU/CPU バッジは概算**。Canvas2D は Chromium で GPU アクセラレーション対象だが、Skia は**アンチエイリアス付きの凹パス**（長い折れ線）を GPU でラスタライズできず CPU 経路に落ちるため、「Canvas2D=CPU」「WebGL=GPU」の二分法は**どちらの方向にも不正確**。描画方式の性能判断は必ず実機計測で行い、この表示を根拠にしないこと
 - **ビルドチャンク分割**（`vite.config.ts`）: Plotly 等の vendor を `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
 - **プリキャッシュ注入**（`vite.config.ts` の `precache-manifest` プラグイン）: ビルド時に `dist` の全アセットを走査し `dist/sw.js` の `PRECACHE_MANIFEST` / `CACHE_VERSION` / `APP_VERSION` を置換。`sw.js` 側のプレースホルダ（`const PRECACHE_MANIFEST = [];` / `const CACHE_VERSION = 'dev';` / `const APP_VERSION = '';`）の文字列を変更するとマッチしなくなり**オフライン動作や更新プロンプトのバージョン表示が壊れる**ため注意。アセット追加時は手書き不要（自動で含まれる）
-- **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
+- **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.png` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
 - **依存ライブラリのバージョン表示は自動生成**（`vite.config.ts` の `DEP_VERSIONS` → `VITE_DEP_VERSIONS`）: `package.json` の `dependencies`/`devDependencies` 全件について **`node_modules/<name>/package.json` の実インストール版**を JSON で注入する（`^19.2.8` のようなレンジではなく実際にバンドルされた版が出る）。`AppInfoPanel.tsx` の `LIBRARIES` は**表示名・パッケージ名・ライセンスのみ**を持ち、バージョンを直書きしないこと。ライブラリ追加時は 1 行足すだけでよく、バージョン更新時の同期作業は不要
 - **Prism のグラマーは必要な分だけ個別 import すること**（`utils/prism.ts`、現在は `prism-python` のみ。`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。グラマーによっては他のグラマーへの依存があり、import 順を誤ると**モジュール評価時に throw してアプリ全体が起動しなくなる**ことがある（エディタだけの問題では済まない）。**言語を増やす際は依存する他のグラマーが無いか確認すること**。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
 - **エディタの Tab/undo は react-simple-code-editor 側の実装を使う**（`components/CodeEditor.tsx`）。v5.0 まで App.tsx に自前の Tab インデント handler があったが、ライブラリ内蔵と同等（2スペース・選択範囲対応）でありながら**ライブラリの undo スタックを迂回して Ctrl+Z を壊す**ため削除した。外から `onKeyDown` で `preventDefault()` するとライブラリ側の処理が丸ごと止まる仕様なので、キー処理を足すときはこの点に注意
