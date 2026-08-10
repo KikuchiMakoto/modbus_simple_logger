@@ -353,7 +353,11 @@ function ChartPanelComponent({
     [xAxis, yAxis, palette, displayRevision, plot, axisLabels],
   );
 
-  const plotConfig = useMemo(
+  // Annotated rather than inferred: without the contextual type the string
+  // literals below widen to `string`, which `Partial<Config>` rejects — and
+  // annotating (instead of casting each field `as const`) is what makes Plotly
+  // check the whole object, so a mistyped button name fails the build.
+  const plotConfig = useMemo<Partial<Config>>(
     () => ({
       // Only while the pointer is over the chart. The bar is an overlay — it
       // reserves no layout space either way — but an always-on bar has to be
@@ -365,11 +369,11 @@ function ChartPanelComponent({
       // Turning the bar off entirely (or dropping scrollZoom/dragmode) buys no
       // further space: the 8px top margin left behind is tick-label clearance,
       // not modebar clearance. It would only cost the zoom.
-      displayModeBar: 'hover' as const,
+      displayModeBar: 'hover',
       responsive: true,
       displaylogo: false,
       scrollZoom: true,
-      doubleClick: 'reset' as const,
+      doubleClick: 'reset',
       // Trimmed to the buttons that do something here. The three hover controls
       // are dead on arrival against `hovermode: false` / `hoverinfo: 'skip'`,
       // and box/lasso select has no consumer — nothing reads a selection off

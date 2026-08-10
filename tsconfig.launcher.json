@@ -1,0 +1,28 @@
+{
+  // The desktop launcher and the build-time scripts run on Bun, not in the
+  // browser: different globals (Bun.*, import.meta.dir, node:fs), no DOM. They
+  // are excluded from the app's tsconfig for that reason — and were therefore
+  // never typechecked at all, despite being the code that produces the exe.
+  //
+  // launcher/ is gitignored (see .gitignore for why), so this config lives at
+  // the repo root where a plain `git add` still picks it up.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["bun"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    // embedded.generated.ts imports every dist file with `{ type: 'file' }`,
+    // which is a Bun loader feature TypeScript cannot resolve to a module.
+    "allowArbitraryExtensions": true
+  },
+  "include": ["launcher", "scripts", "vite.config.ts"],
+  "exclude": ["node_modules"]
+}

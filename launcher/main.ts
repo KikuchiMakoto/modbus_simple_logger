@@ -35,8 +35,16 @@ const notice = (message: string): void => {
   }
 };
 
-/** Show a fatal error and give up. */
-const fatal = (message: string): never => {
+/**
+ * Show a fatal error and give up.
+ *
+ * Annotated on the CONST, not just as the arrow's return type: TypeScript only
+ * treats a call as terminating (and narrows what follows it) when the callee is
+ * a const with an explicit function-type annotation. Without this the
+ * `if (!browser) { … fatal(…) }` below leaves `browser` possibly-null at the
+ * launchBrowser() call.
+ */
+const fatal: (message: string) => never = (message) => {
   notice(message);
   process.exit(1);
 };
