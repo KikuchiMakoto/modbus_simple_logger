@@ -31,7 +31,9 @@ import { readJsonStorage, writeLocalPreference } from './cookies';
  *  WARN   recovered or tolerated trouble — a retry that worked, a dropped frame.
  *  ERROR  something failed and the user has to know.
  *  FATAL  data that existed and is now gone. Reserved for that: it is the one
- *         class of event in this app that a later success cannot undo.
+ *         class of event in this app that a later success cannot undo. Nothing
+ *         emits it today — see SELECTABLE_SYSTEM_LOG_LEVELS below, which is
+ *         where that fact is accounted for.
  */
 export type SystemLogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
 
@@ -46,14 +48,26 @@ export const SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = [
 ];
 
 /**
- * TRACE/DEBUG are wire- and internals-level detail meant for diagnosing this
- * app itself, not for a measurement run — they are only selectable in a dev
- * build (`bun run dev`, `import.meta.env.DEV`). A production/launcher build
- * only offers INFO and above.
+ * What the threshold dropdown offers. Narrower than the ladder above at both
+ * ends:
+ *
+ *  - TRACE/DEBUG are wire- and internals-level detail meant for diagnosing this
+ *    app itself, not for a measurement run, so they are only selectable in a dev
+ *    build (`bun run dev`, `import.meta.env.DEV`).
+ *  - FATAL is never selectable, in any build, because nothing currently emits
+ *    it: picking it could only ever produce an empty log, which reads as "the
+ *    run was clean" rather than "this filter matches nothing". The level itself
+ *    stays defined and ranked — a real data-loss report belongs at FATAL, and
+ *    when one exists this filter is the other half of adding it.
+ *
+ * Only the threshold is filtered here. `logSystem` does not consult this list,
+ * so a FATAL line would still be recorded and would still be visible at every
+ * threshold a reader can actually select.
  */
-export const SELECTABLE_SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = import.meta.env.DEV
-  ? SYSTEM_LOG_LEVELS
-  : SYSTEM_LOG_LEVELS.filter((level) => level !== 'TRACE' && level !== 'DEBUG');
+export const SELECTABLE_SYSTEM_LOG_LEVELS: readonly SystemLogLevel[] = SYSTEM_LOG_LEVELS.filter(
+  (level) =>
+    level !== 'FATAL' && (import.meta.env.DEV || (level !== 'TRACE' && level !== 'DEBUG')),
+);
 
 const LEVEL_RANK: Record<SystemLogLevel, number> = {
   TRACE: 0,
@@ -245,15 +259,6 @@ export const logSystem = (
   scheduleEmit();
 };
 
-export const logTrace = (source: SystemLogSource, text: string): void =>
-  logSystem('TRACE', source, text);
-export const logDebug = (source: SystemLogSource, text: string): void =>
-  logSystem('DEBUG', source, text);
-export const logInfo = (source: SystemLogSource, text: string): void =>
-  logSystem('INFO', source, text);
-export const logWarn = (source: SystemLogSource, text: string): void =>
-  logSystem('WARN', source, text);
-
 /**
  * Report a failure at ERROR, and remember that this source is failing so its
  * recovery can be logged.
@@ -277,11 +282,6 @@ export const postFailure = (
 export const reportError = (source: AppStatusSource, err: unknown, prefix?: string): void => {
   const detail = err instanceof Error ? err.message : String(err);
   postFailure('ERROR', source, prefix ? `${prefix}: ${detail}` : detail);
-};
-
-/** Report rows that existed and are now unrecoverable. See FATAL above. */
-export const reportDataLoss = (source: AppStatusSource, message: string): void => {
-  postFailure('FATAL', source, message);
 };
 
 /**

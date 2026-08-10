@@ -81,6 +81,3 @@ export const setKeepAwake = (enabled: boolean): void => {
     console.error('SetThreadExecutionState failed:', err);
   }
 };
-
-/** Whether sleep is currently being suppressed (for shutdown bookkeeping). */
-export const keepAwakeActive = (): boolean => active;
