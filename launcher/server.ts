@@ -1,6 +1,6 @@
 // Static file server for the launcher: serves the embedded (built) web app with
 // cross-origin isolation and a hard no-cache policy, on 127.0.0.1 only.
-import { ASSETS, BASE_PATH } from './embedded.generated';
+import { ASSETS, BASE_PATH, COMPRESSED } from './embedded.generated';
 import { KEEP_AWAKE_PATH_SUFFIX, keepAwakeFeed } from './keepAwakeFeed';
 
 export { BASE_PATH };
@@ -84,19 +84,27 @@ const stampRuntimeMarker = (html: Uint8Array): Uint8Array => {
 };
 
 export type Assets = {
-  /** Every embedded file. index.html here is the launcher-stamped copy. */
-  bodies: Map<string, Uint8Array>;
+  /** The launcher-stamped index.html, held as bytes because it is rewritten. */
+  index: Uint8Array;
 };
 
-// Preload every embedded asset into memory once so responses come from an owned
-// Uint8Array with fully controlled headers.
+/**
+ * Prepare the one asset that cannot be served straight from its embedded copy.
+ *
+ * Everything else is handed to Bun.file() at request time. Reading all of dist
+ * into a Map here instead — which is what this used to do — cost ~19MB of
+ * resident memory and, worse, spent it before launchBrowser() was reached, so
+ * every launch paid for decoding the Pyodide wasm and the fonts up front on the
+ * chance that the user would open ScriptRunner.
+ *
+ * The eager pass did double as a sanity check that the embed was complete, so
+ * the one thing worth failing early on — a build with no index.html to serve —
+ * is still checked here.
+ */
 export const loadAssets = async (): Promise<Assets> => {
-  const bodies = new Map<string, Uint8Array>();
-  for (const [urlPath, ref] of Object.entries(ASSETS)) {
-    const bytes = await Bun.file(ref).bytes();
-    bodies.set(urlPath, urlPath === INDEX ? stampRuntimeMarker(bytes) : bytes);
-  }
-  return { bodies };
+  const ref = ASSETS[INDEX];
+  if (!ref) throw new Error('Launcher build is incomplete: no index.html was embedded.');
+  return { index: stampRuntimeMarker(await Bun.file(ref).bytes()) };
 };
 
 /**
@@ -104,12 +112,31 @@ export const loadAssets = async (): Promise<Assets> => {
  * request this server should answer (the caller has already had its chance to
  * claim WebSocket endpoints).
  */
-export const serveStatic = (assets: Assets, path: string, req: Request): Response => {
+const serveStatic = (
+  assets: Assets,
+  path: string,
+  req: Request,
+): Response | Promise<Response> => {
   const notFound = (): Response =>
     new Response('Not Found', { status: 404, headers: baseHeaders('text/plain; charset=utf-8') });
 
-  const send = (urlPath: string): Response =>
-    new Response(assets.bodies.get(urlPath)!, { headers: baseHeaders(contentType(urlPath)) });
+  const send = (urlPath: string): Response | Promise<Response> => {
+    const headers = baseHeaders(contentType(urlPath));
+    // index.html is the rewritten copy, never the embedded bytes.
+    if (urlPath === INDEX) return new Response(assets.index, { headers });
+
+    const body = Bun.file(ASSETS[urlPath]!);
+    if (!COMPRESSED.has(urlPath)) return new Response(body, { headers });
+
+    // The embedded copy is gzip. Every browser this launcher will ever talk to
+    // (it refuses to start without Edge or Chrome) sends `Accept-Encoding:
+    // gzip`, but a client that does not would be handed binary and render it —
+    // so decompress for that case rather than trust the invariant.
+    if ((req.headers.get('accept-encoding') ?? '').includes('gzip')) {
+      return new Response(body, { headers: { ...headers, 'Content-Encoding': 'gzip' } });
+    }
+    return body.bytes().then((gz) => new Response(Bun.gunzipSync(gz), { headers }));
+  };
 
   // Built by hand rather than with Response.redirect(): that returns a response
   // with immutable headers, and it would drop the query string.
@@ -120,7 +147,7 @@ export const serveStatic = (assets: Assets, path: string, req: Request): Respons
   if (!path.startsWith(BASE_PATH)) return notFound();
 
   const key = path === BASE_PATH ? INDEX : path;
-  if (assets.bodies.has(key)) return send(key);
+  if (key in ASSETS) return send(key);
 
   // SPA fallback: unknown paths under the app sub-path resolve to index.html,
   // but only for navigations (Accept: text/html) or extensionless paths — a
@@ -136,7 +163,10 @@ export const serveStatic = (assets: Assets, path: string, req: Request): Respons
 type SocketRole = { role: 'feed' };
 
 export const createServer = async (assets: Assets) => {
-  return Bun.serve<SocketRole, {}>({
+  // One type argument: Bun.serve's second generic is the `routes` path type
+  // (`R extends string`), not a second data type. `Bun.serve<SocketRole, {}>`
+  // only ever compiled because launcher/ was outside every tsconfig.
+  return Bun.serve<SocketRole>({
     // 127.0.0.1 only — never bind a public interface.
     hostname: '127.0.0.1',
     port: 0,

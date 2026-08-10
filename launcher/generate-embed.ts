@@ -9,12 +9,30 @@
 //
 // Per-file embedding keeps the runtime simple and avoids any archive/unpack
 // step. dist/ is small (~20 files) so the generated import list stays short.
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+//
+// Text-shaped assets are embedded PRE-GZIPPED and served with
+// `Content-Encoding: gzip` (see server.ts), because the exe carries these bytes
+// forever and the browser was going to decompress them anyway. On the current
+// build that is 19.7MB of raw dist down to 11.1MB embedded — almost all of it
+// pyodide.asm.wasm (9.6 -> 3.6MB) and the Plotly vendor chunk (1.45 -> 0.49MB).
+// Already-compressed formats (woff2, png, the Pyodide stdlib .zip) gain ~2% and
+// are left alone; see MIN_GAIN below.
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 const ROOT = resolve(import.meta.dir, '..');
 const DIST = resolve(ROOT, 'dist');
 const OUT = resolve(import.meta.dir, 'embedded.generated.ts');
+// Staging directory for the gzipped copies. Rebuilt from scratch every run so a
+// rename in dist/ (content hashes change on every deploy) cannot leave a stale
+// file behind to be embedded.
+const GZ_DIR = resolve(import.meta.dir, 'embedded-gz');
+
+// Compress only when it actually pays. Below this the entry keeps its raw dist
+// bytes: the exe saves nothing, and every compressed entry is one more thing
+// that has to be right at serve time.
+const MIN_GAIN = 0.1;
 
 // Must stay in sync with `base` in vite.config.ts (the GitHub Pages sub-path).
 // The built index.html and pyodideWorker reference every asset under this
@@ -38,14 +56,43 @@ const walk = (dir: string) => {
 walk(DIST);
 files.sort();
 
+rmSync(GZ_DIR, { recursive: true, force: true });
+
+// index.html is the one file the server rewrites at runtime (it splices in the
+// launcher runtime marker), so it has to stay raw bytes it can decode.
+const INDEX_REL = 'index.html';
+
 const imports: string[] = [];
 const entries: string[] = [];
+const compressed: string[] = [];
+let rawTotal = 0;
+let embeddedTotal = 0;
+
 files.forEach((full, i) => {
   const rel = relative(DIST, full).split(sep).join('/');
+  const urlPath = BASE_PATH + rel;
+  const bytes = readFileSync(full);
+  rawTotal += bytes.length;
+
   // Import path is relative to this generated file (launcher/…), so dist/ is
   // one level up.
-  const importPath = `../dist/${rel}`;
-  const urlPath = BASE_PATH + rel;
+  let importPath = `../dist/${rel}`;
+  if (rel !== INDEX_REL) {
+    const gz = gzipSync(bytes, { level: 9 });
+    if (gz.length < bytes.length * (1 - MIN_GAIN)) {
+      const gzPath = resolve(GZ_DIR, `${rel}.gz`);
+      mkdirSync(dirname(gzPath), { recursive: true });
+      writeFileSync(gzPath, gz);
+      importPath = `./embedded-gz/${rel}.gz`;
+      compressed.push(urlPath);
+      embeddedTotal += gz.length;
+    } else {
+      embeddedTotal += bytes.length;
+    }
+  } else {
+    embeddedTotal += bytes.length;
+  }
+
   imports.push(`import a${i} from ${JSON.stringify(importPath)} with { type: 'file' };`);
   entries.push(`  ${JSON.stringify(urlPath)}: a${i},`);
 });
@@ -55,15 +102,34 @@ const out = [
   '// Regenerated on every `bun run launcher:dev` / `launcher:build`.',
   '// Gitignored: it references content-hashed dist filenames.',
   '',
+  '// `import … with { type: "file" }` is a Bun loader form: it yields the path',
+  '// to the embedded copy at runtime. TypeScript resolves these specifiers as',
+  '// real modules instead (and types dist/manifest.json as its own JSON shape),',
+  '// so `bun run typecheck` can only report noise here. The module boundary is',
+  '// still typed — ASSETS/BASE_PATH below carry explicit annotations that every',
+  '// importer is checked against.',
+  '// @ts-nocheck',
+  '',
   ...imports,
   '',
   `export const BASE_PATH = ${JSON.stringify(BASE_PATH)};`,
   '',
+  '/** URL path -> path of the embedded copy, for Bun.file(). */',
   'export const ASSETS: Record<string, string> = {',
   ...entries,
   '};',
   '',
+  '/**',
+  ' * The subset of ASSETS whose embedded copy holds GZIP bytes rather than the',
+  ' * original. server.ts serves these with `Content-Encoding: gzip`.',
+  ' */',
+  `export const COMPRESSED: ReadonlySet<string> = new Set(${JSON.stringify(compressed, null, 2)});`,
+  '',
 ].join('\n');
 
 writeFileSync(OUT, out);
-console.log(`[generate-embed] Embedded ${files.length} files from dist/ into ${relative(ROOT, OUT)}`);
+const mb = (n: number) => `${(n / 1e6).toFixed(2)}MB`;
+console.log(
+  `[generate-embed] Embedded ${files.length} files from dist/ into ${relative(ROOT, OUT)}: ` +
+    `${mb(rawTotal)} raw -> ${mb(embeddedTotal)} embedded (${compressed.length} gzipped).`,
+);
