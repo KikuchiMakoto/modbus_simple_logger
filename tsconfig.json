@@ -1,15 +1,28 @@
 {
   "compilerOptions": {
+    // Matches `build.target` in vite.config.ts. Without it TypeScript falls back
+    // to its own default target/lib, which is not the language level the bundle
+    // is actually emitted at — so a syntax or lib feature could typecheck here
+    // and be down-levelled (or not) differently by Vite.
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    // Vite owns emit; tsc is only ever run as a checker (`bun run typecheck`).
+    "noEmit": true,
+    // The dead-code check that found (and now keeps out) the unused exports and
+    // locals this project had accumulated.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "jsx": "react-jsx",
     "types": ["vite/client", "w3c-web-serial", "w3c-web-usb", "wicg-file-system-access"],
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true
   },
+  // launcher/ is checked by its own tsconfig (it targets Bun, not the DOM).
   "include": ["src"],
   "exclude": ["node_modules"]
 }

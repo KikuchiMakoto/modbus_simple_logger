@@ -3,9 +3,13 @@
 // Extracted from pyodideWorker/useScriptRunner when BASIC and Lua joined
 // Python: the runtimes have nothing in common, but the *contract* is identical
 // — receive shared buffers, run a string, report what happened, and ask the main
-// thread to perform the side effects a worker cannot (AO writes, tare). Keeping
-// that contract in one file is what lets useScriptRunner treat all three the
-// same and swap one worker for another.
+// thread to perform the side effects a worker cannot (AO writes, tare).
+//
+// Only Pyodide is left, so there is currently one worker on each end of this
+// contract. It stays a shared module rather than being folded back into either
+// side because both ends have to agree on it, and for a while they did not:
+// each had its own hand-written copy of these unions and its own bare `2` for
+// the interrupt byte, which is exactly the drift this file exists to prevent.
 //
 // The instrument API is deliberately split the same way in every language:
 //   - reads are synchronous, straight out of the SharedArrayBuffers the polling

@@ -44,9 +44,6 @@ function loadUiScale(): number {
 let current = isBrowser ? loadUiScale() : DEFAULT_UI_SCALE;
 const listeners = new Set<() => void>();
 
-/** Current scale in percent (50-200). */
-export const getUiScalePercent = (): number => current;
-
 /** Current scale as the factor used by CSS zoom and by pointer maths (0.5-2). */
 export const getUiScale = (): number => current / 100;
 

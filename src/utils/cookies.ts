@@ -112,15 +112,6 @@ export const writeLocalPreference = (key: string, value: JsonValue): WriteResult
   return writeRaw(key, value);
 };
 
-export const removeJsonStorage = (key: string): void => {
-  if (!isBrowser) return;
-  try {
-    localStorage.removeItem(getKey(key));
-  } catch (err) {
-    console.warn('Failed to remove localStorage item', err);
-  }
-};
-
 /**
  * Like readJsonStorage(), plus the one-way migration of a legacy cookie into
  * localStorage. Both functions read cookies now — the difference is only that

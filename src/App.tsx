@@ -398,7 +398,7 @@ const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
 let recoveryPromptStarted = false;
 
 function App() {
-  const { theme, isDarkMode, toggleTheme } = useTheme();
+  const { isDarkMode, toggleTheme } = useTheme();
   const {
     chart1X, setChart1X, chart1Y, setChart1Y,
     chart2X, setChart2X, chart2Y, setChart2Y,

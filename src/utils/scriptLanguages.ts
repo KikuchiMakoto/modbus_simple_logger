@@ -284,8 +284,6 @@ export const SCRIPT_LANGUAGES: Record<ScriptLanguageId, ScriptLanguage> = {
   python: PYTHON,
 };
 
-export const SCRIPT_LANGUAGE_LIST: ScriptLanguage[] = [PYTHON];
-
 export const DEFAULT_SCRIPT_LANGUAGE: ScriptLanguageId = 'python';
 
 export const isScriptLanguageId = (value: unknown): value is ScriptLanguageId => value === 'python';

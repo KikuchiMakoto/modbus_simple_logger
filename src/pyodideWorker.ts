@@ -4,6 +4,13 @@
 // pin of the `pyodide` dependency in package.json is the single source of
 // truth for the Pyodide version (AppInfoPanel displays it via
 // VITE_PYODIDE_VERSION).
+import {
+  INTERRUPT_NONE,
+  INTERRUPT_PENDING,
+  type ScriptWorkerRequest,
+  type ScriptWorkerResponse,
+} from './utils/scriptWorkerProtocol';
+
 const PYODIDE_BASE_URL = new URL(`${import.meta.env.BASE_URL}pyodide/`, self.location.href).href;
 
 type PyodideLike = {
@@ -50,16 +57,11 @@ def _runner_stop():
     return False
 `;
 
-type WorkerIncomingMessage =
-  | { type: 'init'; rawSab: SharedArrayBuffer; phySab: SharedArrayBuffer; aoSab: SharedArrayBuffer; paramSab: SharedArrayBuffer; intSab: SharedArrayBuffer }
-  | { type: 'run'; code: string }
-  | { type: 'interrupt' };
-
 let pyodide: PyodideLike | null = null;
 let initPromise: Promise<void> | null = null;
 // Kept so a failed initialization can be retried on the next run: the main
 // thread sends `init` only once, when it creates the worker.
-let initArgs: Extract<WorkerIncomingMessage, { type: 'init' }> | null = null;
+let initArgs: Extract<ScriptWorkerRequest, { type: 'init' }> | null = null;
 let running = false;
 let aiRawShare: Float32Array | null = null;
 let aiPhysicalShare: Float32Array | null = null;
@@ -69,7 +71,7 @@ let interruptBuffer: Uint8Array | null = null;
 /** Set when a run starts, so Elapsed() measures the script and not the worker. */
 let runStartedAt = Date.now();
 
-const postWorkerMessage = (message: Record<string, unknown>) => {
+const postWorkerMessage = (message: ScriptWorkerResponse) => {
   self.postMessage(message);
 };
 
@@ -198,7 +200,7 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   postWorkerMessage({ type: 'status', message: 'Ready' });
 };
 
-self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
+self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
   const message = event.data;
 
   if (message.type === 'init') {
@@ -224,7 +226,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
     // KeyboardInterrupt fires inside _runner_stop() itself, is swallowed by
     // the catch below, and the user's async loop keeps running after Stop.
     if (pyodide && running) {
-      if (interruptBuffer) interruptBuffer[0] = 0;
+      if (interruptBuffer) interruptBuffer[0] = INTERRUPT_NONE;
       try {
         pyodide.runPython('_runner_stop()');
       } catch {
@@ -233,7 +235,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
     } else if (interruptBuffer) {
       // No script executing yet (e.g. Stop pressed while Pyodide is still
       // initializing): keep the stop request armed so a pending run aborts.
-      interruptBuffer[0] = 2;
+      interruptBuffer[0] = INTERRUPT_PENDING;
     }
     return;
   }
@@ -265,7 +267,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
       if (!pyodide) {
         throw new Error('Pyodide is not available');
       }
-      if (interruptBuffer && interruptBuffer[0] === 2) {
+      if (interruptBuffer && interruptBuffer[0] === INTERRUPT_PENDING) {
         // Stop was pressed while initialization was still in progress: abort
         // instead of clearing the request and starting anyway.
         postWorkerMessage({ type: 'interrupted', message: 'Stopped' });
@@ -304,7 +306,7 @@ self.onmessage = async (event: MessageEvent<WorkerIncomingMessage>) => {
       }
     } finally {
       running = false;
-      if (interruptBuffer) interruptBuffer[0] = 0;
+      if (interruptBuffer) interruptBuffer[0] = INTERRUPT_NONE;
     }
   }
 };
