@@ -11,7 +11,7 @@
 // run.
 import { useRef } from 'react';
 import { FloatingWindow } from './FloatingWindow';
-import { DEVICE_MEMO_MAX, DEVICE_MEMO_TEMPLATE, deviceMemoFileName } from '../utils/deviceMemo';
+import { DEVICE_MEMO_MAX, deviceMemoFileName } from '../utils/deviceMemo';
 
 export function DeviceMemoPanel({
   open,
@@ -109,20 +109,6 @@ export function DeviceMemoPanel({
           >
             Export
           </button>
-          {/* Only offered into an empty box. Overwriting notes someone already
-              wrote is not something a header button should be able to do by
-              accident, and "insert at the cursor" would leave the headings
-              interleaved with the text they were meant to organise. */}
-          {memo.trim() === '' && (
-            <button
-              type="button"
-              className="button-secondary py-0.5 text-[0.7rem]"
-              onClick={() => onChange(DEVICE_MEMO_TEMPLATE)}
-              title="Fill the empty memo with headings for the things worth recording"
-            >
-              Template
-            </button>
-          )}
         </>
       }
     >
