@@ -11,6 +11,9 @@ type HamburgerMenuProps = {
 };
 
 const MENU_ITEMS = [
+  // First thing a new user should read, so it sits at the top — everything
+  // below it assumes the setup it walks through.
+  { key: 'tutorial', label: 'Tutorial', icon: '🔰', wip: false },
   // The three AI-side windows share an "Input …" prefix and sit together, in
   // the order they are reached for: the coefficient table is what gets opened
   // day to day, the calibrator is what fills it in, and the range is set once
@@ -39,7 +42,6 @@ const MENU_ITEMS = [
   // beside the window that copies it, not beside the manual.
   { key: 'deviceMemo', label: 'Device Memo', icon: '📝', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
-  { key: 'tutorial', label: 'Tutorial', icon: '🔰', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
 ];
 
