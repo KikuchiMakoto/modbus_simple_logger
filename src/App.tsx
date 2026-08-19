@@ -113,6 +113,7 @@ import { InputConfigPanel } from './components/InputConfigPanel';
 import { OutputTesterPanel } from './components/OutputTesterPanel';
 import { AppInfoPanel } from './components/AppInfoPanel';
 import { ManualPanel } from './components/ManualPanel';
+import { TutorialPanel } from './components/TutorialPanel';
 import { ScriptRunnerPanel } from './components/ScriptRunnerPanel';
 import { ParamEditorPanel } from './components/ParamEditorPanel';
 import { SystemLogPanel } from './components/SystemLogPanel';
@@ -439,6 +440,7 @@ function App() {
   const [outputTesterPanelOpen, setOutputTesterPanelOpen] = useState(false);
   const [appInfoPanelOpen, setAppInfoPanelOpen] = useState(false);
   const [manualPanelOpen, setManualPanelOpen] = useState(false);
+  const [tutorialPanelOpen, setTutorialPanelOpen] = useState(false);
   const [scriptRunnerPanelOpen, setScriptRunnerPanelOpen] = useState(false);
   const [paramEditorPanelOpen, setParamEditorPanelOpen] = useState(false);
   const [systemLogPanelOpen, setSystemLogPanelOpen] = useState(false);
@@ -589,6 +591,8 @@ function App() {
       setAppInfoPanelOpen(true);
     } else if (item === 'manual') {
       setManualPanelOpen(true);
+    } else if (item === 'tutorial') {
+      setTutorialPanelOpen(true);
     } else if (item === 'scriptRunner') {
       setScriptRunnerPanelOpen(true);
     } else if (item === 'paramEditor') {
@@ -2649,6 +2653,11 @@ function App() {
       <ManualPanel
         open={manualPanelOpen}
         onClose={() => setManualPanelOpen(false)}
+      />
+
+      <TutorialPanel
+        open={tutorialPanelOpen}
+        onClose={() => setTutorialPanelOpen(false)}
       />
 
       <ScriptRunnerPanel

@@ -39,6 +39,7 @@ const MENU_ITEMS = [
   // beside the window that copies it, not beside the manual.
   { key: 'deviceMemo', label: 'Device Memo', icon: '📝', wip: false },
   { key: 'manual', label: 'Connector Manual', icon: '📖', wip: false },
+  { key: 'tutorial', label: 'Tutorial', icon: '🔰', wip: false },
   { key: 'appInfo', label: 'Application Info', icon: 'ℹ️', wip: false },
 ];
 
