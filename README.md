@@ -4,6 +4,10 @@
 
 🔌 **デモ**: https://kikuchimakoto.github.io/modbus_simple_logger/
 
+Windows 限定ですが exe版が欲しいという方はReleaseページから好きなバージョンの modbus_simple_logger.exe をDownloadしてください。  
+
+💾 **単一EXE版**: https://github.com/KikuchiMakoto/modbus_simple_logger/releases
+
 ## 動作環境
 
 **Chromium 系ブラウザが必須**です。Web Serial API / File System Access API / Wake Lock API を使用するため、Safari と Firefox は動作対象外です。
