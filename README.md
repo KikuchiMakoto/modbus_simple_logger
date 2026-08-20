@@ -2,7 +2,7 @@
 
 ブラウザ上で動作する Modbus RTU ロガー（SPA / PWA）。Web Serial API でローカルの Modbus RTU デバイスに接続し、アナログ入力のリアルタイム計測・キャリブレーション・チャート表示・TSV 保存を行います。
 
-🔌 **デモ**: https://kikuchimakoto.github.io/modbus_simple_logger/
+🔌 **Web版/PWA版**: https://kikuchimakoto.github.io/modbus_simple_logger/
 
 Windows 限定ですが exe版が欲しいという方はReleaseページから好きなバージョンの modbus_simple_logger.exe をDownloadしてください。  
 
