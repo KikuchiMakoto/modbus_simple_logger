@@ -11,11 +11,24 @@ import App from './App';
 import './index.css';
 import { setupServiceWorker } from './utils/swUpdate';
 import { initUiScale } from './utils/uiScale';
-import { isSupportedBrowser } from './utils/appMode';
+import { isOriginEphemeral, isSupportedBrowser } from './utils/appMode';
+import { logSystem, SOURCE } from './utils/systemLog';
 
 // Before the first render, not from inside a component: restoring the stored UI
 // scale after mount would paint one frame at 100% and reflow the entire page.
 initUiScale();
+
+// Launcher-only: the exe could not bind its fixed port and is serving on an
+// OS-assigned one, so this session's origin is new and every persisted setting
+// (calibration, chart axes, labels...) starts empty. The app works; the user
+// just has to know their settings will not be here next launch.
+if (isOriginEphemeral()) {
+  logSystem(
+    'WARN',
+    SOURCE.storage,
+    'Launcher port 8376 was busy — serving on a random port. Settings will NOT be kept after closing. Free port 8376 and restart.',
+  );
+}
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
