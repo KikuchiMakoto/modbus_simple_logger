@@ -26,6 +26,22 @@ export const APP_RUNTIME: AppRuntime = readRuntime();
 /** True when the desktop launcher is serving this page. */
 export const isLauncherMode = APP_RUNTIME === 'launcher';
 
+// Stamped by the launcher only when its fixed port (8376) was busy and it fell
+// back to an OS-assigned one. The origin then differs on every launch, so
+// localStorage / IndexedDB / OPFS all start empty and no setting survives a
+// restart. Absent from every static deployment.
+const ORIGIN_META = 'msl-origin';
+
+/**
+ * True when persisted settings will not survive a restart because the serving
+ * origin is per-launch. Read once at startup to raise a System Log warning;
+ * nothing else may branch on it — the app works either way, it just forgets.
+ */
+export const isOriginEphemeral = (): boolean => {
+  if (!isLauncherMode) return false;
+  return document.querySelector(`meta[name="${ORIGIN_META}"]`)?.getAttribute('content') === 'ephemeral';
+};
+
 /**
  * True wherever the launcher is serving the page. This is the Service Worker /
  * caching question: the launcher's no-store headers make the SW unwanted.

@@ -251,6 +251,8 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **`index.html` だけは非圧縮**。実行時に `stampRuntimeMarker` で書き換えるため。裏を返すと `loadAssets()` がメモリに載せるのはこの1ファイルだけでよく、**残りは `Bun.file()` をそのまま Response のボディに渡す**（起動時に dist 全体 19MB をメモリへ展開していたのをやめた。ScriptRunner を開くとは限らないユーザーにも Pyodide の展開コストを、しかもブラウザ起動より前に払わせていた）
 - gzip を受け付けないクライアントには展開して返す経路を残してある。Edge/Chrome しか相手にしないので実際には通らないが、通らなかった場合に出るのは「バイナリが画面に表示される」であって切り分けが難しい
 - **`launcher/embedded-gz/` は毎回作り直す**。dist のファイル名は毎デプロイでハッシュが変わるので、消さないと古いファイルが埋め込まれ続ける
+- **HTTP サーバーは固定ポート 8376 で bind する**（`PREFERRED_PORT`。8376 = ASCII('S')+ASCII('L') = Simple Logger）。**localStorage / IndexedDB / OPFS は scheme+host+port 単位のオリジンで隔離される**ため、旧実装の `port: 0`（起動ごとにポート変わり＝オリジン変わり）では **Calibration・軸選択・ラベル・スクリプトタブ等の全設定が exe 再起動のたびに消滅していた**（v7.1.8 まで存在したバグ）。8376 は well-known 帯外・Windows エフェメラル範囲(49152+)外・主要ソフトの既定値不在、の3条件で選んだ（8080/8888 は占有ソフト多すぎ）
+- bind 失敗時は `port: 0` へフォールバックし、index.html へ `<meta name="msl-origin" content="ephemeral">` をスタンプする（`stampOriginMarker`）。ページ側は `appMode.ts` の `isOriginEphemeral()` で読み、`main.tsx` が起動時に System Log へ WARN を出す（「そのセッションだけ設定が保存されない」ことを告知。アプリ自体は動くので落とさない）
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
 - **多重起動抑制はループバックポート（8764）の bind**。ロックファイルにしないのは、プロセスが死ねば OS が必ず解放するため（クラッシュや強制終了で「起動できない exe」が残らない）。2つ目のインスタンスはメッセージボックスを出して **exit(0)** で終わる（ユーザーが欲しかったアプリは動いているのだから失敗ではない）

@@ -83,6 +83,34 @@ const stampRuntimeMarker = (html: Uint8Array): Uint8Array => {
   return new TextEncoder().encode(`${stamped.slice(0, at)}${RUNTIME_MARKER}${stamped.slice(at)}`);
 };
 
+// The fixed loopback port the app is served on. localStorage / IndexedDB /
+// OPFS are scoped to scheme+host+port, so a port that changes every launch
+// would change the origin and silently reset every persisted setting
+// (calibration, chart axes, labels, script tabs...) at each restart. A stable
+// port makes the origin stable.
+//
+// 8376 = ASCII('S') + ASCII('L'), i.e. Simple Logger. Chosen to be above the
+// well-known range (nothing here needs privileges), below Windows' default
+// ephemeral range (49152+, which the OS hands out to unrelated processes), and
+// free of any major software's default — unlike, say, 8080 or 8888.
+const PREFERRED_PORT = 8376;
+
+// Stamped into index.html only when PREFERRED_PORT could not be bound and an
+// OS-assigned port is used instead. The origin then differs every launch, so
+// nothing persists across restarts; the page reads this marker
+// (utils/appMode.ts) and says so in the System Log rather than failing
+// silently. Static deployments never carry it — they don't have this server.
+const ORIGIN_EPHEMERAL_MARKER = `<meta name="msl-origin" content="ephemeral">`;
+
+const stampOriginMarker = (html: Uint8Array): Uint8Array => {
+  const text = new TextDecoder().decode(html);
+  const head = text.indexOf('<head>');
+  if (head < 0) return html;
+  return new TextEncoder().encode(
+    `${text.slice(0, head + '<head>'.length)}${ORIGIN_EPHEMERAL_MARKER}${text.slice(head + '<head>'.length)}`,
+  );
+};
+
 export type Assets = {
   /** The launcher-stamped index.html, held as bytes because it is rewritten. */
   index: Uint8Array;
@@ -166,39 +194,51 @@ export const createServer = async (assets: Assets) => {
   // One type argument: Bun.serve's second generic is the `routes` path type
   // (`R extends string`), not a second data type. `Bun.serve<SocketRole, {}>`
   // only ever compiled because launcher/ was outside every tsconfig.
-  return Bun.serve<SocketRole>({
-    // 127.0.0.1 only — never bind a public interface.
-    hostname: '127.0.0.1',
-    port: 0,
-    // The keep-awake socket is idle whenever nothing is measuring; without
-    // this Bun would close it after 120s.
-    idleTimeout: 0,
-    fetch(req, srv) {
-      const path = decodeURIComponent(new URL(req.url).pathname);
+  const listen = (port: number) =>
+    Bun.serve<SocketRole>({
+      // 127.0.0.1 only — never bind a public interface.
+      hostname: '127.0.0.1',
+      port,
+      // The keep-awake socket is idle whenever nothing is measuring; without
+      // this Bun would close it after 120s.
+      idleTimeout: 0,
+      fetch(req, srv) {
+        const path = decodeURIComponent(new URL(req.url).pathname);
 
-      // Keep-awake uplink from the host page. First page wins: a second window
-      // (or a stray tab on the same origin) is refused rather than displacing
-      // the live connection, because exactly one page owns the hardware.
-      if (path === HOST_FEED_PATH) {
-        if (keepAwakeFeed.connected) return new Response('Feed already connected', { status: 409 });
-        if (srv.upgrade(req, { data: { role: 'feed' } })) return undefined;
-        return new Response('Expected a WebSocket upgrade', { status: 426 });
-      }
-
-      return serveStatic(assets, path, req);
-    },
-    websocket: {
-      open(ws) {
-        keepAwakeFeed.attach(ws);
-      },
-      message(_ws, message) {
-        if (typeof message === 'string') {
-          keepAwakeFeed.handleMessage(message);
+        // Keep-awake uplink from the host page. First page wins: a second window
+        // (or a stray tab on the same origin) is refused rather than displacing
+        // the live connection, because exactly one page owns the hardware.
+        if (path === HOST_FEED_PATH) {
+          if (keepAwakeFeed.connected) return new Response('Feed already connected', { status: 409 });
+          if (srv.upgrade(req, { data: { role: 'feed' } })) return undefined;
+          return new Response('Expected a WebSocket upgrade', { status: 426 });
         }
+
+        return serveStatic(assets, path, req);
       },
-      close(ws) {
-        keepAwakeFeed.detach(ws);
+      websocket: {
+        open(ws) {
+          keepAwakeFeed.attach(ws);
+        },
+        message(_ws, message) {
+          if (typeof message === 'string') {
+            keepAwakeFeed.handleMessage(message);
+          }
+        },
+        close(ws) {
+          keepAwakeFeed.detach(ws);
+        },
       },
-    },
-  });
+    });
+
+  try {
+    return listen(PREFERRED_PORT);
+  } catch {
+    // Port 8376 is held by unrelated software (or a Windows excluded-port
+    // reservation). Fall back to an OS-assigned port so the app still runs —
+    // but mark the page first: on an ephemeral origin nothing persists across
+    // restarts, and the user has to be told that settings will not survive.
+    assets.index = stampOriginMarker(assets.index);
+    return listen(0);
+  }
 };
