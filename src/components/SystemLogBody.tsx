@@ -299,10 +299,15 @@ export function SystemLogCopyButton() {
           .join(' '),
       )
       .join('\n');
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    });
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch((err) => {
+        console.warn('Clipboard write failed:', err);
+      });
   };
 
   return (

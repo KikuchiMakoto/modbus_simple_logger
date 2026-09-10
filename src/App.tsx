@@ -922,12 +922,14 @@ function App() {
       }));
       dataStorage.addDataPoints(dbBatch).catch((err) => {
         console.error('Error adding data points:', err);
+        logSystem('ERROR', SOURCE.storage, `Failed to store points in IndexedDB: ${(err as Error).message}`);
       });
       keepLatestCountRef.current += dbBatch.length;
       if (keepLatestCountRef.current >= KEEP_LATEST_TRIM_INTERVAL) {
         keepLatestCountRef.current = 0;
         dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
           console.error('Error trimming data points:', err);
+          logSystem('WARN', SOURCE.storage, `Failed to trim IndexedDB: ${(err as Error).message}`);
         });
       }
     }

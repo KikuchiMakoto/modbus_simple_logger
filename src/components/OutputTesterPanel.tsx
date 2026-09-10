@@ -90,7 +90,7 @@ export function OutputTesterPanel({
       onClose={onClose}
       title="Output Setter"
       subtitle="Manual AO output (GP8403, 0-10 V)"
-      accent="blue"
+      accent="emerald"
       defaultWidth={400}
       defaultHeight={480}
     >

@@ -29,7 +29,7 @@ export function InputConfigPanel({
       onClose={onClose}
       title="Input Config"
       subtitle="AI Channel Range / Display Mode"
-      accent="blue"
+      accent="emerald"
       defaultWidth={380}
       defaultHeight={460}
     >

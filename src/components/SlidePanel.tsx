@@ -21,6 +21,7 @@ export function SlidePanel({
   headerActions,
   children,
 }: SlidePanelProps) {
+  void accent;
   const [visible, setVisible] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -45,9 +46,7 @@ export function SlidePanel({
     }
   };
 
-  const accentColor = accent === 'blue'
-    ? 'text-blue-600 dark:text-blue-400'
-    : 'text-emerald-600 dark:text-emerald-400';
+  const accentColor = 'text-emerald-600 dark:text-emerald-400';
 
   return (
     <>
