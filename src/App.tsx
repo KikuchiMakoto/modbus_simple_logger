@@ -293,7 +293,7 @@ const GP8403_SPEC_NOTE = (
     <strong>GP8403</strong> — general output
     <ul className="mt-1 list-disc space-y-0.5 pl-3">
       <li>Outputs 0–10 V</li>
-      <li>Settling time: about 1 ms</li>
+      <li>Settling time: within about 1 ms</li>
       <li>Current: about 20 mA</li>
     </ul>
   </>
