@@ -24,6 +24,15 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // went 500 -> 200 ms, so the same point budget is now drawn 2.5x as often. This
 // number and that one draw on the same unmeasured budget.
 export const CHART_MAX_POINTS = 2048;
+// Target points for 2D-M4 chart rendering decimation.
+// Reduces down to ~1500-2500 points (target 2048) right before feeding Plotly.
+export const CHART_RENDER_TARGET_POINTS = 2048;
+// Maximum capacity of the in-memory capture buffer during data saving (OrigamiBuffer).
+// Once reached, it folds down by ~50% (to ~26000-35000 points, target 32768)
+// via multi-channel M4 decimation and doubles the sampling stride.
+export const SAVE_BUFFER_MAX_POINTS = 65536;
+// Target folded points when SAVE_BUFFER_MAX_POINTS is reached.
+export const SAVE_BUFFER_FOLD_TARGET_POINTS = 32768;
 // How often a polled sample is fed to the chart buffer (and, while not saving,
 // to IndexedDB). Applied as a poll-count stride, so
 // it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
