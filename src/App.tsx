@@ -271,9 +271,9 @@ const HX711_SPEC_NOTE = (
   <>
     <strong>HX711</strong> — strain input
     <ul className="mt-1 list-disc space-y-0.5 pl-3">
-      <li>Gauge voltage: about 3 V DC</li>
-      <li>Raw stops at ±32767</li>
-      <li>That is about 4 mV/V (about 8,000 με)</li>
+      <li>Gauge voltage: about 2–4 V DC</li>
+      <li>Raw range: -32768 to 32767</li>
+      <li>Sample rate: about 10 Hz</li>
     </ul>
   </>
 );
@@ -282,9 +282,8 @@ const ADS1115_SPEC_NOTE = (
   <>
     <strong>ADS1115</strong> — general input
     <ul className="mt-1 list-disc space-y-0.5 pl-3">
-      <li>5 V board, so keep the input under 5.3 V</li>
-      <li>On the 6.144 V range: 0–5.3 V</li>
-      <li>Raw 0 to about 28,270</li>
+      <li>Input voltage: up to 5 V</li>
+      <li>Sample rate: 128 SPS / 4 ch = 32 Hz (per IC)</li>
     </ul>
   </>
 );
