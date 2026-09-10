@@ -651,7 +651,9 @@ function App() {
     const run = async () => {
       // Keeps a long recording's mirror from being evicted under storage
       // pressure. Best effort — a refusal changes nothing else.
-      requestPersistentStorage().catch(() => {});
+      requestPersistentStorage().catch((err) => {
+        logSystem('WARN', SOURCE.storage, `Persistent storage request rejected: ${(err as Error).message}`);
+      });
 
       const runs = await listRecoverableRuns();
       if (runs.length === 0) return;
@@ -712,7 +714,10 @@ function App() {
       if (window.confirm(cleanup)) await discardRecoveredRun(found);
     };
 
-    run().catch((err) => console.warn('TSV recovery check failed:', err));
+    run().catch((err) => {
+      console.warn('TSV recovery check failed:', err);
+      logSystem('WARN', SOURCE.storage, `Crash recovery check failed: ${(err as Error).message}`);
+    });
   }, []);
 
   useEffect(() => {
@@ -1585,6 +1590,7 @@ function App() {
       });
     } catch (err) {
       console.warn('Wake Lock request failed:', err);
+      logSystem('WARN', SOURCE.app, `Screen Wake Lock request failed: ${(err as Error).message}`);
     }
   }, []);
 
@@ -1594,6 +1600,7 @@ function App() {
       await wakeLockRef.current.release();
     } catch (err) {
       console.warn('Wake Lock release failed:', err);
+      logSystem('WARN', SOURCE.app, `Screen Wake Lock release failed: ${(err as Error).message}`);
     } finally {
       wakeLockRef.current = null;
     }
@@ -1764,6 +1771,7 @@ function App() {
           await writerToClose.close();
         } catch (err) {
           console.warn('Error closing TSV writer during disconnect:', err);
+          logSystem('WARN', SOURCE.storage, `Error closing TSV writer on disconnect: ${(err as Error).message}`);
         }
       }
       if (clientRef.current) {
@@ -1817,6 +1825,7 @@ function App() {
         if (!connectedPort) return;
         if (disconnectedPort && disconnectedPort !== connectedPort) return;
         console.warn('[App] Web Serial disconnect event received for active port');
+        logSystem('WARN', SOURCE.link, 'Physical cable disconnect event received from Web Serial API');
         void handleDisconnect();
       };
       serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
@@ -1845,6 +1854,7 @@ function App() {
         }
 
         console.warn('[App] WebUSB disconnect event received for active port');
+        logSystem('WARN', SOURCE.link, 'Physical cable disconnect event received from WebUSB');
         void handleDisconnect();
       };
       navigator.usb.addEventListener('disconnect', onUsbDisconnect as EventListener);
@@ -2116,6 +2126,7 @@ function App() {
       await writerToClose.close();
     } catch (err) {
       console.warn('Error closing TSV writer:', err);
+      logSystem('WARN', SOURCE.storage, `Error closing TSV writer: ${(err as Error).message}`);
     }
 
 
