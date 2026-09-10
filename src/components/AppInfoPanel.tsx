@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
+import { exportFullConfig, importFullConfig, printFullConfigReport } from '../utils/fullConfigExport';
 
 // Installed version of every dependency, injected at build time from
 // node_modules (see vite.config.ts). Keeping the versions out of this file is
@@ -45,15 +46,22 @@ export function AppInfoPanel({
   open,
   onClose,
   connected = false,
+  isSaving = false,
+  scriptRunning = false,
 }: {
   open: boolean;
   onClose: () => void;
   // Applying an update reloads the page, which would drop the port and stop the
   // measurement — so while a device is connected there is nothing to check for.
   connected?: boolean;
+  isSaving?: boolean;
+  scriptRunning?: boolean;
 }) {
   const [checking, setChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const blockPrintAndImport = isSaving || scriptRunning;
 
   // Same code path as the startup check (utils/swUpdate.ts): a ready new
   // version raises the identical consent prompt, declining leaves it waiting.
@@ -141,6 +149,70 @@ export function AppInfoPanel({
             (components/UiScaleControl.tsx): it is a display setting you adjust
             while looking at the page, and this panel is the wrong place to have
             to open to do that. */}
+
+        <div>
+          <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Full Configuration</h4>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+            <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+              Export, import, or print all application settings (calibrations, channel labels, ranges, chart axes, UI preferences, scripts, and device memo).
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => exportFullConfig(APP_VERSION)}
+                className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-950 shadow hover:bg-emerald-400"
+              >
+                Export JSON
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={blockPrintAndImport}
+                title={
+                  blockPrintAndImport
+                    ? 'Import is disabled while saving or script is running'
+                    : 'Import configuration JSON file'
+                }
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+              >
+                Import JSON
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    importFullConfig(file, APP_VERSION);
+                  }
+                  e.target.value = '';
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => printFullConfigReport(APP_VERSION)}
+                disabled={blockPrintAndImport}
+                title={
+                  blockPrintAndImport
+                    ? 'Print/PDF is disabled while saving or script is running to prevent blocking control loops'
+                    : 'Print or export configuration to PDF'
+                }
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+              >
+                Print / PDF
+              </button>
+            </div>
+            {blockPrintAndImport && (
+              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                Print/PDF and Import are disabled while saving or script is running.
+              </p>
+            )}
+          </div>
+        </div>
 
         <div>
           <h4 className="mb-2 font-semibold text-slate-800 dark:text-slate-100">Special Thanks</h4>

@@ -2648,6 +2648,8 @@ function App() {
         open={appInfoPanelOpen}
         onClose={() => setAppInfoPanelOpen(false)}
         connected={connected}
+        isSaving={!!tsvWriterRef.current}
+        scriptRunning={scriptRunner.scriptRunning}
       />
 
       <ManualPanel

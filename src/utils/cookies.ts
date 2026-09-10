@@ -1,6 +1,6 @@
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 const isBrowser = typeof window !== 'undefined';
 
