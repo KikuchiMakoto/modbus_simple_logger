@@ -60,12 +60,12 @@ export function decimate2DM4(
     return [outX, outY];
   }
 
-  // Each bucket yields up to 6 points (First, xmin, xmax, ymin, ymax, Last).
-  // With deduplication, smooth signals yield ~3 points, noisy signals yield ~5-6 points.
-  // Using targetPoints / 5 yields ~1600 - 2400 points (centered near 2000 points).
-  const pointsPerBucket = 5.0;
-  const numBuckets = Math.max(1, Math.floor(targetPoints / pointsPerBucket));
-  const bucketSize = Math.ceil(n / numBuckets);
+  // Matches DigitShowModbus formula:
+  // num_buckets = targetPoints / 4 (e.g. 2048 / 4 = 512)
+  // Each bucket yields on average ~3-4 points after deduplication,
+  // yielding ~1500 - 2048 points (bounded by num_buckets * 4 or 6).
+  const numBuckets = Math.max(1, Math.floor(targetPoints / 4));
+  const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
 
   // Maximum possible points = numBuckets * 6
   const maxOutput = numBuckets * 6;
