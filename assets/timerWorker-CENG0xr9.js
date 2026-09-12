@@ -1,0 +1,1 @@
+(function(){let e=new Map,t=t=>{let n=e.get(t);n!==void 0&&(e.delete(t),clearInterval(n))};self.onmessage=n=>{let r=n.data;if(r.type===`clear`){t(r.id);return}if(r.repeat){e.set(r.id,self.setInterval(()=>self.postMessage({id:r.id}),r.delayMs));return}e.set(r.id,self.setTimeout(()=>{e.delete(r.id),self.postMessage({id:r.id})},r.delayMs))}})();
