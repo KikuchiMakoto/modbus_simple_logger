@@ -178,9 +178,9 @@ function ChartPanelComponent({
   const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
     if (isEmpty) return { traces: [], xRange: null, yRange: null };
 
-    // When the buffer exceeds the render target points (~2048), apply high-performance 2D-M4 (MinMax)
+    // When the buffer exceeds the render target points (CHART_RENDER_TARGET_POINTS = 1024), apply high-performance 2D-M4 (MinMax)
     // decimation immediately before passing coordinates to Plotly.
-    // This reduces up to 65,536 points down to ~1,500-2,500 points (O(N) single-pass), while
+    // This reduces up to 65,536 points down to ~1,200-1,600 points (O(N) single-pass), while
     // preserving local extremes (xmin, xmax, ymin, ymax) and start/end points, keeping
     // hysteresis loops, envelope boundaries, and fast spikes intact.
     let xData: Float64Array;

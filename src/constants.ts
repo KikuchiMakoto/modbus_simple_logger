@@ -25,8 +25,11 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // number and that one draw on the same unmeasured budget.
 export const CHART_MAX_POINTS = 2048;
 // Target points for 2D-M4 chart rendering decimation.
-// Reduces down to ~1500-2500 points (target 2048) right before feeding Plotly.
-export const CHART_RENDER_TARGET_POINTS = 2048;
+// Reduces down to ~1200-1600 points (target 1024) right before feeding Plotly.
+// On 1080p screens, each quadrant chart is ~800-900px wide, so ~1200-1600 points
+// perfectly preserves hysteresis peaks and loops while substantially lowering
+// GPU/CPU overhead on entry devices like Intel N100.
+export const CHART_RENDER_TARGET_POINTS = 1024;
 // Maximum capacity of the in-memory capture buffer during data saving (OrigamiBuffer).
 // Once reached, it folds down by ~50% (to ~26000-35000 points, target 32768)
 // via multi-channel M4 decimation and doubles the sampling stride.
