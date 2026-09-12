@@ -31,7 +31,8 @@ import {
   OUTPUT_HOLDING_RETRY_WINDOW_MS,
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
-  CHART_MAX_POINTS,
+  SAVE_BUFFER_MAX_POINTS,
+  SAVE_BUFFER_FOLD_TARGET_POINTS,
   CHART_REDRAW_INTERVAL_MS,
   CHART_REDRAW_INTERVAL_CONSTRAINED_MS,
   CHART_REDRAW_CONSTRAINED_MAX_CORES,
@@ -74,6 +75,7 @@ import {
   StoredDataPoint,
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
+import { foldDataBufferM4 } from './utils/m4Decimation';
 import {
   discardRecoveredRun,
   downloadRecoveredRun,
@@ -649,7 +651,9 @@ function App() {
     const run = async () => {
       // Keeps a long recording's mirror from being evicted under storage
       // pressure. Best effort — a refusal changes nothing else.
-      requestPersistentStorage().catch(() => {});
+      requestPersistentStorage().catch((err) => {
+        logSystem('WARN', SOURCE.storage, `Persistent storage request rejected: ${(err as Error).message}`);
+      });
 
       const runs = await listRecoverableRuns();
       if (runs.length === 0) return;
@@ -710,7 +714,10 @@ function App() {
       if (window.confirm(cleanup)) await discardRecoveredRun(found);
     };
 
-    run().catch((err) => console.warn('TSV recovery check failed:', err));
+    run().catch((err) => {
+      console.warn('TSV recovery check failed:', err);
+      logSystem('WARN', SOURCE.storage, `Crash recovery check failed: ${(err as Error).message}`);
+    });
   }, []);
 
   useEffect(() => {
@@ -873,11 +880,11 @@ function App() {
     let bufferChanged = false;
 
     if (tsvWriterRef.current) {
-      // Saving: keep the chart bounded by downsampling the WHOLE capture
-      // (save-start → now) to ~CHART_MAX_POINTS. Add 1 of every `stride` raw
-      // points, and when the buffer doubles, re-decimate by 2 and double the
-      // stride. Memory and per-flush cost stay constant regardless of save
-      // duration. The full data still goes to TSV.
+      // Saving: keep the chart buffer bounded by downsampling the WHOLE capture
+      // (save-start → now) into OrigamiBuffer with capacity up to SAVE_BUFFER_MAX_POINTS (65,536).
+      // Add 1 of every `stride` raw points. When buffer reaches 65,536 points, fold it
+      // via multi-channel M4 (block W=4) down to ~SAVE_BUFFER_FOLD_TARGET_POINTS (32,768)
+      // and double the stride. The full data still streams to TSV.
       for (const p of pointsToAdd) {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
@@ -885,24 +892,12 @@ function App() {
         }
         saveRawCounterRef.current++;
       }
-      // Re-decimate at CHART_MAX_POINTS, not at twice it. The old 2x headroom
-      // let the buffer oscillate between 2048 and 4096 points, averaging ~3000 —
-      // two and a half times what the non-saving window holds at 20 Hz, on four
-      // charts, rebuilt several times a second. That is why a 20 Hz capture
-      // decayed to 17-18 Hz a few minutes into a save and then held there: the
-      // buffer had reached its steady size, and the redraw cost with it. The
-      // chart still spans the whole capture; it just carries the same point
-      // budget the rest of the app already assumes.
-      if (buffer.length > CHART_MAX_POINTS) {
-        const decimated: DataPoint[] = [];
-        for (let i = 0; i < buffer.length; i += 2) decimated.push(buffer[i]);
-        dataBufferRef.current = decimated;
+      // Fold at SAVE_BUFFER_MAX_POINTS (65,536 points).
+      // The folding preserves all channel envelopes and hysteresis endpoints
+      // while halving points down to ~32,768 in O(N) in-place time (~1-2 ms).
+      if (buffer.length >= SAVE_BUFFER_MAX_POINTS) {
+        dataBufferRef.current = foldDataBufferM4(buffer, SAVE_BUFFER_FOLD_TARGET_POINTS);
         saveDecimationStrideRef.current *= 2;
-        // Deliberately NOT bumping chartEpoch here. Remounting all four plots
-        // mid-capture costs a purge plus four fresh WebGL contexts — the same
-        // periodic-rebuild anti-pattern v3.1 removed — and halving the buffer
-        // twice as often as before would have doubled how often that stall
-        // landed. The redraw triggered below already draws the new trace.
       }
     } else {
       // Not saving: a sliding preview of the last NON_SAVING_CHART_PREVIEW_POINTS
@@ -927,12 +922,14 @@ function App() {
       }));
       dataStorage.addDataPoints(dbBatch).catch((err) => {
         console.error('Error adding data points:', err);
+        logSystem('ERROR', SOURCE.storage, `Failed to store points in IndexedDB: ${(err as Error).message}`);
       });
       keepLatestCountRef.current += dbBatch.length;
       if (keepLatestCountRef.current >= KEEP_LATEST_TRIM_INTERVAL) {
         keepLatestCountRef.current = 0;
         dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
           console.error('Error trimming data points:', err);
+          logSystem('WARN', SOURCE.storage, `Failed to trim IndexedDB: ${(err as Error).message}`);
         });
       }
     }
@@ -1595,6 +1592,7 @@ function App() {
       });
     } catch (err) {
       console.warn('Wake Lock request failed:', err);
+      logSystem('WARN', SOURCE.app, `Screen Wake Lock request failed: ${(err as Error).message}`);
     }
   }, []);
 
@@ -1604,6 +1602,7 @@ function App() {
       await wakeLockRef.current.release();
     } catch (err) {
       console.warn('Wake Lock release failed:', err);
+      logSystem('WARN', SOURCE.app, `Screen Wake Lock release failed: ${(err as Error).message}`);
     } finally {
       wakeLockRef.current = null;
     }
@@ -1774,6 +1773,7 @@ function App() {
           await writerToClose.close();
         } catch (err) {
           console.warn('Error closing TSV writer during disconnect:', err);
+          logSystem('WARN', SOURCE.storage, `Error closing TSV writer on disconnect: ${(err as Error).message}`);
         }
       }
       if (clientRef.current) {
@@ -1827,6 +1827,7 @@ function App() {
         if (!connectedPort) return;
         if (disconnectedPort && disconnectedPort !== connectedPort) return;
         console.warn('[App] Web Serial disconnect event received for active port');
+        logSystem('WARN', SOURCE.link, 'Physical cable disconnect event received from Web Serial API');
         void handleDisconnect();
       };
       serial.addEventListener('disconnect', onSerialDisconnect as EventListener);
@@ -1855,6 +1856,7 @@ function App() {
         }
 
         console.warn('[App] WebUSB disconnect event received for active port');
+        logSystem('WARN', SOURCE.link, 'Physical cable disconnect event received from WebUSB');
         void handleDisconnect();
       };
       navigator.usb.addEventListener('disconnect', onUsbDisconnect as EventListener);
@@ -2126,6 +2128,7 @@ function App() {
       await writerToClose.close();
     } catch (err) {
       console.warn('Error closing TSV writer:', err);
+      logSystem('WARN', SOURCE.storage, `Error closing TSV writer: ${(err as Error).message}`);
     }
 
 

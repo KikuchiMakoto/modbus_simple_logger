@@ -68,6 +68,7 @@ export function FloatingWindow({
   defaultHeight = 520,
   children,
 }: FloatingWindowProps) {
+  void accent;
   const [geometry, setGeometry] = useState<WindowGeometry | null>(null);
   const [zIndex, setZIndex] = useState(zIndexCounter);
   const uiScalePercent = useUiScalePercent();
@@ -114,9 +115,7 @@ export function FloatingWindow({
     setZIndex(++zIndexCounter);
   };
 
-  const accentColor = accent === 'blue'
-    ? 'text-blue-600 dark:text-blue-400'
-    : 'text-emerald-600 dark:text-emerald-400';
+  const accentColor = 'text-emerald-600 dark:text-emerald-400';
 
   return (
     <div className="pointer-events-none fixed inset-0" style={{ zIndex }}>

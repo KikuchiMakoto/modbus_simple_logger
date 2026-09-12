@@ -9,8 +9,10 @@ import {
   useRef,
 } from 'react';
 import { type Config, type Data, type Layout } from 'plotly.js';
+import { CHART_RENDER_TARGET_POINTS } from '../constants';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
+import { type AxisDescriptor, decimate2DM4, getAxisValue } from '../utils/m4Decimation';
 import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 
 interface AxisOption {
@@ -81,27 +83,12 @@ function releaseWebglContext(graphDiv: HTMLElement) {
   }
 }
 
-type AxisDescriptor =
-  | { kind: 'time' }
-  | { kind: 'raw'; index: number }
-  | { kind: 'phy'; index: number }
-  | { kind: 'par'; index: number };
-
 function parseAxisKey(key: string): AxisDescriptor {
-  if (key === 'time') return { kind: 'time' };
+  if (key === 'time') return { kind: 'time', index: 0 };
   if (key.startsWith('raw_')) return { kind: 'raw', index: Number(key.slice(4)) };
-  if (key.startsWith('phy_')) return { kind: 'phy', index: Number(key.slice(4)) };
-  if (key.startsWith('par_')) return { kind: 'par', index: Number(key.slice(4)) };
-  return { kind: 'time' };
-}
-
-function resolveAxisValue(point: DataPoint, desc: AxisDescriptor): number {
-  switch (desc.kind) {
-    case 'time': return point.timestamp;
-    case 'raw': return point.aiRaw[desc.index];
-    case 'phy': return point.aiPhysical[desc.index];
-    case 'par': return point.param[desc.index];
-  }
+  if (key.startsWith('phy_')) return { kind: 'physical', index: Number(key.slice(4)) };
+  if (key.startsWith('par_')) return { kind: 'param', index: Number(key.slice(4)) };
+  return { kind: 'time', index: 0 };
 }
 
 // matplotlib/MATLAB-style data margins: return [min, max] expanded by `fraction`
@@ -190,48 +177,37 @@ function ChartPanelComponent({
 
   const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
     if (isEmpty) return { traces: [], xRange: null, yRange: null };
-    // Build x/y in a single pass into typed arrays. Plotly's date axis accepts
-    // epoch-ms numbers directly, so we avoid the per-point `new Date().toISOString()`
-    // allocation entirely; both axes end up numeric. Track finite min/max in the
-    // same pass to compute the padded axis ranges (avoids a second O(n) scan).
-    const n = dataPoints.length;
-    const xData = new Float64Array(n);
-    const yData = new Float64Array(n);
-    // Raw epoch-ms goes straight to Plotly — do NOT pre-shift it by
-    // getTimezoneOffset().
-    //
-    // This used to add the local offset, on the premise that a `type: 'date'`
-    // axis renders epoch-ms in UTC (lib/dates.js formatTime does say "only
-    // supports UTC times"). That premise is wrong for *numeric* input. A number
-    // handed to a date axis goes through set_convert's dt2ms, which fails to
-    // parse it as a date string and falls back to `dateTime2ms(new Date(ms))`;
-    // that JS-Date branch subtracts `getTimezoneOffset()` itself, to "convert to
-    // the UTC milliseconds that give the same hours as this date has in the
-    // local timezone" — and the axis range does the same via cleanDate →
-    // ms2DateTimeLocal, which formats with d3-time-format's *local* timeFormat
-    // and getHours(), not utcFormat. Plotly's internal axis value is therefore
-    // already local wall-clock, and the UTC-only formatter downstream is
-    // consuming that pre-shifted value, not a true epoch.
-    //
-    // So the manual offset was a second application of a conversion Plotly had
-    // already done: the axis read +9h (JST) into the future. Verified in
-    // Chromium at Asia/Tokyo, America/New_York and UTC — with raw epoch-ms the
-    // ticks match local wall-clock in all three.
-    //
-    // The TSV's `timestamp` column (tsvFormat.ts, getHours) and the status bar
-    // clock (toLocaleTimeString) were always local and always correct; only the
-    // chart was off, which is what pointed at the drawing code rather than the
-    // stored value.
+
+    // When the buffer exceeds the render target points (CHART_RENDER_TARGET_POINTS = 1024), apply high-performance 2D-M4 (MinMax)
+    // decimation immediately before passing coordinates to Plotly.
+    // This reduces up to 65,536 points down to ~1,200-1,600 points (O(N) single-pass), while
+    // preserving local extremes (xmin, xmax, ymin, ymax) and start/end points, keeping
+    // hysteresis loops, envelope boundaries, and fast spikes intact.
+    let xData: Float64Array;
+    let yData: Float64Array;
+
+    if (dataPoints.length > CHART_RENDER_TARGET_POINTS) {
+      [xData, yData] = decimate2DM4(dataPoints, xDesc, yDesc, CHART_RENDER_TARGET_POINTS);
+    } else {
+      const n = dataPoints.length;
+      xData = new Float64Array(n);
+      yData = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const p = dataPoints[i];
+        xData[i] = getAxisValue(p, xDesc);
+        yData[i] = getAxisValue(p, yDesc);
+      }
+    }
+
+    // Build axis extents in a single pass to compute padded ranges
     let xMin = Infinity;
     let xMax = -Infinity;
     let yMin = Infinity;
     let yMax = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const p = dataPoints[i];
-      const xv = resolveAxisValue(p, xDesc);
-      const yv = resolveAxisValue(p, yDesc);
-      xData[i] = xv;
-      yData[i] = yv;
+    const len = xData.length;
+    for (let i = 0; i < len; i++) {
+      const xv = xData[i];
+      const yv = yData[i];
       if (Number.isFinite(xv)) {
         if (xv < xMin) xMin = xv;
         if (xv > xMax) xMax = xv;

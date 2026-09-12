@@ -24,6 +24,18 @@ export const MAX_POINTS_IN_MEMORY = 256;
 // went 500 -> 200 ms, so the same point budget is now drawn 2.5x as often. This
 // number and that one draw on the same unmeasured budget.
 export const CHART_MAX_POINTS = 2048;
+// Target points for 2D-M4 chart rendering decimation.
+// Reduces down to ~1200-1600 points (target 1024) right before feeding Plotly.
+// On 1080p screens, each quadrant chart is ~800-900px wide, so ~1200-1600 points
+// perfectly preserves hysteresis peaks and loops while substantially lowering
+// GPU/CPU overhead on entry devices like Intel N100.
+export const CHART_RENDER_TARGET_POINTS = 1024;
+// Maximum capacity of the in-memory capture buffer during data saving (OrigamiBuffer).
+// Once reached, it folds down by ~50% (to ~26000-35000 points, target 32768)
+// via multi-channel M4 decimation and doubles the sampling stride.
+export const SAVE_BUFFER_MAX_POINTS = 65536;
+// Target folded points when SAVE_BUFFER_MAX_POINTS is reached.
+export const SAVE_BUFFER_FOLD_TARGET_POINTS = 32768;
 // How often a polled sample is fed to the chart buffer (and, while not saving,
 // to IndexedDB). Applied as a poll-count stride, so
 // it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
@@ -40,14 +52,14 @@ export const CHART_MAX_POINTS = 2048;
 export const CHART_INPUT_INTERVAL_MS = 100;
 // Preview length while NOT saving, as a point count rather than a duration.
 // Chart input is a fixed CHART_INPUT_INTERVAL_MS, so the two are the same thing
-// — 768 x 100 ms is a ~77 s window — and counting points means the trim is a
+// — 600 x 100 ms is a 60 s window — and counting points means the trim is a
 // single splice with no clock read and no scan for the cutoff.
 //
 // It also behaves better when the feed stalls: a time window empties itself
 // while the device is silent, leaving a blank chart with no clue what the last
-// reading was, where a point budget holds the last 77 s of real data until new
+// reading was, where a point budget holds the last 60 s of real data until new
 // data pushes it out.
-export const NON_SAVING_CHART_PREVIEW_POINTS = 768;
+export const NON_SAVING_CHART_PREVIEW_POINTS = 600;
 // Minimum interval between chart redraws (setDisplayRevision bumps), saving or
 // not. Chart data flushes up to 10x/s and redrawing four scattergl charts every
 // flush is wasteful and feeds WebGL/regl resource churn, so this keeps the
