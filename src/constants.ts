@@ -49,14 +49,14 @@ export const SAVE_BUFFER_FOLD_TARGET_POINTS = 32768;
 export const CHART_INPUT_INTERVAL_MS = 100;
 // Preview length while NOT saving, as a point count rather than a duration.
 // Chart input is a fixed CHART_INPUT_INTERVAL_MS, so the two are the same thing
-// — 768 x 100 ms is a ~77 s window — and counting points means the trim is a
+// — 600 x 100 ms is a 60 s window — and counting points means the trim is a
 // single splice with no clock read and no scan for the cutoff.
 //
 // It also behaves better when the feed stalls: a time window empties itself
 // while the device is silent, leaving a blank chart with no clue what the last
-// reading was, where a point budget holds the last 77 s of real data until new
+// reading was, where a point budget holds the last 60 s of real data until new
 // data pushes it out.
-export const NON_SAVING_CHART_PREVIEW_POINTS = 768;
+export const NON_SAVING_CHART_PREVIEW_POINTS = 600;
 // Minimum interval between chart redraws (setDisplayRevision bumps), saving or
 // not. Chart data flushes up to 10x/s and redrawing four scattergl charts every
 // flush is wasteful and feeds WebGL/regl resource churn, so this keeps the

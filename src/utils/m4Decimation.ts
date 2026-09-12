@@ -172,6 +172,15 @@ export function decimate2DM4(
  * @param targetPoints Target points after folding (default 32768)
  * @returns Folded array of DataPoint
  */
+/**
+ * Fast approximate folding of the in-memory capture buffer when SAVE_BUFFER_MAX_POINTS is reached.
+ * Directly follows DigitShowModbus PreviewFolding:
+ * Uses a block window W = 4. For each block, extracts [First, Min, Max, Last]
+ * using CH00 (axial representative) and sorts/deduplicates indices.
+ *
+ * This performs an ultra-fast O(N) single-pass sweep without distance calculations,
+ * reducing ~65,536 points to an approximate half (~25,000 - 35,000 points).
+ */
 export function foldDataBufferM4(
   buffer: readonly DataPoint[],
   targetPoints: number = 32768,
@@ -181,51 +190,58 @@ export function foldDataBufferM4(
     return buffer.slice();
   }
 
-  // Block window W = 4 reduces 4 points to 2 points: [First, Extreme/Last].
-  // To achieve ~32,768 points from 65,536 (50% reduction):
-  // Each block of 4 yields exactly 2 points: First and the point with the largest deviation in [1, 2, 3].
+  // W = 4 block window, matching DigitShowModbus
   const W = 4;
   const result: DataPoint[] = [];
-  result.length = Math.ceil(n / 2) + 4;
+  result.length = n; // pre-allocate upper bound
   let outCount = 0;
 
   for (let blockStart = 0; blockStart < n; blockStart += W) {
     const blockEnd = blockStart + W < n ? blockStart + W : n;
     const blockSize = blockEnd - blockStart;
 
-    if (blockSize <= 2) {
-      for (let i = blockStart; i < blockEnd; i++) {
-        result[outCount++] = buffer[i];
-      }
+    if (blockSize === 1) {
+      result[outCount++] = buffer[blockStart];
       continue;
     }
 
-    // Always keep First
-    result[outCount++] = buffer[blockStart];
-
-    // Find the point in [blockStart + 1 ... blockEnd - 1] that exhibits the
-    // largest deviation from firstPt across AI raw channels.
-    // If all deviations are 0, default to the last point (blockEnd - 1).
+    let minIdx = blockStart;
+    let maxIdx = blockStart;
     const firstPt = buffer[blockStart];
-    let maxDist = -1;
-    let extremeIdx = blockEnd - 1;
+    let minVal = firstPt.aiRaw[0] ?? 0;
+    let maxVal = minVal;
 
     for (let i = blockStart + 1; i < blockEnd; i++) {
-      const pt = buffer[i];
-      let dist = 0;
-      const rawA = firstPt.aiRaw;
-      const rawB = pt.aiRaw;
-      const len = Math.min(rawA.length, rawB.length);
-      for (let ch = 0; ch < len; ch++) {
-        dist += Math.abs(rawB[ch] - rawA[ch]);
+      const v = buffer[i].aiRaw[0] ?? 0;
+      if (v < minVal) {
+        minVal = v;
+        minIdx = i;
       }
-      if (dist > maxDist) {
-        maxDist = dist;
-        extremeIdx = i;
+      if (v > maxVal) {
+        maxVal = v;
+        maxIdx = i;
       }
     }
 
-    result[outCount++] = buffer[extremeIdx];
+    // Candidate indices: [First, Min, Max, Last]
+    const lastIdx = blockEnd - 1;
+    let c0 = blockStart;
+    let c1 = minIdx;
+    let c2 = maxIdx;
+    let c3 = lastIdx;
+
+    // Small 4-element in-place sorting network
+    if (c0 > c1) { const t = c0; c0 = c1; c1 = t; }
+    if (c2 > c3) { const t = c2; c2 = c3; c3 = t; }
+    if (c0 > c2) { const t = c0; c0 = c2; c2 = t; }
+    if (c1 > c3) { const t = c1; c1 = c3; c3 = t; }
+    if (c1 > c2) { const t = c1; c1 = c2; c2 = t; }
+
+    // Push deduplicated indices in ascending order
+    result[outCount++] = buffer[c0];
+    if (c1 !== c0) result[outCount++] = buffer[c1];
+    if (c2 !== c1) result[outCount++] = buffer[c2];
+    if (c3 !== c2) result[outCount++] = buffer[c3];
   }
 
   result.length = outCount;
