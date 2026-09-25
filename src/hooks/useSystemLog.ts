@@ -32,3 +32,25 @@ export const useVisibleSystemLog = (entries: SystemLogEntry[]): SystemLogEntry[]
     [entries, level],
   );
 };
+
+/**
+ * Return only the latest visible log entry by scanning backwards from the end of the log.
+ * Avoids allocating and garbage-collecting a full filtered copy of the entries array
+ * (up to 2000 elements) on every log update when only the latest visible line is needed.
+ */
+export const useLatestVisibleSystemLog = (): SystemLogEntry | null => {
+  const entries = useSystemLogEntries();
+  const level = useSystemLogLevel();
+  return useMemo(() => {
+    const len = entries.length;
+    if (len === 0) return null;
+    if (level === 'TRACE') return entries[len - 1];
+    for (let i = len - 1; i >= 0; i--) {
+      if (passesLevel(entries[i].level, level)) {
+        return entries[i];
+      }
+    }
+    return null;
+  }, [entries, level]);
+};
+

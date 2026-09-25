@@ -13,7 +13,7 @@
 // rolls, and the record it rolled off is in the System Log window rather than
 // behind a × that threw it away.
 import { useState } from 'react';
-import { useSystemLogEntries, useVisibleSystemLog } from '../hooks/useSystemLog';
+import { useLatestVisibleSystemLog } from '../hooks/useSystemLog';
 import { levelTextClass } from './SystemLogBody';
 import type { ScriptOutcome } from '../hooks/useScriptRunner';
 import type { SystemLogEntry } from '../utils/systemLog';
@@ -116,8 +116,7 @@ export function FooterBar({
     scriptName: string;
   };
 }) {
-  const visible = useVisibleSystemLog(useSystemLogEntries());
-  const line = visible[visible.length - 1] ?? null;
+  const line = useLatestVisibleSystemLog();
   const badge = runner ? (runner.running ? OUTCOME_BADGE.running : OUTCOME_BADGE[runner.outcome]) : null;
   const lineColor = line ? levelTextClass(line.level) : 'text-slate-500 dark:text-slate-400';
   // The runner's own status text is the fallback, and only while it says
