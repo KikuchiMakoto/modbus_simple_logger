@@ -254,8 +254,12 @@ export const logSystem = (
     return;
   }
 
-  entries = [...entries, { seq: nextSeq++, t: now, level, source, text: capped, repeats: 1 }];
-  if (entries.length > MAX_ENTRIES) entries = entries.slice(entries.length - MAX_ENTRIES);
+  const newEntry: SystemLogEntry = { seq: nextSeq++, t: now, level, source, text: capped, repeats: 1 };
+  if (entries.length >= MAX_ENTRIES) {
+    entries = [...entries.slice(entries.length - MAX_ENTRIES + 1), newEntry];
+  } else {
+    entries = [...entries, newEntry];
+  }
   scheduleEmit();
 };
 
