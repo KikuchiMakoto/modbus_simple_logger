@@ -55,9 +55,6 @@ import {
   loadAiCalibration,
   saveAiCalibration,
   getAiStatus,
-  hx711RawToMvPerV,
-  hx711RawToMicroStrain,
-  ads1115RawToVolt,
   DEFAULT_AI_CALIBRATION,
   rawToVoltageValue,
   VOLTAGE_UNITS,
@@ -217,12 +214,6 @@ const FIXED_SLAVE_ID = 1;
 // the 32-bit float (f32t) "Extended" mode has been removed.
 const PRECISION_LABEL = 'i16t';
 
-const computeSensorVoltage = (raw: number, idx: number): number =>
-  idx < 8 ? hx711RawToMvPerV(raw) : ads1115RawToVolt(raw);
-
-const computeSensorMicroStrain = (raw: number, idx: number): number =>
-  idx < 8 ? hx711RawToMicroStrain(raw) : 0;
-
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
@@ -233,8 +224,6 @@ const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
       physical,
       label: `CH ${idx.toString().padStart(2, '0')}`,
       status: getAiStatus(raw),
-      voltage: computeSensorVoltage(raw, idx),
-      microStrain: computeSensorMicroStrain(raw, idx),
     };
   });
 
@@ -1216,8 +1205,6 @@ function App() {
           raw: rawValue,
           physical,
           status: getAiStatus(rawValue),
-          voltage: computeSensorVoltage(rawValue, idx),
-          microStrain: computeSensorMicroStrain(rawValue, idx),
         };
       }),
     [],
@@ -1380,8 +1367,6 @@ function App() {
                   raw: rawValue,
                   physical: aiPhysical[idx] ?? ch.physical,
                   status: getAiStatus(rawValue),
-                  voltage: computeSensorVoltage(rawValue, idx),
-                  microStrain: computeSensorMicroStrain(rawValue, idx),
                 };
               }),
             );
