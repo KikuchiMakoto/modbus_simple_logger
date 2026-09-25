@@ -7,6 +7,11 @@
 
 import { formatFloat32 } from './floatFormat';
 
+const PAD2: string[] = [];
+for (let i = 0; i < 100; i++) {
+  PAD2[i] = i < 10 ? '0' + i : String(i);
+}
+
 /**
  * Format a timestamp as a human-readable string
  * Format: YYYY/MM/DD HH:mm:ss.fff
@@ -16,13 +21,32 @@ import { formatFloat32 } from './floatFormat';
 export function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
   const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  const ss = String(date.getSeconds()).padStart(2, '0');
-  const fff = String(date.getMilliseconds()).padStart(3, '0');
+  const mm = PAD2[date.getMonth() + 1];
+  const dd = PAD2[date.getDate()];
+  const hh = PAD2[date.getHours()];
+  const min = PAD2[date.getMinutes()];
+  const ss = PAD2[date.getSeconds()];
+  const ms = date.getMilliseconds();
+  const fff = ms < 10 ? '00' + ms : ms < 100 ? '0' + ms : String(ms);
   return `${yyyy}/${mm}/${dd} ${hh}:${min}:${ss}.${fff}`;
+}
+
+/**
+ * Fast trimming of trailing zeros and bare decimal point from toFixed output.
+ * Preserves exact numerical value without parseFloat/toString re-parsing.
+ */
+function formatTrimmed(v: number, precision: number): string {
+  if (!Number.isFinite(v)) return String(v);
+  if (Number.isInteger(v)) return v.toString();
+  const s = v.toFixed(precision);
+  const dot = s.indexOf('.');
+  if (dot === -1) return s === '-0' ? '0' : s;
+  let end = s.length - 1;
+  while (end > dot && s.charCodeAt(end) === 48 /* '0' */) {
+    end--;
+  }
+  const res = end === dot ? s.slice(0, dot) : (end === s.length - 1 ? s : s.slice(0, end + 1));
+  return res === '-0' ? '0' : res;
 }
 
 /**
@@ -46,16 +70,6 @@ export function createTsvHeader(aiChannels: number, aoChannels: number, paramCha
   ].join('\t') + '\n';
 }
 
-/** Append each element of `data` to `out` formatted by `fmt` (no intermediate
- * array — works for both Float32Array and number[]). */
-function appendFormatted(
-  out: string[],
-  data: Float32Array | number[],
-  fmt: (v: number) => string,
-): void {
-  for (let i = 0; i < data.length; i++) out.push(fmt(data[i]));
-}
-
 /**
  * Format a single data row as TSV
  * @param timestamp - Unix timestamp in milliseconds
@@ -76,26 +90,17 @@ export function formatTsvRow(
   paramValues: Float32Array | number[] = [],
   physicalPrecision: number = 3
 ): string {
-  const intStr = (v: number) => v.toString();
-  // Round to physicalPrecision decimals, then drop trailing zeros and a bare
-  // decimal point: 0 -> "0", 1.230 -> "1.23", 1.000 -> "1", -0 -> "0". This
-  // trims wasteful zero-fill from the physical/voltage/Parameter columns to keep
-  // the file small, without changing the numeric value (parses identically in
-  // pandas/Excel).
-  const fmt = (v: number) => parseFloat(v.toFixed(physicalPrecision)).toString();
-  // Single preallocated parts array, filled by index — no per-column copies.
-  const parts: string[] = [formatTimestamp(timestamp)];
-  appendFormatted(parts, aiRaw, intStr);
-  appendFormatted(parts, aiPhysical, fmt);
-  appendFormatted(parts, aiVoltage, fmt);
-  appendFormatted(parts, aoRaw, intStr);
-  // Parameter does NOT get physicalPrecision. The AI columns are a measured
-  // physical quantity, where three decimals is a stated resolution; a Parameter
-  // is a unit-less scratch value a script chose the scale of, so the same three
-  // decimals is an arbitrary cut that logged a 2.5e-5 gain as "0" while the
-  // screen showed it. Shortest-round-trip keeps the column exactly as wide as
-  // the value needs — the same rule the Param Editor and the Parameter cards
-  // display by.
-  appendFormatted(parts, paramValues, formatFloat32);
+  // Preallocate exact number of columns to eliminate dynamic resizing.
+  const total = 1 + aiRaw.length + aiPhysical.length + aiVoltage.length + aoRaw.length + paramValues.length;
+  const parts = new Array<string>(total);
+  let p = 0;
+
+  parts[p++] = formatTimestamp(timestamp);
+  for (let i = 0; i < aiRaw.length; i++) parts[p++] = aiRaw[i].toString();
+  for (let i = 0; i < aiPhysical.length; i++) parts[p++] = formatTrimmed(aiPhysical[i], physicalPrecision);
+  for (let i = 0; i < aiVoltage.length; i++) parts[p++] = formatTrimmed(aiVoltage[i], physicalPrecision);
+  for (let i = 0; i < aoRaw.length; i++) parts[p++] = aoRaw[i].toString();
+  for (let i = 0; i < paramValues.length; i++) parts[p++] = formatFloat32(paramValues[i]);
+
   return parts.join('\t') + '\n';
 }
