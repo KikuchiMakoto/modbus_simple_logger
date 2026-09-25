@@ -23,6 +23,28 @@ export function getAxisValue(point: DataPoint, desc: AxisDescriptor): number {
   }
 }
 
+export type AxisAccessor = (point: DataPoint) => number;
+
+/**
+ * Returns a high-performance accessor function for an axis descriptor,
+ * eliminating switch dispatch in hot loops.
+ */
+export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
+  const index = desc.index;
+  switch (desc.kind) {
+    case 'time':
+      return (p) => p.timestamp;
+    case 'raw':
+      return (p) => p.aiRaw[index] ?? 0;
+    case 'physical':
+      return (p) => p.aiPhysical[index] ?? 0;
+    case 'param':
+      return (p) => p.param[index] ?? 0;
+    default:
+      return () => 0;
+  }
+}
+
 /**
  * 2D-M4 (MinMax) decimation for parametric / hysteresis / time-series display (間引B).
  *
@@ -34,30 +56,48 @@ export function getAxisValue(point: DataPoint, desc: AxisDescriptor): number {
  * 1. Both X and Y extrema (peaks and valleys) are preserved.
  * 2. Hysteresis loops, Lissajous curves, and direction-reversal trajectories remain 100% intact.
  * 3. Constant O(N) single-pass scan with near-zero allocations (typically ~0.2ms for 65k points).
+ * 4. Fused min/max extent calculation avoiding secondary O(N) traversal passes.
  *
  * @param points Source array of DataPoint
  * @param xDesc Descriptor for the X axis
  * @param yDesc Descriptor for the Y axis
  * @param targetPoints Target output points (e.g. 2048). Actual output will be ~1500 - 2500 points.
- * @param voltageConfig Optional voltage mode config for voltage axis
- * @returns Decimated array of [outX, outY]
+ * @returns Decimated tuple of [outX, outY, xMin, xMax, yMin, yMax]
  */
 export function decimate2DM4(
   points: readonly DataPoint[],
   xDesc: AxisDescriptor,
   yDesc: AxisDescriptor,
   targetPoints: number,
-): [Float64Array, Float64Array] {
+): [Float64Array, Float64Array, number, number, number, number] {
   const n = points.length;
+  const getX = getAxisAccessor(xDesc);
+  const getY = getAxisAccessor(yDesc);
+
+  let globalXmin = Infinity;
+  let globalXmax = -Infinity;
+  let globalYmin = Infinity;
+  let globalYmax = -Infinity;
+
   if (n <= targetPoints) {
     const outX = new Float64Array(n);
     const outY = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const pt = points[i];
-      outX[i] = getAxisValue(pt, xDesc);
-      outY[i] = getAxisValue(pt, yDesc);
+      const x = getX(pt);
+      const y = getY(pt);
+      outX[i] = x;
+      outY[i] = y;
+      if (Number.isFinite(x)) {
+        if (x < globalXmin) globalXmin = x;
+        if (x > globalXmax) globalXmax = x;
+      }
+      if (Number.isFinite(y)) {
+        if (y < globalYmin) globalYmin = y;
+        if (y > globalYmax) globalYmax = y;
+      }
     }
-    return [outX, outY];
+    return [outX, outY, globalXmin, globalXmax, globalYmin, globalYmax];
   }
 
   // Matches DigitShowModbus formula:
@@ -82,9 +122,9 @@ export function decimate2DM4(
     if (start >= end) break;
 
     const firstPt = points[start];
-    let xmin = getAxisValue(firstPt, xDesc);
+    let xmin = getX(firstPt);
     let xmax = xmin;
-    let ymin = getAxisValue(firstPt, yDesc);
+    let ymin = getY(firstPt);
     let ymax = ymin;
 
     let xmin_i = start;
@@ -94,8 +134,8 @@ export function decimate2DM4(
 
     for (let i = start + 1; i < end; i++) {
       const pt = points[i];
-      const x = getAxisValue(pt, xDesc);
-      const y = getAxisValue(pt, yDesc);
+      const x = getX(pt);
+      const y = getY(pt);
 
       if (x < xmin) {
         xmin = x;
@@ -114,6 +154,11 @@ export function decimate2DM4(
         ymax_i = i;
       }
     }
+
+    if (Number.isFinite(xmin) && xmin < globalXmin) globalXmin = xmin;
+    if (Number.isFinite(xmax) && xmax > globalXmax) globalXmax = xmax;
+    if (Number.isFinite(ymin) && ymin < globalYmin) globalYmin = ymin;
+    if (Number.isFinite(ymax) && ymax > globalYmax) globalYmax = ymax;
 
     cand[0] = start;
     cand[1] = xmin_i;
@@ -139,8 +184,8 @@ export function decimate2DM4(
       const idx = cand[j];
       if (idx !== prev) {
         const pt = points[idx];
-        outX[outCount] = getAxisValue(pt, xDesc);
-        outY[outCount] = getAxisValue(pt, yDesc);
+        outX[outCount] = getX(pt);
+        outY[outCount] = getY(pt);
         outCount++;
         prev = idx;
       }
@@ -148,7 +193,7 @@ export function decimate2DM4(
   }
 
   // Subarray view if not full (zero-copy slice)
-  return [outX.subarray(0, outCount), outY.subarray(0, outCount)];
+  return [outX.subarray(0, outCount), outY.subarray(0, outCount), globalXmin, globalXmax, globalYmin, globalYmax];
 }
 
 /**

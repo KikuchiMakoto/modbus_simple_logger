@@ -12,7 +12,7 @@ import { type Config, type Data, type Layout } from 'plotly.js';
 import { CHART_RENDER_TARGET_POINTS } from '../constants';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
-import { type AxisDescriptor, decimate2DM4, getAxisValue } from '../utils/m4Decimation';
+import { type AxisDescriptor, decimate2DM4, getAxisAccessor } from '../utils/m4Decimation';
 import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 
 interface AxisOption {
@@ -118,6 +118,10 @@ function ChartPanelComponent({
 }: ChartPanelProps) {
   const xDesc = useMemo(() => parseAxisKey(xAxis), [xAxis]);
   const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
+  const yAxisOptions = useMemo(
+    () => axisOptions.filter((opt) => opt.key !== 'time'),
+    [axisOptions],
+  );
 
   // Read from the shared store rather than from local state: this panel detects
   // the backend below and App Info shows the full renderer string, so the badge
@@ -183,38 +187,40 @@ function ChartPanelComponent({
     // This reduces up to 65,536 points down to ~1,200-1,600 points (O(N) single-pass), while
     // preserving local extremes (xmin, xmax, ymin, ymax) and start/end points, keeping
     // hysteresis loops, envelope boundaries, and fast spikes intact.
+    // Also computes axis min/max extents in the same pass, eliminating secondary traversal loops.
     let xData: Float64Array;
     let yData: Float64Array;
+    let xMin: number;
+    let xMax: number;
+    let yMin: number;
+    let yMax: number;
 
     if (dataPoints.length > CHART_RENDER_TARGET_POINTS) {
-      [xData, yData] = decimate2DM4(dataPoints, xDesc, yDesc, CHART_RENDER_TARGET_POINTS);
+      [xData, yData, xMin, xMax, yMin, yMax] = decimate2DM4(dataPoints, xDesc, yDesc, CHART_RENDER_TARGET_POINTS);
     } else {
       const n = dataPoints.length;
       xData = new Float64Array(n);
       yData = new Float64Array(n);
+      const getX = getAxisAccessor(xDesc);
+      const getY = getAxisAccessor(yDesc);
+      xMin = Infinity;
+      xMax = -Infinity;
+      yMin = Infinity;
+      yMax = -Infinity;
       for (let i = 0; i < n; i++) {
         const p = dataPoints[i];
-        xData[i] = getAxisValue(p, xDesc);
-        yData[i] = getAxisValue(p, yDesc);
-      }
-    }
-
-    // Build axis extents in a single pass to compute padded ranges
-    let xMin = Infinity;
-    let xMax = -Infinity;
-    let yMin = Infinity;
-    let yMax = -Infinity;
-    const len = xData.length;
-    for (let i = 0; i < len; i++) {
-      const xv = xData[i];
-      const yv = yData[i];
-      if (Number.isFinite(xv)) {
-        if (xv < xMin) xMin = xv;
-        if (xv > xMax) xMax = xv;
-      }
-      if (Number.isFinite(yv)) {
-        if (yv < yMin) yMin = yv;
-        if (yv > yMax) yMax = yv;
+        const xv = getX(p);
+        const yv = getY(p);
+        xData[i] = xv;
+        yData[i] = yv;
+        if (Number.isFinite(xv)) {
+          if (xv < xMin) xMin = xv;
+          if (xv > xMax) xMax = xv;
+        }
+        if (Number.isFinite(yv)) {
+          if (yv < yMin) yMin = yv;
+          if (yv > yMax) yMax = yv;
+        }
       }
     }
 
@@ -392,13 +398,11 @@ function ChartPanelComponent({
           className="rounded border border-slate-300 bg-white px-1.5 py-0 text-xs leading-tight text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           aria-label="Y axis"
         >
-          {axisOptions
-            .filter((opt) => opt.key !== 'time')
-            .map((opt) => (
-              <option key={opt.key} value={opt.key}>
-                {opt.label}
-              </option>
-            ))}
+          {yAxisOptions.map((opt) => (
+            <option key={opt.key} value={opt.key}>
+              {opt.label}
+            </option>
+          ))}
         </select>
         {/* Back in the chart header, as it was before v3.2 — the row it shares
             has since been slimmed, so it now costs no height of its own. App
