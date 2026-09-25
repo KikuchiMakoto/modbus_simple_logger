@@ -100,7 +100,7 @@ export function scanModbusFrame(
   // tail reproduces a plausible address and function code often enough that
   // neither is evidence on its own.
   const received = buffer[length - 2] | (buffer[length - 1] << 8);
-  if (crc16(buffer.slice(0, length - 2)) !== received) return { kind: 'drop', count: 1 };
+  if (crc16(buffer, length - 2) !== received) return { kind: 'drop', count: 1 };
 
   return { kind: 'frame', length, isException };
 }

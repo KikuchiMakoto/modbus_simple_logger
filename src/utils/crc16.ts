@@ -16,12 +16,14 @@ for (let i = 0; i < 256; i++) {
 
 /**
  * Calculate Modbus CRC16 for a byte array
- * @param data - Uint8Array or number array of bytes
+ * @param data - Uint8Array or readonly number array of bytes
+ * @param length - Optional maximum number of bytes to include (default: data.length)
  * @returns CRC16 value (0-65535)
  */
-export function crc16(data: Uint8Array | number[]): number {
+export function crc16(data: Uint8Array | readonly number[], length: number = data.length): number {
   let crc = 0xFFFF;
-  for (let i = 0; i < data.length; i++) {
+  const len = Math.min(data.length, length);
+  for (let i = 0; i < len; i++) {
     crc = CRC16_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
   }
   return crc;
