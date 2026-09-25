@@ -64,7 +64,7 @@ export const loadParamFreeLabels = (): string[] => loadFreeLabels(PARAM_FREE_LAB
 export const saveParamFreeLabels = (labels: string[]) => writeJsonCookie(PARAM_FREE_LABEL_COOKIE_KEY, labels);
 
 export const aiToPhysical = (raw: number, cal: AiCalibration): number =>
-  cal.a * raw * raw + cal.b * raw + cal.c;
+  cal.a === 0 ? cal.b * raw + cal.c : (cal.a * raw + cal.b) * raw + cal.c;
 
 export const getAiStatus = (raw: number): AiChannel['status'] => {
   const normalizedValue = Math.abs(raw);

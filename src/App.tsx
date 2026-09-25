@@ -1024,7 +1024,7 @@ function App() {
     (channels: AiChannel[], calibration: AiCalibration[]) =>
       channels.map((ch, idx) => {
         const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
-        const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
+        const physical = aiToPhysical(rawValue, calibration[idx] ?? DEFAULT_AI_CALIBRATION);
         const { voltage, microStrain } = computeSensorValues(rawValue, idx);
         return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
       }),
@@ -1040,7 +1040,7 @@ function App() {
       const cal = prev[idx];
       if (!cal) return prev;
       const raw = aiRawSourceRef.current[idx] ?? 0;
-      const newC = -(cal.a * raw * raw + cal.b * raw);
+      const newC = cal.a === 0 ? -(cal.b * raw) : -((cal.a * raw + cal.b) * raw);
       const next = [...prev];
       next[idx] = { ...cal, c: newC };
       setAiChannels((chs) => applyCalibrationToChannels(chs, next));
