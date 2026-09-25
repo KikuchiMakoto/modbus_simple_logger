@@ -57,7 +57,9 @@ import {
   hx711RawToMvPerV,
   hx711RawToMicroStrain,
   ads1115RawToVolt,
+  DEFAULT_AI_CALIBRATION,
   rawToDisplayValue,
+  rawToVoltageValue,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -224,7 +226,7 @@ const computeSensorValues = (raw: number, idx: number) => {
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
-    const physical = aiToPhysical(raw, calibration[idx]);
+    const physical = aiToPhysical(raw, calibration[idx] ?? DEFAULT_AI_CALIBRATION);
     const { voltage, microStrain } = computeSensorValues(raw, idx);
     return {
       id: idx,
@@ -1177,20 +1179,22 @@ function App() {
           timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;
         if (cardsDue) {
           lastCardPublishRef.current = timestamp;
-          setAiChannels((prev) =>
-            prev.map((ch, idx) => {
-              const rawValue = aiRaw[idx] ?? ch.raw;
-              const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-              return {
-                ...ch,
-                raw: rawValue,
-                physical: aiPhysical[idx] ?? ch.physical,
-                status: getAiStatus(rawValue),
-                voltage,
-                microStrain,
-              };
-            }),
-          );
+          startTransition(() => {
+            setAiChannels((prev) =>
+              prev.map((ch, idx) => {
+                const rawValue = aiRaw[idx] ?? ch.raw;
+                const { voltage, microStrain } = computeSensorValues(rawValue, idx);
+                return {
+                  ...ch,
+                  raw: rawValue,
+                  physical: aiPhysical[idx] ?? ch.physical,
+                  status: getAiStatus(rawValue),
+                  voltage,
+                  microStrain,
+                };
+              }),
+            );
+          });
         }
         if (plot) updateDataHistory(timestamp, aiRaw, aiPhysical, param);
       })
@@ -1208,9 +1212,11 @@ function App() {
     if (!writer) return;
     try {
       const aoRaw = new Float32Array(aoRawSourceRef.current);
-      const aiVoltage = new Float32Array(aiRaw.length);
-      for (let i = 0; i < aiRaw.length; i++) {
-        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? DEFAULT_VOLTAGE_CONFIG[i]).value;
+      const len = aiRaw.length;
+      const aiVoltage = new Float32Array(len);
+      const vConfig = voltageConfigRef.current;
+      for (let i = 0; i < len; i++) {
+        aiVoltage[i] = rawToVoltageValue(aiRaw[i], vConfig[i] ?? DEFAULT_VOLTAGE_CONFIG[i]);
       }
       writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, param);
       // The exact count lives in a ref; React only hears about it a few times a
@@ -1398,12 +1404,13 @@ function App() {
     if (aiSourceValues) {
       lastAiReadCompletedAtRef.current = Date.now();
       aiRawSourceRef.current = aiSourceValues;
+      const len = aiSourceValues.length;
       const aiRaw = new Float32Array(aiSourceValues);
-      const aiPhysical = new Float32Array(
-        aiSourceValues.map((value, idx) =>
-          aiToPhysical(value, aiCalibrationRef.current[idx] ?? { a: 0, b: 1, c: 0 })
-        )
-      );
+      const aiPhysical = new Float32Array(len);
+      const calib = aiCalibrationRef.current;
+      for (let i = 0; i < len; i++) {
+        aiPhysical[i] = aiToPhysical(aiSourceValues[i], calib[i] ?? DEFAULT_AI_CALIBRATION);
+      }
 
       const aiRawShare = scriptRunner.aiRawShareRef.current;
       const aiPhysicalShare = scriptRunner.aiPhysicalShareRef.current;

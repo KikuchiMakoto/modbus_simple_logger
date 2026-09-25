@@ -9,7 +9,9 @@ const AO_FREE_LABEL_COOKIE_KEY = 'ao_free_labels_v1';
 const PARAM_FREE_LABEL_COOKIE_KEY = 'param_free_labels_v1';
 const INT16_MAX = 32767;
 
-const defaultAiCalibration = (): AiCalibration => ({ a: 0, b: 1, c: 0 });
+export const DEFAULT_AI_CALIBRATION: AiCalibration = Object.freeze({ a: 0, b: 1, c: 0 });
+
+const defaultAiCalibration = (): AiCalibration => DEFAULT_AI_CALIBRATION;
 
 export const loadAiCalibration = (channels: number): AiCalibration[] => {
   const raw = readJsonCookie<AiCalibration[]>(AI_COOKIE_KEY);
@@ -81,18 +83,34 @@ export const hx711RawToMicroStrain = (raw: number): number =>
 export const ads1115RawToVolt = (raw: number): number =>
   raw / 32768.0 * 6.144;
 
-export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: number; unit: string } => {
+/**
+ * Returns raw-to-voltage conversion value directly as a primitive number,
+ * avoiding object allocations in high-frequency polling/export loops.
+ */
+export const rawToVoltageValue = (raw: number, mode: VoltageMode): number => {
   switch (mode) {
     case 'hx711_mv_per_v':
-      return { value: hx711RawToMvPerV(raw), unit: 'mV/V' };
+      return hx711RawToMvPerV(raw);
     case 'hx711_micro_strain':
-      return { value: hx711RawToMicroStrain(raw), unit: 'με' };
+      return hx711RawToMicroStrain(raw);
     case 'ads1115_6144mv':
-      return { value: raw / 32768.0 * 6.144, unit: 'V' };
+      return (raw / 32768.0) * 6.144;
     case 'ads1115_12288mv':
-      return { value: raw / 32768.0 * 12.288, unit: 'V' };
+      return (raw / 32768.0) * 12.288;
   }
 };
+
+const VOLTAGE_UNITS: Record<VoltageMode, string> = {
+  hx711_mv_per_v: 'mV/V',
+  hx711_micro_strain: 'με',
+  ads1115_6144mv: 'V',
+  ads1115_12288mv: 'V',
+};
+
+export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: number; unit: string } => ({
+  value: rawToVoltageValue(raw, mode),
+  unit: VOLTAGE_UNITS[mode],
+});
 
 // --- HX711 Calibration window helpers ---------------------------------------
 
