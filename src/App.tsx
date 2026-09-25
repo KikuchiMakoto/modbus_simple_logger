@@ -1,4 +1,5 @@
 import {
+  memo,
   startTransition,
   useCallback,
   useEffect,
@@ -58,8 +59,8 @@ import {
   hx711RawToMicroStrain,
   ads1115RawToVolt,
   DEFAULT_AI_CALIBRATION,
-  rawToDisplayValue,
   rawToVoltageValue,
+  VOLTAGE_UNITS,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -216,26 +217,24 @@ const FIXED_SLAVE_ID = 1;
 // the 32-bit float (f32t) "Extended" mode has been removed.
 const PRECISION_LABEL = 'i16t';
 
-const computeSensorValues = (raw: number, idx: number) => {
-  if (idx < 8) {
-    return { voltage: hx711RawToMvPerV(raw), microStrain: hx711RawToMicroStrain(raw) };
-  }
-  return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
-};
+const computeSensorVoltage = (raw: number, idx: number): number =>
+  idx < 8 ? hx711RawToMvPerV(raw) : ads1115RawToVolt(raw);
+
+const computeSensorMicroStrain = (raw: number, idx: number): number =>
+  idx < 8 ? hx711RawToMicroStrain(raw) : 0;
 
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
     const physical = aiToPhysical(raw, calibration[idx] ?? DEFAULT_AI_CALIBRATION);
-    const { voltage, microStrain } = computeSensorValues(raw, idx);
     return {
       id: idx,
       raw,
       physical,
       label: `CH ${idx.toString().padStart(2, '0')}`,
       status: getAiStatus(raw),
-      voltage,
-      microStrain,
+      voltage: computeSensorVoltage(raw, idx),
+      microStrain: computeSensorMicroStrain(raw, idx),
     };
   });
 
@@ -338,6 +337,193 @@ function ChannelSpecNote({
     </div>
   );
 }
+
+const AiChannelCard = memo(function AiChannelCard({
+  id,
+  raw,
+  physical,
+  label,
+  mode,
+  isLocked,
+  onLabelChange,
+}: {
+  id: number;
+  raw: number;
+  physical: number;
+  label: string;
+  mode: VoltageMode;
+  isLocked: boolean;
+  onLabelChange: (id: number, text: string) => void;
+}) {
+  const voltage = rawToVoltageValue(raw, mode);
+  const unit = VOLTAGE_UNITS[mode];
+  const aiRatio = Math.min(1, Math.abs(raw) / 32767);
+  const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
+  const aiMeterHeight = Math.max(2, aiRatio * 100);
+
+  return (
+    <div
+      translate="no"
+      className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+    >
+      <div className="min-w-0 flex-1 px-1 py-0.5">
+        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+          <ChannelSpecNote
+            id={`ai-spec-note-${id}`}
+            label={formatAiChannelDisplayLabel(id)}
+            note={id < 8 ? HX711_SPEC_NOTE : ADS1115_SPEC_NOTE}
+            align={id % 8 < 4 ? 'left' : 'right'}
+          />
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => onLabelChange(id, e.target.value)}
+            disabled={isLocked}
+            title={isLocked ? LABEL_LOCKED_TITLE : undefined}
+            placeholder="Label"
+            className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+          />
+        </div>
+        <div className="space-y-0 pt-px text-base leading-none">
+          <div className="flex justify-between items-center leading-none">
+            <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
+            <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
+              {/* i16t Input Registers, so raw is an integer count —
+                  a decimal point here would be noise. */}
+              {raw}
+            </span>
+          </div>
+          <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
+            <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
+            <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
+              {physical.toFixed(3)}
+            </span>
+          </div>
+          <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
+            <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
+              {unit}
+            </span>
+            <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+              {voltage.toFixed(3)}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex w-1 items-end overflow-hidden rounded-r">
+        <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
+      </div>
+    </div>
+  );
+});
+
+const AoChannelCard = memo(function AoChannelCard({
+  id,
+  physical,
+  label,
+  isLocked,
+  onLabelChange,
+}: {
+  id: number;
+  physical: number;
+  label: string;
+  isLocked: boolean;
+  onLabelChange: (id: number, text: string) => void;
+}) {
+  const aoMeterHeight = Math.max(2, Math.min(1, Math.abs(physical) / AO_FULL_SCALE_MV) * 100);
+
+  return (
+    <div
+      translate="no"
+      className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+    >
+      <div className="min-w-0 flex-1 px-1 py-0.5">
+        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+          <ChannelSpecNote
+            id={`ao-spec-note-${id}`}
+            label={`CH ${id}`}
+            note={GP8403_SPEC_NOTE}
+            align={id % 8 < 4 ? 'left' : 'right'}
+          />
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => onLabelChange(id, e.target.value)}
+            disabled={isLocked}
+            title={isLocked ? LABEL_LOCKED_TITLE : undefined}
+            placeholder="Label"
+            className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+          />
+        </div>
+        <div className="pt-px text-base leading-none">
+          <div className="flex items-center justify-between leading-none">
+            <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
+            <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+              {(physical / 1000).toFixed(3)}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex w-1 items-end overflow-hidden rounded-r">
+        <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
+      </div>
+    </div>
+  );
+});
+
+const ParamChannelCard = memo(function ParamChannelCard({
+  id,
+  value,
+  label,
+  isLocked,
+  onLabelChange,
+}: {
+  id: number;
+  value: number;
+  label: string;
+  isLocked: boolean;
+  onLabelChange: (id: number, text: string) => void;
+}) {
+  const formatted = formatFloat32(value);
+
+  return (
+    <div
+      translate="no"
+      className="min-w-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
+    >
+      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+        <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
+          {`CH ${id.toString().padStart(2, '0')}`}
+        </span>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => onLabelChange(id, e.target.value)}
+          disabled={isLocked}
+          title={isLocked ? LABEL_LOCKED_TITLE : undefined}
+          placeholder="Label"
+          className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+        />
+      </div>
+      <div className="pt-px text-base leading-none">
+        <div className="flex items-center justify-between gap-1 leading-none">
+          <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
+          {/* Same rule as the Param Editor's cells (formatFloat32): a
+              fixed 3 decimals turned a 2.5e-5 gain into "0.000" in the
+              one place it is meant to be watched, and made the same
+              channel read differently in two windows. Long values
+              truncate rather than widen the card — the full string is
+              in the title, and the Editor shows it untruncated. */}
+          <span
+            title={formatted}
+            className="min-w-0 truncate text-right text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400"
+          >
+            {formatted}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1025,8 +1211,14 @@ function App() {
       channels.map((ch, idx) => {
         const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
         const physical = aiToPhysical(rawValue, calibration[idx] ?? DEFAULT_AI_CALIBRATION);
-        const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-        return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
+        return {
+          ...ch,
+          raw: rawValue,
+          physical,
+          status: getAiStatus(rawValue),
+          voltage: computeSensorVoltage(rawValue, idx),
+          microStrain: computeSensorMicroStrain(rawValue, idx),
+        };
       }),
     [],
   );
@@ -1183,14 +1375,13 @@ function App() {
             setAiChannels((prev) =>
               prev.map((ch, idx) => {
                 const rawValue = aiRaw[idx] ?? ch.raw;
-                const { voltage, microStrain } = computeSensorValues(rawValue, idx);
                 return {
                   ...ch,
                   raw: rawValue,
                   physical: aiPhysical[idx] ?? ch.physical,
                   status: getAiStatus(rawValue),
-                  voltage,
-                  microStrain,
+                  voltage: computeSensorVoltage(rawValue, idx),
+                  microStrain: computeSensorMicroStrain(rawValue, idx),
                 };
               }),
             );
@@ -1948,7 +2139,8 @@ function App() {
       const options: DenominatorOption[] = [];
       const mode = voltageConfig[ch];
       if (mode) {
-        const { value: slope, unit } = rawToDisplayValue(1, mode);
+        const slope = rawToVoltageValue(1, mode);
+        const unit = VOLTAGE_UNITS[mode];
         if (Number.isFinite(slope) && unit) {
           options.push({ value: 'volt', label: unit, slopePerRaw: slope });
         }
@@ -2376,67 +2568,18 @@ function App() {
         </div>
         {!aiCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
-          {aiChannels.map((ch) => {
-            const mode = voltageConfig[ch.id];
-            const display = rawToDisplayValue(ch.raw, mode);
-            const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
-            const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
-            const aiMeterHeight = Math.max(2, aiRatio * 100);
-            return (
-            <div
+          {aiChannels.map((ch) => (
+            <AiChannelCard
               key={ch.id}
-              translate="no"
-              className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
-            >
-              <div className="min-w-0 flex-1 px-1 py-0.5">
-                <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                  <ChannelSpecNote
-                    id={`ai-spec-note-${ch.id}`}
-                    label={formatAiChannelDisplayLabel(ch.id)}
-                    note={ch.id < 8 ? HX711_SPEC_NOTE : ADS1115_SPEC_NOTE}
-                    align={ch.id % 8 < 4 ? 'left' : 'right'}
-                  />
-                  <input
-                    type="text"
-                    value={aiFreeLabels[ch.id] ?? ''}
-                    onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
-                    disabled={scriptRunner.scriptRunning}
-                    title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
-                    placeholder="Label"
-                    className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
-                  />
-                </div>
-                <div className="space-y-0 pt-px text-base leading-none">
-                  <div className="flex justify-between items-center leading-none">
-                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
-                    <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {/* i16t Input Registers, so raw is an integer count —
-                          a decimal point here would be noise. */}
-                      {ch.raw}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
-                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
-                    <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {ch.physical.toFixed(3)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
-                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
-                      {display.unit}
-                    </span>
-                    <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
-                      {display.value.toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex w-1 items-end overflow-hidden rounded-r">
-                <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
-              </div>
-            </div>
-            );
-          })}
+              id={ch.id}
+              raw={ch.raw}
+              physical={ch.physical}
+              label={aiFreeLabels[ch.id] ?? ''}
+              mode={voltageConfig[ch.id]}
+              isLocked={scriptRunner.scriptRunning}
+              onLabelChange={handleAiFreeLabelChange}
+            />
+          ))}
         </div>
         )}
       </section>
@@ -2448,51 +2591,16 @@ function App() {
         </div>
         {!aoCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
-          {aoChannels.map((ch) => {
-            // AO is a commanded value, not a measurement: the full scale is the
-            // DAC's own 0-10 V range, and there is no "too high" to warn about.
-            // Hence one flat colour — the AI meter's green/yellow/red would
-            // imply a limit the output does not have.
-            const aoMeterHeight = Math.max(2, Math.min(1, Math.abs(ch.physical) / AO_FULL_SCALE_MV) * 100);
-            return (
-            <div
+          {aoChannels.map((ch) => (
+            <AoChannelCard
               key={ch.id}
-              translate="no"
-              className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
-            >
-              <div className="min-w-0 flex-1 px-1 py-0.5">
-                <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                  <ChannelSpecNote
-                    id={`ao-spec-note-${ch.id}`}
-                    label={ch.label}
-                    note={GP8403_SPEC_NOTE}
-                    align={ch.id % 8 < 4 ? 'left' : 'right'}
-                  />
-                  <input
-                    type="text"
-                    value={aoFreeLabels[ch.id] ?? ''}
-                    onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
-                    disabled={scriptRunner.scriptRunning}
-                    title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
-                    placeholder="Label"
-                    className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
-                  />
-                </div>
-                <div className="pt-px text-base leading-none">
-                  <div className="flex items-center justify-between leading-none">
-                    <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
-                    <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
-                      {(ch.physical / 1000).toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex w-1 items-end overflow-hidden rounded-r">
-                <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
-              </div>
-            </div>
-            );
-          })}
+              id={ch.id}
+              physical={ch.physical}
+              label={aoFreeLabels[ch.id] ?? ''}
+              isLocked={scriptRunner.scriptRunning}
+              onLabelChange={handleAoFreeLabelChange}
+            />
+          ))}
         </div>
         )}
       </section>
@@ -2505,43 +2613,14 @@ function App() {
         {!paramCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
           {paramValues.map((value, idx) => (
-            <div
+            <ParamChannelCard
               key={idx}
-              translate="no"
-              className="min-w-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
-            >
-              <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
-                  {`CH ${idx.toString().padStart(2, '0')}`}
-                </span>
-                <input
-                  type="text"
-                  value={paramFreeLabels[idx] ?? ''}
-                  onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
-                  disabled={scriptRunner.scriptRunning}
-                  title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
-                  placeholder="Label"
-                  className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
-                />
-              </div>
-              <div className="pt-px text-base leading-none">
-                <div className="flex items-center justify-between gap-1 leading-none">
-                  <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
-                  {/* Same rule as the Param Editor's cells (formatFloat32): a
-                      fixed 3 decimals turned a 2.5e-5 gain into "0.000" in the
-                      one place it is meant to be watched, and made the same
-                      channel read differently in two windows. Long values
-                      truncate rather than widen the card — the full string is
-                      in the title, and the Editor shows it untruncated. */}
-                  <span
-                    title={formatFloat32(value)}
-                    className="min-w-0 truncate text-right text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400"
-                  >
-                    {formatFloat32(value)}
-                  </span>
-                </div>
-              </div>
-            </div>
+              id={idx}
+              value={value}
+              label={paramFreeLabels[idx] ?? ''}
+              isLocked={scriptRunner.scriptRunning}
+              onLabelChange={handleParamFreeLabelChange}
+            />
           ))}
         </div>
         )}

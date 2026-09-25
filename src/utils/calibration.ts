@@ -100,7 +100,7 @@ export const rawToVoltageValue = (raw: number, mode: VoltageMode): number => {
   }
 };
 
-const VOLTAGE_UNITS: Record<VoltageMode, string> = {
+export const VOLTAGE_UNITS: Record<VoltageMode, string> = {
   hx711_mv_per_v: 'mV/V',
   hx711_micro_strain: 'με',
   ads1115_6144mv: 'V',
@@ -275,8 +275,12 @@ export const fitCalibration = (points: CalibrationFitPoint[]): AiCalibration | n
 export const AI_LEVEL_CAUTION_RATIO = 0.7;
 export const AI_LEVEL_DANGER_RATIO = 0.85;
 
+const LEVEL_DANGER = Object.freeze({ bar: 'bg-red-500', text: 'text-red-600 dark:text-red-400' });
+const LEVEL_CAUTION = Object.freeze({ bar: 'bg-yellow-400', text: 'text-yellow-500 dark:text-yellow-400' });
+const LEVEL_NORMAL = Object.freeze({ bar: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400' });
+
 export const getLevelColor = (ratio: number): { bar: string; text: string } => {
-  if (ratio > AI_LEVEL_DANGER_RATIO) return { bar: 'bg-red-500', text: 'text-red-600 dark:text-red-400' };
-  if (ratio > AI_LEVEL_CAUTION_RATIO) return { bar: 'bg-yellow-400', text: 'text-yellow-500 dark:text-yellow-400' };
-  return { bar: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400' };
+  if (ratio > AI_LEVEL_DANGER_RATIO) return LEVEL_DANGER;
+  if (ratio > AI_LEVEL_CAUTION_RATIO) return LEVEL_CAUTION;
+  return LEVEL_NORMAL;
 };

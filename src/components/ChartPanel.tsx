@@ -140,13 +140,16 @@ function ChartPanelComponent({
     // react-plotly.js already purged it, but the purge leaves the WebGL context
     // alive, so drop it here before it accumulates.
     const previous = graphDivRef.current;
-    if (previous && previous !== graphDiv) releaseWebglContext(previous);
-    graphDivRef.current = graphDiv;
+    if (previous !== graphDiv) {
+      if (previous) releaseWebglContext(previous);
+      graphDivRef.current = graphDiv;
 
-    // Published to the shared store rather than shown here — the App Info panel
-    // is what displays it. reportRenderBackend ignores unchanged values, so this
-    // does not notify on every redraw.
-    reportRenderBackend(detectRenderBackend(graphDiv));
+      // Published to the shared store rather than shown here — the App Info panel
+      // is what displays it. Only probe the WebGL context when the DOM container
+      // or canvas is first attached or replaced, avoiding querying WebGL extensions
+      // on every 2fps redraw.
+      reportRenderBackend(detectRenderBackend(graphDiv));
+    }
   }, []);
 
   // Release the last context when the panel itself goes away (chart count change,
