@@ -12,7 +12,7 @@ import { type Config, type Data, type Layout } from 'plotly.js';
 import { CHART_RENDER_TARGET_POINTS } from '../constants';
 import { Plot } from '../plotly';
 import { DataPoint } from '../types';
-import { type AxisDescriptor, decimate2DM4, getAxisAccessor } from '../utils/m4Decimation';
+import { type AxisDescriptor, decimate2DM4 } from '../utils/m4Decimation';
 import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 
 interface AxisOption {
@@ -182,47 +182,17 @@ function ChartPanelComponent({
   const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
     if (isEmpty) return { traces: [], xRange: null, yRange: null };
 
-    // When the buffer exceeds the render target points (CHART_RENDER_TARGET_POINTS = 1024), apply high-performance 2D-M4 (MinMax)
-    // decimation immediately before passing coordinates to Plotly.
-    // This reduces up to 65,536 points down to ~1,200-1,600 points (O(N) single-pass), while
-    // preserving local extremes (xmin, xmax, ymin, ymax) and start/end points, keeping
-    // hysteresis loops, envelope boundaries, and fast spikes intact.
-    // Also computes axis min/max extents in the same pass, eliminating secondary traversal loops.
-    let xData: Float64Array;
-    let yData: Float64Array;
-    let xMin: number;
-    let xMax: number;
-    let yMin: number;
-    let yMax: number;
-
-    if (dataPoints.length > CHART_RENDER_TARGET_POINTS) {
-      [xData, yData, xMin, xMax, yMin, yMax] = decimate2DM4(dataPoints, xDesc, yDesc, CHART_RENDER_TARGET_POINTS);
-    } else {
-      const n = dataPoints.length;
-      xData = new Float64Array(n);
-      yData = new Float64Array(n);
-      const getX = getAxisAccessor(xDesc);
-      const getY = getAxisAccessor(yDesc);
-      xMin = Infinity;
-      xMax = -Infinity;
-      yMin = Infinity;
-      yMax = -Infinity;
-      for (let i = 0; i < n; i++) {
-        const p = dataPoints[i];
-        const xv = getX(p);
-        const yv = getY(p);
-        xData[i] = xv;
-        yData[i] = yv;
-        if (Number.isFinite(xv)) {
-          if (xv < xMin) xMin = xv;
-          if (xv > xMax) xMax = xv;
-        }
-        if (Number.isFinite(yv)) {
-          if (yv < yMin) yMin = yv;
-          if (yv > yMax) yMax = yv;
-        }
-      }
-    }
+    // Apply high-performance 2D-M4 (MinMax) decimation immediately before passing coordinates to Plotly.
+    // When the buffer exceeds CHART_RENDER_TARGET_POINTS (1024), reduces points down to ~1,000-1,500 points
+    // in O(N) single-pass, preserving local extremes (xmin, xmax, ymin, ymax) and start/end points.
+    // Automatically uses time-series specialized M4 (skipping redundant X searches) when X is timestamp.
+    // When N <= CHART_RENDER_TARGET_POINTS, decimate2DM4 directly copies and computes extents in one pass.
+    const [xData, yData, xMin, xMax, yMin, yMax] = decimate2DM4(
+      dataPoints,
+      xDesc,
+      yDesc,
+      CHART_RENDER_TARGET_POINTS,
+    );
 
     return {
       traces: [

@@ -64,7 +64,123 @@ export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
  * @param targetPoints Target output points (e.g. 2048). Actual output will be ~1500 - 2500 points.
  * @returns Decimated tuple of [outX, outY, xMin, xMax, yMin, yMax]
  */
-export function decimate2DM4(
+/**
+ * Specialized M4 decimation for monotonic time-series (X = 'time').
+ * Because time is strictly monotonic, in every block [start, end) Xmin is always
+ * at `start` and Xmax is always at `end - 1`.
+ *
+ * Specializing this path:
+ * 1. Eliminates searching for Xmin/Xmax in each block, halving inner-loop comparisons.
+ * 2. Eliminates calling `getX(pt)` inside the inner loop.
+ * 3. Replaces the 6-element insertion sort with O(1) two-element comparator.
+ * 4. Reduces max bucket points from 6 to 4, cutting buffer allocations by 33%.
+ */
+function decimateTimeM4(
+  points: readonly DataPoint[],
+  yDesc: AxisDescriptor,
+  targetPoints: number,
+): [Float64Array, Float64Array, number, number, number, number] {
+  const n = points.length;
+  const getY = getAxisAccessor(yDesc);
+
+  if (n <= targetPoints) {
+    const outX = new Float64Array(n);
+    const outY = new Float64Array(n);
+    let globalYmin = Infinity;
+    let globalYmax = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const pt = points[i];
+      const x = pt.timestamp;
+      const y = getY(pt);
+      outX[i] = x;
+      outY[i] = y;
+      if (Number.isFinite(y)) {
+        if (y < globalYmin) globalYmin = y;
+        if (y > globalYmax) globalYmax = y;
+      }
+    }
+    const globalXmin = n > 0 ? points[0].timestamp : Infinity;
+    const globalXmax = n > 0 ? points[n - 1].timestamp : -Infinity;
+    return [outX, outY, globalXmin, globalXmax, globalYmin, globalYmax];
+  }
+
+  const numBuckets = Math.max(1, Math.floor(targetPoints / 4));
+  const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
+  const maxOutputPoints = numBuckets * 4;
+
+  const outX = new Float64Array(maxOutputPoints);
+  const outY = new Float64Array(maxOutputPoints);
+  let outCount = 0;
+
+  let globalYmin = Infinity;
+  let globalYmax = -Infinity;
+  const globalXmin = points[0].timestamp;
+  const globalXmax = points[n - 1].timestamp;
+
+  for (let b = 0; b < numBuckets; b++) {
+    const start = b * bucketSize;
+    const end = start + bucketSize < n ? start + bucketSize : n;
+    if (start >= end) break;
+
+    let ymin = Infinity;
+    let ymin_i = start;
+    let ymax = -Infinity;
+    let ymax_i = start;
+
+    for (let i = start; i < end; i++) {
+      const y = getY(points[i]);
+      if (y < ymin) {
+        ymin = y;
+        ymin_i = i;
+      }
+      if (y > ymax) {
+        ymax = y;
+        ymax_i = i;
+      }
+    }
+
+    if (Number.isFinite(ymin) && ymin < globalYmin) globalYmin = ymin;
+    if (Number.isFinite(ymax) && ymax > globalYmax) globalYmax = ymax;
+
+    // Chronological candidates: start, then min/max by temporal order, then end - 1
+    const c0 = start;
+    const c1 = ymin_i <= ymax_i ? ymin_i : ymax_i;
+    const y_c1 = ymin_i <= ymax_i ? ymin : ymax;
+    const c2 = ymin_i <= ymax_i ? ymax_i : ymin_i;
+    const y_c2 = ymin_i <= ymax_i ? ymax : ymin;
+    const c3 = end - 1;
+
+    // Deduplicate in chronological order
+    outX[outCount] = points[c0].timestamp;
+    outY[outCount] = c0 === ymin_i ? ymin : c0 === ymax_i ? ymax : getY(points[c0]);
+    outCount++;
+
+    if (c1 !== c0) {
+      outX[outCount] = points[c1].timestamp;
+      outY[outCount] = y_c1;
+      outCount++;
+    }
+    if (c2 !== c1) {
+      outX[outCount] = points[c2].timestamp;
+      outY[outCount] = y_c2;
+      outCount++;
+    }
+    if (c3 !== c2) {
+      outX[outCount] = points[c3].timestamp;
+      outY[outCount] = c3 === ymin_i ? ymin : c3 === ymax_i ? ymax : getY(points[c3]);
+      outCount++;
+    }
+  }
+
+  return [outX.subarray(0, outCount), outY.subarray(0, outCount), globalXmin, globalXmax, globalYmin, globalYmax];
+}
+
+/**
+ * Full 2D-M4 decimation for non-monotonic parametric curves (X != 'time').
+ * Retains [First, xmin, xmax, ymin, ymax, Last] per bucket to preserve
+ * hysteresis loops, Lissajous figures, and phase portraits.
+ */
+function decimateParametric2DM4(
   points: readonly DataPoint[],
   xDesc: AxisDescriptor,
   yDesc: AxisDescriptor,
@@ -194,6 +310,36 @@ export function decimate2DM4(
 
   // Subarray view if not full (zero-copy slice)
   return [outX.subarray(0, outCount), outY.subarray(0, outCount), globalXmin, globalXmax, globalYmin, globalYmax];
+}
+
+/**
+ * 2D-M4 (MinMax) chart decimation algorithm with fused extents calculation.
+ * Preserves local extremes (xmin, xmax, ymin, ymax) and start/end points in O(N) time,
+ * guaranteeing envelope preservation without peak-shaving.
+ *
+ * Automatically branches:
+ * - When X is 'time' (strictly monotonic): uses decimateTimeM4 (halves comparisons, skips X search)
+ * - When X is parametric (hysteresis/XY): uses decimateParametric2DM4 (full 6-point retention)
+ *
+ * @param points Source array of DataPoint
+ * @param xDesc Descriptor for the X axis
+ * @param yDesc Descriptor for the Y axis
+ * @param targetPoints Target output points (e.g. 1024). Actual output will be ~1000 - 1500 points.
+ * @returns Decimated tuple of [outX, outY, xMin, xMax, yMin, yMax]
+ */
+export function decimate2DM4(
+  points: readonly DataPoint[],
+  xDesc: AxisDescriptor,
+  yDesc: AxisDescriptor,
+  targetPoints: number,
+): [Float64Array, Float64Array, number, number, number, number] {
+  if (points.length === 0) {
+    return [new Float64Array(0), new Float64Array(0), Infinity, -Infinity, Infinity, -Infinity];
+  }
+  if (xDesc.kind === 'time') {
+    return decimateTimeM4(points, yDesc, targetPoints);
+  }
+  return decimateParametric2DM4(points, xDesc, yDesc, targetPoints);
 }
 
 /**
