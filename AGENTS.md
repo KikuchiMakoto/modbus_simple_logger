@@ -287,7 +287,9 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
-### PWA / Service Worker
+### PWA / Service Worker（最重要・絶対条件）
+- **ユーザーの99%がPWAとして利用する**ため、「**PWAで確実に動く、確実に更新できること**」が本アプリの絶対条件である
+  - オフライン動作や更新過渡期における白画面・ロード失敗を構造的に防ぐため、主要機能・チャート描画（Plotly 等）の**遅延ロード（React.lazy / 動的 import）は原則禁止**。全アセットを静的バンドル・プリキャッシュし、初回オフライン訪問でも完全動作を保証する
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
 - **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.png`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
@@ -366,23 +368,12 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - なお SW 登録は `window.addEventListener('load')` なので、**install の 19.5MB は初回描画を
   ブロックしていない**。ここを「初回表示が遅い」と誤診しないこと
 
-### Plotly の遅延ロード（効果 初期転送 630KB → 約140KB gzip / 推奨）
+### Plotly の遅延ロード（検討したが却下 — PWA 動作保証を優先）
 
-**パネル（Manual / ScriptRunner / AppInfo / InputCalibrator）の `React.lazy` 化は却下した。**
-効果は gzip 約20KB＝転送 JS の3%しかなく、しかも全チャンクが precache されるので2回目以降は
-削減ゼロ。対して ScriptRunner を lazy にすると Prism が非同期チャンクへ移り、
-`utils/prismManual.ts` と `vite.config.ts` の `manualChunks` が依存している
-「core とグラマーが同一チャンクに居る」不変条件に触れる。**これは過去に本番ビルドだけ白画面**という
-形で実際に起きた事故で、dev では再現しない。3% のために踏む取引ではない。
-
-本命は Plotly のほう。`ChartPanel` は **データが0点の間 `<Plot>` をマウントしていない**
-（"No data" プレースホルダのみ / `isEmpty`）。つまりデバイスを繋ぐまで Plotly は描画に使われないのに、
-静的 import なので **1.45MB / gzip 489KB を起動時に必ず落として評価している**。転送 JS の78%。
-
-- `src/plotly.ts` を動的 import にし、`isEmpty` の間は読まない
-- Suspense の fallback は**既存の "No data" プレースホルダをそのまま使える**
-- 代償はポーリング開始からグラフ描画までの一拍。SW キャッシュが温まっていれば体感ゼロ
-- Prism には一切触れないので、上の白画面クラスとは無関係
+`ChartPanel` の `Plot` を `React.lazy` で動的 import 化する案を検討・計測したが、**却下した**。
+ユーザーの99%がPWA環境でオフライン利用するため、動的 import に伴う非同期チャンク分割は、
+オフライン起動やキャッシュ更新時のネットワークフェッチ失敗によるグラフ描画不可・白画面リスクを抱える。
+静的 import のまま全アセットを確実にプリキャッシュし、オフライン完全動作と更新信頼性を死守する。
 
 ## 主要定数（`src/constants.ts`）
 
