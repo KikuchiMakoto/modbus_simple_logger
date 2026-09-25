@@ -146,10 +146,11 @@ class DataStorage {
       let deleteCount = count - maxPoints;
       let deletedCount = 0;
 
-      const request = index.openCursor();
+      // Use openKeyCursor() to avoid deserializing StoredDataPoint objects when deleting
+      const request = index.openKeyCursor();
 
       request.onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+        const cursor = (event.target as IDBRequest<IDBCursor>).result;
         if (cursor && deletedCount < deleteCount) {
           cursor.delete();
           deletedCount++;
