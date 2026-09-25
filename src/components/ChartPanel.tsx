@@ -61,6 +61,38 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 // exactly as tall, or the grid steps.
 export const PLOT_HEIGHT = '240px';
 
+// Palettes for dark and light modes. Hoisted to module scope and frozen to avoid
+// object allocations on render passes.
+const DARK_PALETTE = Object.freeze({
+  paper: '#0f172a',
+  plot: '#1e293b',
+  grid: '#334155',
+  text: '#cbd5e1',
+});
+
+const LIGHT_PALETTE = Object.freeze({
+  paper: '#f8fafc',
+  plot: '#ffffff',
+  grid: '#e2e8f0',
+  text: '#0f172a',
+});
+
+// Invariant Plotly configuration hoisted to module scope to eliminate per-render useMemo overhead.
+const PLOT_CONFIG: Partial<Config> = Object.freeze<Partial<Config>>({
+  displayModeBar: 'hover',
+  responsive: true,
+  displaylogo: false,
+  scrollZoom: true,
+  doubleClick: 'reset',
+  modeBarButtonsToRemove: [
+    'select2d',
+    'lasso2d',
+    'hoverClosestCartesian',
+    'hoverCompareCartesian',
+    'toggleSpikelines',
+  ],
+});
+
 // Force-release the WebGL context(s) behind a graph div.
 //
 // `Plotly.purge()` — which react-plotly.js calls on unmount — does NOT destroy
@@ -83,12 +115,25 @@ function releaseWebglContext(graphDiv: HTMLElement) {
   }
 }
 
+const AXIS_DESC_CACHE = new Map<string, AxisDescriptor>();
+
 function parseAxisKey(key: string): AxisDescriptor {
-  if (key === 'time') return { kind: 'time', index: 0 };
-  if (key.startsWith('raw_')) return { kind: 'raw', index: Number(key.slice(4)) };
-  if (key.startsWith('phy_')) return { kind: 'physical', index: Number(key.slice(4)) };
-  if (key.startsWith('par_')) return { kind: 'param', index: Number(key.slice(4)) };
-  return { kind: 'time', index: 0 };
+  const cached = AXIS_DESC_CACHE.get(key);
+  if (cached) return cached;
+  let desc: AxisDescriptor;
+  if (key === 'time') {
+    desc = Object.freeze({ kind: 'time', index: 0 });
+  } else if (key.startsWith('raw_')) {
+    desc = Object.freeze({ kind: 'raw', index: Number(key.slice(4)) });
+  } else if (key.startsWith('phy_')) {
+    desc = Object.freeze({ kind: 'physical', index: Number(key.slice(4)) });
+  } else if (key.startsWith('par_')) {
+    desc = Object.freeze({ kind: 'param', index: Number(key.slice(4)) });
+  } else {
+    desc = Object.freeze({ kind: 'time', index: 0 });
+  }
+  AXIS_DESC_CACHE.set(key, desc);
+  return desc;
 }
 
 // matplotlib/MATLAB-style data margins: return [min, max] expanded by `fraction`
@@ -162,23 +207,7 @@ function ChartPanelComponent({
     [],
   );
 
-  const palette = useMemo(
-    () =>
-      isDarkMode
-        ? {
-            paper: '#0f172a',
-            plot: '#1e293b',
-            grid: '#334155',
-            text: '#cbd5e1',
-          }
-        : {
-            paper: '#f8fafc',
-            plot: '#ffffff',
-            grid: '#e2e8f0',
-            text: '#0f172a',
-          },
-    [isDarkMode],
-  );
+  const palette = isDarkMode ? DARK_PALETTE : LIGHT_PALETTE;
 
   const isEmpty = dataPoints.length === 0;
 
@@ -308,43 +337,6 @@ function ChartPanelComponent({
     [xAxis, yAxis, palette, displayRevision, plot, axisLabels],
   );
 
-  // Annotated rather than inferred: without the contextual type the string
-  // literals below widen to `string`, which `Partial<Config>` rejects — and
-  // annotating (instead of casting each field `as const`) is what makes Plotly
-  // check the whole object, so a mistyped button name fails the build.
-  const plotConfig = useMemo<Partial<Config>>(
-    () => ({
-      // Only while the pointer is over the chart. The bar is an overlay — it
-      // reserves no layout space either way — but an always-on bar has to be
-      // cleared by the top margin for the whole session, and that clearance was
-      // ~14px of a 240px plot, four charts over. On hover it overlaps the top
-      // strip of the trace, which is not what is being read at the moment you
-      // are reaching for zoom.
-      //
-      // Turning the bar off entirely (or dropping scrollZoom/dragmode) buys no
-      // further space: the 8px top margin left behind is tick-label clearance,
-      // not modebar clearance. It would only cost the zoom.
-      displayModeBar: 'hover',
-      responsive: true,
-      displaylogo: false,
-      scrollZoom: true,
-      doubleClick: 'reset',
-      // Trimmed to the buttons that do something here. The three hover controls
-      // are dead on arrival against `hovermode: false` / `hoverinfo: 'skip'`,
-      // and box/lasso select has no consumer — nothing reads a selection off
-      // these charts. Fewer buttons also means a narrower bar covering less of
-      // the trace while it is up.
-      modeBarButtonsToRemove: [
-        'select2d',
-        'lasso2d',
-        'hoverClosestCartesian',
-        'hoverCompareCartesian',
-        'toggleSpikelines',
-      ],
-    }),
-    [],
-  );
-
   return (
     <section className="card card-tight space-y-0.5">
       {/* The axis pickers are chrome above a fixed-height plot, so they are kept
@@ -439,7 +431,7 @@ function ChartPanelComponent({
             key={purgeEpoch}
             data={plot.traces}
             layout={plotLayout}
-            config={plotConfig}
+            config={PLOT_CONFIG}
             style={{ width: '100%', height: PLOT_HEIGHT }}
             onInitialized={handleGraphDiv}
             onUpdate={handleGraphDiv}

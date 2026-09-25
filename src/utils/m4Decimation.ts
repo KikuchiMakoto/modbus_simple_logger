@@ -122,12 +122,13 @@ function decimateTimeM4(
     const end = start + bucketSize < n ? start + bucketSize : n;
     if (start >= end) break;
 
-    let ymin = Infinity;
+    const firstPt = points[start];
+    let ymin = getY(firstPt);
+    let ymax = ymin;
     let ymin_i = start;
-    let ymax = -Infinity;
     let ymax_i = start;
 
-    for (let i = start; i < end; i++) {
+    for (let i = start + 1; i < end; i++) {
       const y = getY(points[i]);
       if (y < ymin) {
         ymin = y;
@@ -145,29 +146,27 @@ function decimateTimeM4(
     // Chronological candidates: start, then min/max by temporal order, then end - 1
     const c0 = start;
     const c1 = ymin_i <= ymax_i ? ymin_i : ymax_i;
-    const y_c1 = ymin_i <= ymax_i ? ymin : ymax;
     const c2 = ymin_i <= ymax_i ? ymax_i : ymin_i;
-    const y_c2 = ymin_i <= ymax_i ? ymax : ymin;
     const c3 = end - 1;
 
     // Deduplicate in chronological order
     outX[outCount] = points[c0].timestamp;
-    outY[outCount] = c0 === ymin_i ? ymin : c0 === ymax_i ? ymax : getY(points[c0]);
+    outY[outCount] = getY(points[c0]);
     outCount++;
 
     if (c1 !== c0) {
       outX[outCount] = points[c1].timestamp;
-      outY[outCount] = y_c1;
+      outY[outCount] = getY(points[c1]);
       outCount++;
     }
     if (c2 !== c1) {
       outX[outCount] = points[c2].timestamp;
-      outY[outCount] = y_c2;
+      outY[outCount] = getY(points[c2]);
       outCount++;
     }
     if (c3 !== c2) {
       outX[outCount] = points[c3].timestamp;
-      outY[outCount] = c3 === ymin_i ? ymin : c3 === ymax_i ? ymax : getY(points[c3]);
+      outY[outCount] = getY(points[c3]);
       outCount++;
     }
   }
