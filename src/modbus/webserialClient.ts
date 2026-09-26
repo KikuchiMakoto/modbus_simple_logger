@@ -280,6 +280,24 @@ function assertRegisterByteCount(byteCount: number, registerCount: number): void
   }
 }
 
+function assertUint16(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new RangeError(`${name} must be an integer between 0 and 65535`);
+  }
+}
+
+function assertRegisterCount(name: string, count: number, max: number): void {
+  if (!Number.isInteger(count) || count < 1 || count > max) {
+    throw new RangeError(`${name} must be an integer between 1 and ${max}`);
+  }
+}
+
+function assertEcho(name: string, actual: number, expected: number): void {
+  if (actual !== expected) {
+    throw new Error(`${name} echo mismatch: expected ${expected}, got ${actual}`);
+  }
+}
+
 export class WebSerialModbusClient {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -1369,9 +1387,8 @@ export class WebSerialModbusClient {
    */
   async readCoils(start: number, count: number): Promise<boolean[]> {
     console.debug(`${this.debugPrefix} readCoils()`, { start, count });
-    if (count < 1 || count > 2000) {
-      throw new Error('Count must be between 1 and 2000');
-    }
+    assertUint16('Start address', start);
+    assertRegisterCount('Coil count', count, 2000);
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(1, payload);
     const byteCount = Math.ceil(count / 8);
@@ -1380,6 +1397,7 @@ export class WebSerialModbusClient {
 
     const values: boolean[] = [];
     const responseByteCount = view.getUint8(2);
+    assertEcho('Coil byte count', responseByteCount, Math.ceil(count / 8));
 
     for (let i = 0; i < count; i += 1) {
       const byteIndex = Math.floor(i / 8);
@@ -1400,6 +1418,8 @@ export class WebSerialModbusClient {
    */
   async readHoldingRegisters(start: number, count: number): Promise<number[]> {
     console.debug(`${this.debugPrefix} readHoldingRegisters()`, { start, count });
+    assertUint16('Start address', start);
+    assertRegisterCount('Register count', count, 125);
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(3, payload);
     const expected = 5 + count * 2; // addr + fc + byteCount + data + crc
@@ -1426,6 +1446,8 @@ export class WebSerialModbusClient {
    */
   async readInputRegisters(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
     console.debug(`${this.debugPrefix} readInputRegisters()`, { start, count, timeoutMs });
+    assertUint16('Start address', start);
+    assertRegisterCount('Register count', count, 125);
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
     const frame = this.buildFrame(4, payload);
     const expected = 5 + count * 2; // addr + fc + byteCount + data + crc
@@ -1451,10 +1473,13 @@ export class WebSerialModbusClient {
    */
   async writeSingleCoil(address: number, value: boolean): Promise<void> {
     console.debug(`${this.debugPrefix} writeSingleCoil()`, { address, value });
+    assertUint16('Coil address', address);
     const coilValue = value ? 0xff00 : 0x0000;
     const payload = [address >> 8, address & 0xff, coilValue >> 8, coilValue & 0xff];
     const frame = this.buildFrame(5, payload);
-    await this.transfer(frame, 8); // addr + fc + address + value + crc
+    const view = await this.transfer(frame, 8); // addr + fc + address + value + crc
+    assertEcho('Coil address', view.getUint16(2, false), address);
+    assertEcho('Coil value', view.getUint16(4, false), coilValue);
     console.debug(`${this.debugPrefix} writeSingleCoil() done`);
   }
 
@@ -1465,9 +1490,13 @@ export class WebSerialModbusClient {
    */
   async writeSingleRegister(address: number, value: number): Promise<void> {
     console.debug(`${this.debugPrefix} writeSingleRegister()`, { address, value });
+    assertUint16('Register address', address);
+    assertUint16('Register value', value);
     const payload = [address >> 8, address & 0xff, value >> 8, value & 0xff];
     const frame = this.buildFrame(6, payload);
-    await this.transfer(frame, 8);
+    const view = await this.transfer(frame, 8);
+    assertEcho('Register address', view.getUint16(2, false), address);
+    assertEcho('Register value', view.getUint16(4, false), value);
     console.debug(`${this.debugPrefix} writeSingleRegister() done`);
   }
 
@@ -1484,6 +1513,7 @@ export class WebSerialModbusClient {
     if (values.length > 1968) {
       throw new Error('Cannot write more than 1968 coils in a single request');
     }
+    assertUint16('Start address', start);
 
     const count = values.length;
     const byteCount = Math.ceil(count / 8);
@@ -1511,7 +1541,9 @@ export class WebSerialModbusClient {
 
     const frame = this.buildFrame(15, payload);
     const expected = 8; // addr + fc + start address + count + crc
-    await this.transfer(frame, expected);
+    const view = await this.transfer(frame, expected);
+    assertEcho('Coil start address', view.getUint16(2, false), start);
+    assertEcho('Coil count', view.getUint16(4, false), count);
     console.debug(`${this.debugPrefix} writeMultipleCoils() done`);
   }
 
@@ -1533,6 +1565,7 @@ export class WebSerialModbusClient {
     if (values.length > 123) {
       throw new Error('Cannot write more than 123 registers in a single request');
     }
+    assertUint16('Start address', start);
 
     const count = values.length;
     const byteCount = count * 2;
@@ -1548,13 +1581,16 @@ export class WebSerialModbusClient {
 
     // Add register values (each as 2 bytes, big-endian)
     for (const value of values) {
+      assertUint16('Register value', value);
       const unsigned = value & 0xffff; // Ensure uint16
       payload.push(unsigned >> 8, unsigned & 0xff);
     }
 
     const frame = this.buildFrame(16, payload);
     const expected = 8; // addr + fc + start address + count + crc
-    await this.transfer(frame, expected);
+    const view = await this.transfer(frame, expected);
+    assertEcho('Register start address', view.getUint16(2, false), start);
+    assertEcho('Register count', view.getUint16(4, false), count);
     console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters() done`);
   }
 }

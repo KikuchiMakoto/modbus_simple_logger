@@ -22,7 +22,8 @@ for (let i = 0; i < 256; i++) {
  */
 export function crc16(data: Uint8Array | readonly number[], length: number = data.length): number {
   let crc = 0xFFFF;
-  const len = Math.min(data.length, length);
+  const requestedLength = Number.isFinite(length) ? Math.trunc(length) : 0;
+  const len = Math.max(0, Math.min(data.length, requestedLength));
   for (let i = 0; i < len; i++) {
     crc = CRC16_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
   }
