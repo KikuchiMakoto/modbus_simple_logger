@@ -17,7 +17,7 @@
 // so a page the browser has fully frozen still cannot poll. Keeping the page
 // out of that state is the wake lock's job (App.tsx / launcher/keepAwake.ts).
 type TimerRequest =
-  | { type: 'set'; id: number; delayMs: number; repeat: boolean }
+  | { type: 'set'; id: number; generation: number; delayMs: number; repeat: boolean }
   | { type: 'clear'; id: number };
 
 // Our id (assigned by the main thread) → the worker's own timer handle.
@@ -44,7 +44,10 @@ self.onmessage = (event: MessageEvent<TimerRequest>) => {
   if (request.repeat) {
     handles.set(
       request.id,
-      self.setInterval(() => self.postMessage({ id: request.id }), request.delayMs),
+       self.setInterval(
+         () => self.postMessage({ id: request.id, generation: request.generation }),
+         request.delayMs,
+       ),
     );
     return;
   }
@@ -53,7 +56,7 @@ self.onmessage = (event: MessageEvent<TimerRequest>) => {
     request.id,
     self.setTimeout(() => {
       handles.delete(request.id);
-      self.postMessage({ id: request.id });
+      self.postMessage({ id: request.id, generation: request.generation });
     }, request.delayMs),
   );
 };
