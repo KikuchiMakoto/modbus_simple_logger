@@ -48,24 +48,23 @@ export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
 /**
  * 2D-M4 (MinMax) decimation for parametric / hysteresis / time-series display (間引B).
  *
- * Divides the input points into K buckets and extracts up to 6 critical points
- * per bucket: [First, Xmin, Xmax, Ymin, Ymax, Last].
+ * Divides the input points into K buckets and extracts extrema, endpoints, and
+ * up to two invalid-value boundary points per bucket.
  * Points are returned in original sequential order (sorted by source index and deduplicated).
  *
- * This guarantees:
+ * This aims to preserve:
  * 1. Both X and Y extrema (peaks and valleys) are preserved.
- * 2. Hysteresis loops, Lissajous curves, and direction-reversal trajectories remain 100% intact.
+ * 2. Hysteresis loops, Lissajous curves, and direction-reversal trajectories in source order.
  * 3. Constant O(N) single-pass scan with near-zero allocations (typically ~0.2ms for 65k points).
  * 4. Fused min/max extent calculation avoiding secondary O(N) traversal passes.
  *
  * @param points Source array of DataPoint
  * @param xDesc Descriptor for the X axis
  * @param yDesc Descriptor for the Y axis
- * @param targetPoints Target output points (e.g. 2048). Actual output will be ~1500 - 2500 points.
+ * @param targetPoints Target output points (currently 1024). Parametric output may reach 1.5x.
  * @returns Decimated tuple of [outX, outY, xMin, xMax, yMin, yMax]
  */
-/**
- * Specialized M4 decimation for monotonic time-series (X = 'time').
+/** Specialized M4 decimation for monotonic time-series (X = 'time').
  * Because time is strictly monotonic, in every block [start, end) Xmin is always
  * at `start` and Xmax is always at `end - 1`.
  *
@@ -104,13 +103,18 @@ function decimateTimeM4(
     return [outX, outY, globalXmin, globalXmax, globalYmin, globalYmax];
   }
 
-  const numBuckets = Math.max(1, Math.floor(targetPoints / 4));
+  // Two additional candidates preserve the first and last non-finite Y values
+  // in each bucket, so Plotly can break a line at Parameter NaNs. The global
+  // output budget remains targetPoints * 1.5.
+  const maxOutputPoints = Math.floor(targetPoints * 1.5);
+  const numBuckets = Math.max(1, Math.floor(maxOutputPoints / 6));
   const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
-  const maxOutputPoints = numBuckets * 4;
+  const maxBucketOutputPoints = numBuckets * 6;
 
-  const outX = new Float64Array(maxOutputPoints);
-  const outY = new Float64Array(maxOutputPoints);
+  const outX = new Float64Array(maxBucketOutputPoints);
+  const outY = new Float64Array(maxBucketOutputPoints);
   let outCount = 0;
+  const candidates = new Int32Array(6);
 
   let globalYmin = Infinity;
   let globalYmax = -Infinity;
@@ -122,14 +126,20 @@ function decimateTimeM4(
     const end = start + bucketSize < n ? start + bucketSize : n;
     if (start >= end) break;
 
-    const firstPt = points[start];
-    let ymin = getY(firstPt);
-    let ymax = ymin;
-    let ymin_i = start;
-    let ymax_i = start;
+    let ymin = Infinity;
+    let ymax = -Infinity;
+    let ymin_i = -1;
+    let ymax_i = -1;
+    let firstNonFiniteY = -1;
+    let lastNonFiniteY = -1;
 
-    for (let i = start + 1; i < end; i++) {
+    for (let i = start; i < end; i++) {
       const y = getY(points[i]);
+      if (!Number.isFinite(y)) {
+        if (firstNonFiniteY < 0) firstNonFiniteY = i;
+        lastNonFiniteY = i;
+        continue;
+      }
       if (y < ymin) {
         ymin = y;
         ymin_i = i;
@@ -143,31 +153,35 @@ function decimateTimeM4(
     if (Number.isFinite(ymin) && ymin < globalYmin) globalYmin = ymin;
     if (Number.isFinite(ymax) && ymax > globalYmax) globalYmax = ymax;
 
-    // Chronological candidates: start, then min/max by temporal order, then end - 1
-    const c0 = start;
-    const c1 = ymin_i <= ymax_i ? ymin_i : ymax_i;
-    const c2 = ymin_i <= ymax_i ? ymax_i : ymin_i;
-    const c3 = end - 1;
-
-    // Deduplicate in chronological order
-    outX[outCount] = points[c0].timestamp;
-    outY[outCount] = getY(points[c0]);
-    outCount++;
-
-    if (c1 !== c0) {
-      outX[outCount] = points[c1].timestamp;
-      outY[outCount] = getY(points[c1]);
-      outCount++;
+    let candidateCount = 0;
+    candidates[candidateCount++] = start;
+    if (ymin_i >= 0) candidates[candidateCount++] = ymin_i;
+    if (ymax_i >= 0) candidates[candidateCount++] = ymax_i;
+    if (firstNonFiniteY >= 0) candidates[candidateCount++] = firstNonFiniteY;
+    if (lastNonFiniteY >= 0 && lastNonFiniteY !== firstNonFiniteY) {
+      candidates[candidateCount++] = lastNonFiniteY;
     }
-    if (c2 !== c1) {
-      outX[outCount] = points[c2].timestamp;
-      outY[outCount] = getY(points[c2]);
-      outCount++;
+    if (end - 1 !== start) candidates[candidateCount++] = end - 1;
+
+    // Sort the fixed-size candidate list into original sample order.
+    for (let i = 1; i < candidateCount; i++) {
+      const key = candidates[i];
+      let j = i - 1;
+      while (j >= 0 && candidates[j] > key) {
+        candidates[j + 1] = candidates[j];
+        j--;
+      }
+      candidates[j + 1] = key;
     }
-    if (c3 !== c2) {
-      outX[outCount] = points[c3].timestamp;
-      outY[outCount] = getY(points[c3]);
+
+    let previous = -1;
+    for (let i = 0; i < candidateCount; i++) {
+      const index = candidates[i];
+      if (index === previous) continue;
+      outX[outCount] = points[index].timestamp;
+      outY[outCount] = getY(points[index]);
       outCount++;
+      previous = index;
     }
   }
 
@@ -176,8 +190,8 @@ function decimateTimeM4(
 
 /**
  * Full 2D-M4 decimation for non-monotonic parametric curves (X != 'time').
- * Retains [First, xmin, xmax, ymin, ymax, Last] per bucket to preserve
- * hysteresis loops, Lissajous figures, and phase portraits.
+ * Retains endpoints, X/Y extrema, and invalid-value boundaries per bucket to
+ * preserve sample order, loop shape, and visible breaks at Parameter NaNs.
  */
 function decimateParametric2DM4(
   points: readonly DataPoint[],
@@ -215,56 +229,68 @@ function decimateParametric2DM4(
     return [outX, outY, globalXmin, globalXmax, globalYmin, globalYmax];
   }
 
-  // Matches DigitShowModbus formula:
-  // num_buckets = targetPoints / 4 (e.g. 2048 / 4 = 512)
-  // Each bucket yields on average ~3-4 points after deduplication,
-  // yielding ~1500 - 2048 points (bounded by num_buckets * 4 or 6).
-  const numBuckets = Math.max(1, Math.floor(targetPoints / 4));
+  // Eight candidates are possible per bucket: endpoints, four extrema, and
+  // two invalid-value boundaries. Keep the actual output bounded to
+  // targetPoints * 1.5 (1024 -> 1536), rather than allowing the candidate
+  // count to grow to targetPoints * 1.5 or more by accident.
+  // Two extra candidates retain the first/last invalid XY samples in each
+  // bucket. These NaNs are line breaks, not values to replace or interpolate.
+  const maxOutputPoints = Math.floor(targetPoints * 1.5);
+  const numBuckets = Math.max(1, Math.floor(maxOutputPoints / 8));
   const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
 
-  // Maximum possible points = numBuckets * 6
-  const maxOutput = numBuckets * 6;
+  // Maximum possible points = numBuckets * 8
+  const maxOutput = numBuckets * 8;
   const outX = new Float64Array(maxOutput);
   const outY = new Float64Array(maxOutput);
   let outCount = 0;
 
   // Reusable candidate buffer on stack/closure (no GC)
-  const cand = new Int32Array(6);
+  const cand = new Int32Array(8);
 
   for (let b = 0; b < numBuckets; b++) {
     const start = b * bucketSize;
     const end = start + bucketSize < n ? start + bucketSize : n;
     if (start >= end) break;
 
-    const firstPt = points[start];
-    let xmin = getX(firstPt);
-    let xmax = xmin;
-    let ymin = getY(firstPt);
-    let ymax = ymin;
+    const first = points[start];
+    const firstX = getX(first);
+    const firstY = getY(first);
+    let xmin = Number.isFinite(firstX) ? firstX : Infinity;
+    let xmax = Number.isFinite(firstX) ? firstX : -Infinity;
+    let ymin = Number.isFinite(firstY) ? firstY : Infinity;
+    let ymax = Number.isFinite(firstY) ? firstY : -Infinity;
 
-    let xmin_i = start;
-    let xmax_i = start;
-    let ymin_i = start;
-    let ymax_i = start;
+    let xmin_i = Number.isFinite(firstX) ? start : -1;
+    let xmax_i = Number.isFinite(firstX) ? start : -1;
+    let ymin_i = Number.isFinite(firstY) ? start : -1;
+    let ymax_i = Number.isFinite(firstY) ? start : -1;
+    let firstInvalid = Number.isFinite(firstX) && Number.isFinite(firstY) ? -1 : start;
+    let lastInvalid = firstInvalid;
 
     for (let i = start + 1; i < end; i++) {
       const pt = points[i];
       const x = getX(pt);
       const y = getY(pt);
 
-      if (x < xmin) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        if (firstInvalid < 0) firstInvalid = i;
+        lastInvalid = i;
+      }
+
+      if (Number.isFinite(x) && x < xmin) {
         xmin = x;
         xmin_i = i;
       }
-      if (x > xmax) {
+      if (Number.isFinite(x) && x > xmax) {
         xmax = x;
         xmax_i = i;
       }
-      if (y < ymin) {
+      if (Number.isFinite(y) && y < ymin) {
         ymin = y;
         ymin_i = i;
       }
-      if (y > ymax) {
+      if (Number.isFinite(y) && y > ymax) {
         ymax = y;
         ymax_i = i;
       }
@@ -275,15 +301,18 @@ function decimateParametric2DM4(
     if (Number.isFinite(ymin) && ymin < globalYmin) globalYmin = ymin;
     if (Number.isFinite(ymax) && ymax > globalYmax) globalYmax = ymax;
 
-    cand[0] = start;
-    cand[1] = xmin_i;
-    cand[2] = xmax_i;
-    cand[3] = ymin_i;
-    cand[4] = ymax_i;
-    cand[5] = end - 1;
+    let candidateCount = 0;
+    cand[candidateCount++] = start;
+    if (xmin_i >= 0) cand[candidateCount++] = xmin_i;
+    if (xmax_i >= 0) cand[candidateCount++] = xmax_i;
+    if (ymin_i >= 0) cand[candidateCount++] = ymin_i;
+    if (ymax_i >= 0) cand[candidateCount++] = ymax_i;
+    if (firstInvalid >= 0) cand[candidateCount++] = firstInvalid;
+    if (lastInvalid >= 0 && lastInvalid !== firstInvalid) cand[candidateCount++] = lastInvalid;
+    if (end - 1 !== start) cand[candidateCount++] = end - 1;
 
     // Fast 6-element insertion sort
-    for (let i = 1; i < 6; i++) {
+    for (let i = 1; i < candidateCount; i++) {
       const key = cand[i];
       let j = i - 1;
       while (j >= 0 && cand[j] > key) {
@@ -295,7 +324,7 @@ function decimateParametric2DM4(
 
     // Deduplicate and output in sequential order
     let prev = -1;
-    for (let j = 0; j < 6; j++) {
+    for (let j = 0; j < candidateCount; j++) {
       const idx = cand[j];
       if (idx !== prev) {
         const pt = points[idx];
@@ -335,105 +364,44 @@ export function decimate2DM4(
   if (points.length === 0) {
     return [new Float64Array(0), new Float64Array(0), Infinity, -Infinity, Infinity, -Infinity];
   }
-  if (xDesc.kind === 'time') {
+  let monotonicTime = xDesc.kind === 'time';
+  if (monotonicTime) {
+    if (!Number.isFinite(points[0].timestamp)) monotonicTime = false;
+    for (let i = 1; i < points.length; i++) {
+      if (
+        !Number.isFinite(points[i].timestamp) ||
+        points[i].timestamp < points[i - 1].timestamp
+      ) {
+        monotonicTime = false;
+        break;
+      }
+    }
+  }
+  if (monotonicTime) {
     return decimateTimeM4(points, yDesc, targetPoints);
   }
   return decimateParametric2DM4(points, xDesc, yDesc, targetPoints);
 }
 
 /**
- * Multi-channel M4 / Origami folding for in-memory capture buffer (間引A).
+ * Origami folding for the in-memory capture buffer.
  *
- * When the buffer reaches 65,536 points, it compresses the points by ~50%
- * down to ~26,000 - 35,000 points (target: 32,768) and allows doubling the
- * sampling stride.
- *
- * To preserve peaks across ALL channels (CH00-15, Params) without bias:
- * Blocks of size W = 4 are inspected.
- * For each block [start, end), we retain:
- * 1. start (First)
- * 2. The point with the largest L1 or variance change across AI channels (Peak/Extreme)
- * 3. end - 1 (Last)
- *
- * This produces ~2 points per 4 points (50% reduction = 32,768 points),
- * perfectly preserving step edges, peaks, and endpoints across the entire dataset.
- *
- * @param buffer In-memory DataPoint buffer of length >= SAVE_BUFFER_MAX_POINTS
- * @param targetPoints Target points after folding (default 32768)
- * @returns Folded array of DataPoint
+ * The existing history is reduced by exactly one half by retaining source
+ * positions [0, 2, 4, ...]. The caller doubles the future intake stride at the
+ * same time, so all channels and Parameters remain on one consistent sampling
+ * grid without selecting peaks from one representative channel.
  */
-/**
- * Fast approximate folding of the in-memory capture buffer when SAVE_BUFFER_MAX_POINTS is reached.
- * Directly follows DigitShowModbus PreviewFolding:
- * Uses a block window W = 4. For each block, extracts [First, Min, Max, Last]
- * using CH00 (axial representative) and sorts/deduplicates indices.
- *
- * This performs an ultra-fast O(N) single-pass sweep without distance calculations,
- * reducing ~65,536 points to an approximate half (~25,000 - 35,000 points).
- */
-export function foldDataBufferM4(
-  buffer: readonly DataPoint[],
-  targetPoints: number = 32768,
-): DataPoint[] {
+export function foldDataBufferHalf(buffer: readonly DataPoint[]): DataPoint[] {
   const n = buffer.length;
-  if (n <= targetPoints) {
+  if (n <= 1) {
     return buffer.slice();
   }
-
-  // W = 4 block window, matching DigitShowModbus
-  const W = 4;
-  const result: DataPoint[] = [];
-  result.length = n; // pre-allocate upper bound
-  let outCount = 0;
-
-  for (let blockStart = 0; blockStart < n; blockStart += W) {
-    const blockEnd = blockStart + W < n ? blockStart + W : n;
-    const blockSize = blockEnd - blockStart;
-
-    if (blockSize === 1) {
-      result[outCount++] = buffer[blockStart];
-      continue;
-    }
-
-    let minIdx = blockStart;
-    let maxIdx = blockStart;
-    const firstPt = buffer[blockStart];
-    let minVal = firstPt.aiRaw[0] ?? 0;
-    let maxVal = minVal;
-
-    for (let i = blockStart + 1; i < blockEnd; i++) {
-      const v = buffer[i].aiRaw[0] ?? 0;
-      if (v < minVal) {
-        minVal = v;
-        minIdx = i;
-      }
-      if (v > maxVal) {
-        maxVal = v;
-        maxIdx = i;
-      }
-    }
-
-    // Candidate indices: [First, Min, Max, Last]
-    const lastIdx = blockEnd - 1;
-    let c0 = blockStart;
-    let c1 = minIdx;
-    let c2 = maxIdx;
-    let c3 = lastIdx;
-
-    // Small 4-element in-place sorting network
-    if (c0 > c1) { const t = c0; c0 = c1; c1 = t; }
-    if (c2 > c3) { const t = c2; c2 = c3; c3 = t; }
-    if (c0 > c2) { const t = c0; c0 = c2; c2 = t; }
-    if (c1 > c3) { const t = c1; c1 = c3; c3 = t; }
-    if (c1 > c2) { const t = c1; c1 = c2; c2 = t; }
-
-    // Push deduplicated indices in ascending order
-    result[outCount++] = buffer[c0];
-    if (c1 !== c0) result[outCount++] = buffer[c1];
-    if (c2 !== c1) result[outCount++] = buffer[c2];
-    if (c3 !== c2) result[outCount++] = buffer[c3];
+  // Origami folding is intentionally simple: retain even source positions.
+  // The caller doubles the future intake stride at the same time, so both the
+  // existing history and newly accepted samples stay on the same grid.
+  const result = new Array<DataPoint>(Math.ceil(n / 2));
+  for (let source = 0, target = 0; source < n; source += 2, target += 1) {
+    result[target] = buffer[source];
   }
-
-  result.length = outCount;
   return result;
 }

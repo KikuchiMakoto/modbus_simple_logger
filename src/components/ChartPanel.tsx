@@ -29,6 +29,7 @@ interface ChartPanelProps {
    * one, bounding GPU-side accumulation over long sessions. */
   purgeEpoch: number;
   axisOptions: AxisOption[];
+  yAxisOptions: AxisOption[];
   /** Free-text labels keyed by axis key (e.g. "raw_0", "par_3"). When present
    * and non-empty, the axis title shows the label instead of the raw key.
    * The "time" axis never has a label. */
@@ -154,6 +155,7 @@ function ChartPanelComponent({
   displayRevision,
   purgeEpoch,
   axisOptions,
+  yAxisOptions,
   axisLabels,
   xAxis,
   yAxis,
@@ -163,10 +165,7 @@ function ChartPanelComponent({
 }: ChartPanelProps) {
   const xDesc = useMemo(() => parseAxisKey(xAxis), [xAxis]);
   const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
-  const yAxisOptions = useMemo(
-    () => axisOptions.filter((opt) => opt.key !== 'time'),
-    [axisOptions],
-  );
+  const isPlotDisabled = yAxis === '----';
 
   // Read from the shared store rather than from local state: this panel detects
   // the backend below and App Info shows the full renderer string, so the badge
@@ -207,16 +206,23 @@ function ChartPanelComponent({
     [],
   );
 
+  useEffect(() => {
+    if (!isPlotDisabled || !graphDivRef.current) return;
+    releaseWebglContext(graphDivRef.current);
+    graphDivRef.current = null;
+  }, [isPlotDisabled]);
+
   const palette = isDarkMode ? DARK_PALETTE : LIGHT_PALETTE;
 
   const isEmpty = dataPoints.length === 0;
 
   const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
-    if (isEmpty) return { traces: [], xRange: null, yRange: null };
+    if (isEmpty || isPlotDisabled) return { traces: [], xRange: null, yRange: null };
 
     // Apply high-performance 2D-M4 (MinMax) decimation immediately before passing coordinates to Plotly.
-    // When the buffer exceeds CHART_RENDER_TARGET_POINTS (1024), reduces points down to ~1,000-1,500 points
-    // in O(N) single-pass, preserving local extremes (xmin, xmax, ymin, ymax) and start/end points.
+    // When the buffer exceeds CHART_RENDER_TARGET_POINTS (1024), reduces points
+    // in O(N) single-pass. The current XY path is capped at 1.5x the target;
+    // fewer points are valid when extrema or NaN boundaries overlap.
     // Automatically uses time-series specialized M4 (skipping redundant X searches) when X is timestamp.
     // When N <= CHART_RENDER_TARGET_POINTS, decimate2DM4 directly copies and computes extents in one pass.
     const [xData, yData, xMin, xMax, yMin, yMax] = decimate2DM4(
@@ -236,23 +242,24 @@ function ChartPanelComponent({
           line: { color, width: 1.5 },
           name: `${yAxis} vs ${xAxis}`,
           // scattergl builds a spatial pick-index for hover, and that cost
-          // scales with CHART_MAX_POINTS. Nothing here consumes hover: there is
+          // scales with the rendered point count. Nothing here consumes hover: there is
           // no hovertemplate and no onHover/onClick handler on the Plot, so the
           // index is pure waste. 'skip' suppresses both the hover labels and the
           // hover/click events ('none' would keep firing events).
           //
           // Trade-off: this also removes the user's ability to hover a point and
-          // read its value. Deleting this line restores it — but CHART_MAX_POINTS
-          // was raised to 2048 on the assumption it is set, so drop it back to
-          // 1024 at the same time. (Effect not yet measured on-device; see
-          // docs/chart-library-comparison.md §11-1.)
+          // read its value. Deleting this line restores it; keep the initial
+          // validation budget conservative until real and low-end devices are measured.
           hoverinfo: 'skip' as const,
+          // Parameter NaN values represent failed/invalid readings. Keep those
+          // locations as visible line breaks rather than bridging them.
+          connectgaps: false,
         },
       ],
       xRange: paddedRange(xMin, xMax, 0.1),
       yRange: paddedRange(yMin, yMax, 0.05),
     };
-  }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty]);
+  }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty, isPlotDisabled]);
 
   // "Timestamp", not "Time": this axis is absolute local wall-clock — the
   // instant each sample was captured — and "Time" reads just as naturally as
@@ -374,7 +381,7 @@ function ChartPanelComponent({
             Info keeps the full renderer string; this is the at-a-glance version,
             and amber when the browser has fallen back to a software rasterizer
             is the whole point: that degradation is otherwise silent. */}
-        {!isEmpty && backend && (
+        {!isEmpty && !isPlotDisabled && backend && (
           // Same hover note as the channel cards' HX711 / ADS1115 / GP8403
           // labels (group-hover on a plain absolute box, no tooltip library),
           // rather than a native `title`: this reads as one more "what is the
@@ -415,7 +422,9 @@ function ChartPanelComponent({
           </div>
         )}
       </div>
-      {isEmpty ? (
+      {isPlotDisabled ? (
+        <div aria-hidden="true" style={{ height: PLOT_HEIGHT }} />
+      ) : isEmpty ? (
         <div className="flex items-center justify-center text-sm text-slate-400" style={{ height: PLOT_HEIGHT }}>
           No data — connect device and start polling
         </div>

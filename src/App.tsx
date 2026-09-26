@@ -33,14 +33,12 @@ import {
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
   SAVE_BUFFER_MAX_POINTS,
-  SAVE_BUFFER_FOLD_TARGET_POINTS,
   CHART_REDRAW_INTERVAL_MS,
   CHART_REDRAW_INTERVAL_CONSTRAINED_MS,
   CHART_REDRAW_CONSTRAINED_MAX_CORES,
   CHART_REDRAW_DEFER_RETRY_MS,
   CHART_REDRAW_DEFER_MAX_MS,
   READOUT_PUBLISH_INTERVAL_MS,
-  CHANNEL_CARD_MIN_INTERVAL_MS,
   CHART_INPUT_INTERVAL_MS,
   NON_SAVING_CHART_PREVIEW_POINTS,
   BATCH_FLUSH_THRESHOLD,
@@ -75,7 +73,7 @@ import {
   StoredDataPoint,
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
-import { foldDataBufferM4 } from './utils/m4Decimation';
+import { foldDataBufferHalf } from './utils/m4Decimation';
 import {
   discardRecoveredRun,
   downloadRecoveredRun,
@@ -569,7 +567,9 @@ const axisOptions = [
   })),
 ];
 
+const yAxisOptions = [{ key: '----', label: '----' }, ...axisOptions.filter((option) => option.key !== 'time')];
 const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
+axisOptionKeys.add('----');
 
 // Module scope, not a ref: StrictMode mounts the app twice in development, and
 // the recovery prompt is a blocking dialog the user would have to dismiss twice
@@ -673,7 +673,6 @@ function App() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   // Readouts (measured rate, saved-point count) are published to React on a
   // budget rather than per sample — see READOUT_PUBLISH_INTERVAL_MS.
-  const lastCardPublishRef = useRef(0);
   const lastSaveCountPublishRef = useRef(0);
   const savePointCountRef = useRef(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
@@ -715,9 +714,9 @@ function App() {
   const requestAoWriteRef = useRef<() => void>(() => {});
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
-  // While saving, the chart shows the whole capture downsampled to
-  // CHART_MAX_POINTS via count-stride decimation. These track the decimation
-  // stride and raw-point counter (reset on each save start).
+  // While saving, the chart shows the whole capture through Origami folding and
+  // count-stride intake. These track the stride and raw-point counter (reset on
+  // each save start).
   const saveDecimationStrideRef = useRef(1);
   const saveRawCounterRef = useRef(0);
   // The Modbus poll interval on the wire — NOT the save rate. Everything that
@@ -1059,9 +1058,9 @@ function App() {
     if (tsvWriterRef.current) {
       // Saving: keep the chart buffer bounded by downsampling the WHOLE capture
       // (save-start → now) into OrigamiBuffer with capacity up to SAVE_BUFFER_MAX_POINTS (65,536).
-      // Add 1 of every `stride` raw points. When buffer reaches 65,536 points, fold it
-      // via multi-channel M4 (block W=4) down to ~SAVE_BUFFER_FOLD_TARGET_POINTS (32,768)
-      // and double the stride. The full data still streams to TSV.
+       // Add 1 of every `stride` raw points. When buffer reaches 65,536 points,
+       // retain its even positions and double the stride. The full data still
+       // streams to TSV.
       for (const p of pointsToAdd) {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
@@ -1070,10 +1069,10 @@ function App() {
         saveRawCounterRef.current++;
       }
       // Fold at SAVE_BUFFER_MAX_POINTS (65,536 points).
-      // The folding preserves all channel envelopes and hysteresis endpoints
-      // while halving points down to ~32,768 in O(N) in-place time (~1-2 ms).
+        // Origami folding is deliberately channel-neutral and O(N): it keeps
+        // [0, 2, 4, ...] rather than selecting extrema from one channel.
       if (buffer.length >= SAVE_BUFFER_MAX_POINTS) {
-        dataBufferRef.current = foldDataBufferM4(buffer, SAVE_BUFFER_FOLD_TARGET_POINTS);
+        dataBufferRef.current = foldDataBufferHalf(buffer);
         saveDecimationStrideRef.current *= 2;
       }
     } else {
@@ -1348,30 +1347,6 @@ function App() {
   const enqueueDisplayUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array, plot: boolean) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
-        // Card values are published at CHANNEL_CARD_MIN_INTERVAL_MS at most, and
-        // only when the poll interval is shorter than that — i.e. at the 25 and
-        // 50 ms settings. There one render per sample is not affordable: every
-        // publish re-renders 40 channel cards between two Modbus transfers, and
-        // nobody can read a number changing 40 times a second anyway.
-        const cardsDue =
-          pollIntervalRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
-          timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;
-        if (cardsDue) {
-          lastCardPublishRef.current = timestamp;
-          startTransition(() => {
-            setAiChannels((prev) =>
-              prev.map((ch, idx) => {
-                const rawValue = aiRaw[idx] ?? ch.raw;
-                return {
-                  ...ch,
-                  raw: rawValue,
-                  physical: aiPhysical[idx] ?? ch.physical,
-                  status: getAiStatus(rawValue),
-                };
-              }),
-            );
-          });
-        }
         if (plot) updateDataHistory(timestamp, aiRaw, aiPhysical, param);
       })
       .catch((err) => {
@@ -1601,6 +1576,21 @@ function App() {
       const param = paramShare
         ? new Float32Array(paramShare)
         : new Float32Array(PARAM_CHANNELS);
+
+      // Cards are the live readout. Publish directly from the completed read,
+      // outside the display/history promise chain, so chart or IndexedDB work
+      // cannot make the visible value older than the latest device response.
+      setAiChannels((prev) =>
+        prev.map((ch, idx) => {
+          const rawValue = aiRaw[idx] ?? ch.raw;
+          return {
+            ...ch,
+            raw: rawValue,
+            physical: aiPhysical[idx] ?? ch.physical,
+            status: getAiStatus(rawValue),
+          };
+        }),
+      );
 
       // One capture time for every sink: chart, IndexedDB, TSV and the rate
       // readout all describe this sample as having happened here.
@@ -2618,6 +2608,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          yAxisOptions={yAxisOptions}
           axisLabels={chartAxisLabels}
           xAxis={chart1X}
           yAxis={chart1Y}
@@ -2631,6 +2622,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          yAxisOptions={yAxisOptions}
           axisLabels={chartAxisLabels}
           xAxis={chart2X}
           yAxis={chart2Y}
@@ -2644,6 +2636,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          yAxisOptions={yAxisOptions}
           axisLabels={chartAxisLabels}
           xAxis={chart3X}
           yAxis={chart3Y}
@@ -2657,6 +2650,7 @@ function App() {
           purgeEpoch={chartEpoch}
           displayRevision={displayRevision}
           axisOptions={axisOptions}
+          yAxisOptions={yAxisOptions}
           axisLabels={chartAxisLabels}
           xAxis={chart4X}
           yAxis={chart4Y}

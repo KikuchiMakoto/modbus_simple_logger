@@ -53,4 +53,3 @@ export const useLatestVisibleSystemLog = (): SystemLogEntry | null => {
     return null;
   }, [entries, level]);
 };
-

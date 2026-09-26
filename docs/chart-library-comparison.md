@@ -19,7 +19,7 @@ Android / iOS / Linux / Windows / macOS で動作するチャートシステム�
 | 総合最有力 | **Apache ECharts**（両モード対応・Canvas/SVG 選択可・Plotly の約 1/5〜1/8・Apache 財団による保守） |
 | 工数最小 | **Plotly 現状維持**（8192〜32768点 × 4枚は今日すでに動く） |
 | 32768点で全点描画するなら | **二段構え: webgl-plot（高速経路）+ ECharts/Chart.js（フォールバック）** |
-| **v3.1 で実施済み** | **ライブラリ移行の前に Plotly 側の未使用設定と既知バグを解消**（§3.6）。ホバー用インデックス構築を停止し、`WEBGL_lose_context` でコンテキストリークを止め、逆効果だった定期パージを廃止、`CHART_MAX_POINTS` を 1024 → **2048** |
+| **初期検証で実施済み** | **ライブラリ移行の前に Plotly 側の未使用設定と既知バグを解消**。ホバー用インデックス構築を停止し、`WEBGL_lose_context` でコンテキストリークを止め、逆効果だった定期パージを廃止。描画予算はまず **1024点**で固定し、実機確認後に段階評価する |
 
 > **本レポートの読み方**: §2 の足切り表を最初に読むこと。
 > サイズ比較 (§5) から読むと、実際には採用できない候補を最有力と誤認する。
@@ -237,7 +237,7 @@ WebGL コンテキストを共有しない。Plotly 公式が案内する回避�
 | 2 | layout に **`hovermode: false`** を追加 | `ChartPanel.tsx` | mousemove 時のヒットテスト自体を停止（単独では不十分なため 1 と併用） |
 | 3 | **`releaseWebglContext()`** を追加し、チャート差し替え時と panel アンマウント時に `WEBGL_lose_context` でコンテキストを明示解放 | `ChartPanel.tsx` | `Plotly.purge()` がコンテキストを破棄しない問題（#2852 / #6365）への対処 |
 | 4 | **定期パージ (`CHART_PURGE_INTERVAL_MS` = 15分) を廃止** | `constants.ts` / `App.tsx` | 3 により不要になり、かつリークを増やす側に働いていたため |
-| 5 | **`CHART_MAX_POINTS` を 1024 → 2048** | `constants.ts` | 1・2 で確保した予算を点数に振り向け |
+| 5 | 描画予算を **1024点で固定** | `constants.ts` | 実機・低スペック機での初期検証を優先 |
 | 6 | アプリバージョン **3.0 → 3.1** | `package.json` | — |
 
 ### 定期パージを廃止した理由
@@ -263,7 +263,7 @@ WebGL コンテキストを共有しない。Plotly 公式が案内する回避�
 - しかし**利用者がホバーで値を読んでいた場合、それは失われる**。
 - 復活させる場合は `hoverinfo` の行を削除するだけでよい（1 行）。
   ただしその場合、点数を 2048 に上げた分のコストが戻るため、
-  `CHART_MAX_POINTS` を 1024 に戻すことも併せて検討すること。
+  初期検証の1024点予算を維持し、実機測定後に再評価すること。
 
 ### 採用しなかったもの
 
@@ -294,7 +294,18 @@ type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
 - **モード A: 時系列**（X = time、x 単調増加）
 - **モード B: XY パラメトリック**（X = 任意チャネル、ヒステリシスループ等、x 非単調・非一意）
 
-### 4-1. モード A: min/max ピクセル間引きが有効
+### 4-1. モード A: Chart M4 の現行方針
+
+現行の初期検証値は `CHART_RENDER_TARGET_POINTS = 1024`、XY経路の最大出力は
+その1.5倍（1536点）である。出力の下限は、候補点の重複や一定値波形では保証しない。
+`timestamp` は `Date.now()` 由来で単調性を保証しないため、単調な場合だけ時間軸専用経路を使い、
+逆行があれば一般2D経路へ戻す。Parameter の `NaN` / `Infinity` は極値・軸範囲から除外し、
+値自体は0へ置換しない。
+
+保存中の長時間履歴は Chart M4 と別の Origami バッファで保持する。閾値に達したら既存点の
+`[0, 2, 4, ...]` だけを残し、以後の取り込み stride を2倍にする。全点はTSVへ記録される。
+
+### 4-1-1. 描画モードの一般論
 
 1px 区間ごとに**最小値と最大値の 2 点だけ**残す方式。
 
@@ -312,7 +323,7 @@ for (const p of pointsToAdd) {
   }
   saveRawCounterRef.current++;
 }
-if (buffer.length > 2 * CHART_MAX_POINTS) {
+if (buffer.length > 2 * CHART_RENDER_TARGET_POINTS) {
   const decimated: DataPoint[] = [];
   for (let i = 0; i < buffer.length; i += 2) decimated.push(buffer[i]);
   dataBufferRef.current = decimated;

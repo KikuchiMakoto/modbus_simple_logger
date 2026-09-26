@@ -33,7 +33,8 @@ export function formatTimestamp(timestamp: number): string {
 
 /**
  * Fast trimming of trailing zeros and bare decimal point from toFixed output.
- * Preserves exact numerical value without parseFloat/toString re-parsing.
+ * Preserves the existing fixed-decimal rounding policy without a
+ * parseFloat/toString round trip.
  */
 function formatTrimmed(v: number, precision: number): string {
   if (!Number.isFinite(v)) return String(v);
