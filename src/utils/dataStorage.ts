@@ -23,6 +23,17 @@ export type StoredDataPoint = {
 class DataStorage {
   private db: IDBDatabase | null = null;
   private initPromise: Promise<void> | null = null;
+  // IndexedDB transactions are individually serialized by the browser, but
+  // callers in App intentionally use fire-and-forget writes. Keep the
+  // application-level order explicit so a clear cannot race a pending add or
+  // a trim can use a stale count.
+  private operationChain: Promise<void> = Promise.resolve();
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationChain.then(operation, operation);
+    this.operationChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   async init(): Promise<void> {
     if (this.db) return;
@@ -90,21 +101,32 @@ class DataStorage {
   }
 
   async addDataPoint(point: StoredDataPoint): Promise<number> {
+    return this.enqueue(() => this.addDataPointInternal(point));
+  }
+
+  private async addDataPointInternal(point: StoredDataPoint): Promise<number> {
     this.ensureInitialized();
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.add(point);
+      let key: number;
 
-      request.onsuccess = () => resolve(request.result as number);
+      request.onsuccess = () => { key = request.result as number; };
+      transaction.oncomplete = () => resolve(key);
       request.onerror = () => reject(new Error(`Failed to add data point: ${request.error?.message}`));
+      transaction.onerror = () => reject(new Error(`Failed to add data point: ${transaction.error?.message}`));
     });
   }
 
   /** Add multiple points in a single transaction (far cheaper than one
    * transaction per point for batched writes). */
   async addDataPoints(points: StoredDataPoint[]): Promise<void> {
+    return this.enqueue(() => this.addDataPointsInternal(points));
+  }
+
+  private async addDataPointsInternal(points: StoredDataPoint[]): Promise<void> {
     this.ensureInitialized();
     if (points.length === 0) return;
 
@@ -126,13 +148,20 @@ class DataStorage {
       const transaction = this.db!.transaction([STORE_NAME], 'readonly');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.count();
+      let count = 0;
 
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => { count = request.result; };
+      transaction.oncomplete = () => resolve(count);
       request.onerror = () => reject(new Error(`Failed to count data points: ${request.error?.message}`));
+      transaction.onerror = () => reject(new Error(`Failed to count data points: ${transaction.error?.message}`));
     });
   }
 
   async keepLatestPoints(maxPoints: number): Promise<number> {
+    return this.enqueue(() => this.keepLatestPointsInternal(maxPoints));
+  }
+
+  private async keepLatestPointsInternal(maxPoints: number): Promise<number> {
     this.ensureInitialized();
 
     const count = await this.getDataPointCount();
@@ -141,13 +170,17 @@ class DataStorage {
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
-      const index = store.index('timestamp');
 
-      let deleteCount = count - maxPoints;
+      const deleteCount = count - maxPoints;
       let deletedCount = 0;
+      transaction.oncomplete = () => resolve(deletedCount);
+      transaction.onerror = () => reject(new Error(`Failed to keep latest points: ${transaction.error?.message}`));
+      transaction.onabort = () => reject(new Error(`Failed to keep latest points: ${transaction.error?.message ?? 'transaction aborted'}`));
 
-      // Use openKeyCursor() to avoid deserializing StoredDataPoint objects when deleting
-      const request = index.openKeyCursor();
+      // The primary auto-increment key is insertion order. Do not use the
+      // timestamp index here: system wall-clock time can move backward, so
+      // timestamp order is not FIFO order.
+      const request = store.openKeyCursor();
 
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursor>).result;
@@ -155,8 +188,6 @@ class DataStorage {
           cursor.delete();
           deletedCount++;
           cursor.continue();
-        } else {
-          resolve(deletedCount);
         }
       };
 
@@ -165,15 +196,19 @@ class DataStorage {
   }
 
   async clearAllData(): Promise<void> {
+    return this.enqueue(() => this.clearAllDataInternal());
+  }
+
+  private async clearAllDataInternal(): Promise<void> {
     this.ensureInitialized();
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
-      const request = store.clear();
+      store.clear();
 
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(new Error(`Failed to clear data: ${request.error?.message}`));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(new Error(`Failed to clear data: ${transaction.error?.message}`));
     });
   }
 }
