@@ -123,6 +123,27 @@ const REOPEN_SETTLE_MS = 50;
  */
 const TEARDOWN_STEP_TIMEOUT_MS = 1500;
 
+/**
+ * Floor on how long `writer.write()` may take before the writable side is
+ * declared broken.
+ *
+ * A request is 8 bytes — a few ms on the wire at any supported baud rate — so a
+ * write that has not settled in half a second is not slow, it is stuck (a USB
+ * OUT transfer the host controller never completes, a native writable whose
+ * sink is wedged). Unbounded, that one await held the transfer mutex for ever:
+ * every later poll and AO write queued behind it, and so did Disconnect.
+ * Scaled up for long frames by writeTimeoutMs().
+ */
+const WRITE_TIMEOUT_FLOOR_MS = 500;
+
+/**
+ * Cap on each port.close() / port.open() inside a recovery reopen. Same
+ * reasoning as the write deadline: these run under the transfer mutex, and one
+ * that never settles must fail the attempt rather than freeze the link. The
+ * observed healthy reopen is ~350 ms on Android; this leaves wide margin.
+ */
+const REOPEN_STEP_TIMEOUT_MS = 2000;
+
 // Drain windows for the pre-write stale-RX fence. Much shorter than the
 // post-failure flush (30/80 ms): this one runs on the critical path of a poll,
 // and it only has to sweep up bytes that are already sitting there — the
@@ -260,6 +281,30 @@ function settleWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 /**
+ * Resolve/reject with `promise`, or reject after `ms`.
+ *
+ * Both handlers are attached at once, so an abandoned promise that rejects
+ * later is already handled. Background timer for the same reason as
+ * settleWithin(): this runs inside a transfer, which keeps running while the
+ * window is minimised.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setBackgroundTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+    promise.then(
+      (value) => {
+        clearBackgroundTimer(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearBackgroundTimer(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
  * Check the byte-count field of an FC3/FC4 response against what we asked for.
  *
  * Trust the request, not the reply. The decode loops used to run to
@@ -386,6 +431,17 @@ export class WebSerialModbusClient {
   private readonly debugPrefix = '[WebSerialModbusClient]';
   private readonly verboseFrameLogging: boolean;
   private disconnecting = false;
+  /**
+   * Bumped, synchronously, at the start of every connect() and disconnect().
+   *
+   * Every long async path (a reopen, a transfer's recovery) captures it before
+   * its first await and re-checks it after each one. `disconnecting` alone was
+   * not enough: it is checked once on entry, and a reopen already past that
+   * check would go on to open the port and publish fresh reader/writer locks
+   * onto a client the user had just disconnected — leaving an open, locked port
+   * nobody referenced.
+   */
+  private generation = 0;
   /** The teardown in progress, so re-entrant callers await it instead of racing it. */
   private disconnectPromise: Promise<void> | null = null;
 
@@ -539,6 +595,12 @@ export class WebSerialModbusClient {
    * bytes do not necessarily arrive back-to-back, and because at 4800 baud the
    * wire time alone (144 ms for 69 bytes) already exceeds the old floor.
    */
+  /** Deadline for writing `length` bytes: the floor, or 4x the wire time. */
+  private writeTimeoutMs(length: number): number {
+    const wireMs = (length * this.bitsPerChar() * 1000) / this.serialSettings.baudRate;
+    return Math.max(WRITE_TIMEOUT_FLOOR_MS, wireMs * 4);
+  }
+
   private minimumReadTimeoutMs(expectedLength: number): number {
     const wireMs = (expectedLength * this.bitsPerChar() * 1000) / this.serialSettings.baudRate;
     return DEVICE_RESPONSE_ALLOWANCE_MS + wireMs * 2;
@@ -611,6 +673,7 @@ export class WebSerialModbusClient {
     if (this.port) {
       await this.disconnect();
     }
+    this.generation += 1;
 
     // Request port from user
     this.port = await this.serialApi.requestPort();
@@ -676,6 +739,7 @@ export class WebSerialModbusClient {
     // Set synchronously, before the first await: reopenPort() and
     // recoverAfterTransferError() read it to refuse to run during a teardown.
     this.disconnecting = true;
+    this.generation += 1;
     console.info(`${this.debugPrefix} disconnect() start`);
 
     // Detach the handles up front and tear down locals from here on. This is
@@ -768,8 +832,11 @@ export class WebSerialModbusClient {
    * Must be called while holding the transfer mutex.
    */
   private async ensureReadyOrRecover(): Promise<void> {
-    if (this.port && !this.disconnecting && (!this.reader || !this.writer)) {
-      await this.attemptReopen('streams missing');
+    if (this.port && !this.disconnecting && (!this.reader || !this.writer || this.streamDead)) {
+      // streamDead too: a reopen that was throttled by the backoff after a
+      // failure leaves errored locks in place, and handing those to the next
+      // write would only fail it again without ever retrying the reopen here.
+      await this.attemptReopen(this.streamDead ? 'dead stream' : 'streams missing');
     }
     this.ensureReady();
   }
@@ -1006,6 +1073,11 @@ export class WebSerialModbusClient {
     if (!port) {
       throw new Error('Device not connected');
     }
+    // Checked after every await below. A disconnect() that starts while this is
+    // suspended has already detached `this.port`; carrying on would re-open the
+    // port it is closing and hand the new locks to nobody.
+    const generation = this.generation;
+    const stale = () => generation !== this.generation;
 
     // Both streams must be unlocked before close(), or it throws.
     try { this.reader?.releaseLock(); } catch (err) { console.debug(`${this.debugPrefix} reopenPort() reader releaseLock failed`, err); }
@@ -1014,7 +1086,12 @@ export class WebSerialModbusClient {
     this.writer = null;
     this.pendingRead = null;
 
-    try { await port.close(); } catch (err) { console.warn(`${this.debugPrefix} reopenPort() close failed`, err); }
+    try {
+      await withDeadline(port.close(), REOPEN_STEP_TIMEOUT_MS, 'port close');
+    } catch (err) {
+      console.warn(`${this.debugPrefix} reopenPort() close failed`, err);
+    }
+    if (stale()) throw new Error('Disconnected during reopen');
 
     // Let Android finish releasing the interface before asking for it back.
     // Without this the very next call is `claimInterface`, and a field trace
@@ -1026,12 +1103,28 @@ export class WebSerialModbusClient {
       await new Promise<void>((resolve) => setBackgroundTimeout(resolve, REOPEN_SETTLE_MS));
     }
 
-    await port.open({
+    if (stale()) throw new Error('Disconnected during reopen');
+
+    const opening = port.open({
       baudRate: this.serialSettings.baudRate,
       dataBits: this.serialSettings.dataBits,
       stopBits: this.serialSettings.stopBits,
       parity: this.serialSettings.parity,
     });
+    try {
+      await withDeadline(opening, REOPEN_STEP_TIMEOUT_MS, 'port open');
+    } catch (err) {
+      // An open that completes after we gave up would leave the port open with
+      // nobody holding it; close it whenever it does.
+      opening.then(() => port.close()).catch(() => {});
+      throw err;
+    }
+    if (stale()) {
+      // Opened for a client that has since been disconnected: undo it here,
+      // since the teardown already ran against the handles it could see.
+      try { await withDeadline(port.close(), REOPEN_STEP_TIMEOUT_MS, 'port close'); } catch { /* best effort */ }
+      throw new Error('Disconnected during reopen');
+    }
     if (!port.readable || !port.writable) {
       throw new Error('Port streams are not available after reopen');
     }
@@ -1167,7 +1260,16 @@ export class WebSerialModbusClient {
       console.debug(`${this.debugPrefix} transfer() write start`);
       this.frameRxChunks = 0;
       this.frameFirstByteMs = -1;
-      await writer.write(frame);
+      try {
+        await withDeadline(writer.write(frame), this.writeTimeoutMs(frame.length), 'Serial write');
+      } catch (writeErr) {
+        // The writable side is broken (errored, or wedged past its deadline).
+        // Only a dead *read* used to trigger a reopen, so a write-only fault —
+        // an OUT endpoint that stalls while IN stays open — kept reusing the
+        // errored writer for the rest of the session. Reopen rebuilds both.
+        this.streamDead = true;
+        throw writeErr;
+      }
       this.txAt = Date.now();
       console.debug(`${this.debugPrefix} transfer() write complete`);
 

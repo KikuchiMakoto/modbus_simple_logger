@@ -80,23 +80,60 @@ const kStopBitsIndexMapping = [1, 1.5, 2];
 const kUsbControlInterfaceClass = 2;
 const kUsbTransferInterfaceClass = 10;
 
-/** Find the first interface implementing `classCode`. */
-function findInterface(device: USBDevice, classCode: number): USBInterface {
-  const configuration = device.configurations[0];
-  for (const iface of configuration.interfaces) {
-    if (iface.alternates[0].interfaceClass === classCode) return iface;
-  }
-  throw new TypeError(`Unable to find interface with class ${classCode}.`);
+/**
+ * Where the CDC-ACM function lives on a device: one configuration, its control
+ * interface, and the data interface alternate that carries the bulk endpoints.
+ *
+ * Resolved as a unit, and the values found here are the ones open() selects.
+ * The old lookup read `configurations[0]` / `alternates[0]` but then selected
+ * configuration value 1 unconditionally, so a device whose CDC function sat in
+ * configuration 2, or whose bulk endpoints were on alternate 1 (alternate 0
+ * being the zero-bandwidth setting), either failed to connect or ran on
+ * endpoints that were not the active ones.
+ */
+export interface CdcLayout {
+  configurationValue: number;
+  controlInterface: number;
+  dataInterface: number;
+  dataAlternate: number;
+  inEndpoint: USBEndpoint;
+  outEndpoint: USBEndpoint;
 }
 
-/** Find the first endpoint on `iface` with the given direction. */
-function findEndpoint(iface: USBInterface, direction: USBDirection): USBEndpoint {
-  for (const endpoint of iface.alternates[0].endpoints) {
-    if (endpoint.direction === direction) return endpoint;
+const bulk = (alt: USBAlternateInterface, direction: USBDirection): USBEndpoint | undefined =>
+  alt.endpoints.find((e) => e.direction === direction && e.type === 'bulk') ??
+  alt.endpoints.find((e) => e.direction === direction);
+
+/**
+ * Find the CDC-ACM layout. Prefers the active configuration, then the others
+ * in descriptor order. Exported for tests.
+ */
+export function findCdcLayout(device: USBDevice): CdcLayout {
+  const configs = [...device.configurations];
+  const active = device.configuration?.configurationValue;
+  if (active !== undefined) configs.sort((a, b) => Number(b.configurationValue === active) - Number(a.configurationValue === active));
+
+  for (const config of configs) {
+    const control = config.interfaces.find((i) => i.alternates.some((a) => a.interfaceClass === kUsbControlInterfaceClass));
+    for (const iface of config.interfaces) {
+      for (const alt of iface.alternates) {
+        if (alt.interfaceClass !== kUsbTransferInterfaceClass) continue;
+        const inEndpoint = bulk(alt, 'in');
+        const outEndpoint = bulk(alt, 'out');
+        if (!inEndpoint || !outEndpoint) continue;
+        return {
+          configurationValue: config.configurationValue,
+          // Single-interface CDC variants put everything on the data interface.
+          controlInterface: control?.interfaceNumber ?? iface.interfaceNumber,
+          dataInterface: iface.interfaceNumber,
+          dataAlternate: alt.alternateSetting,
+          inEndpoint,
+          outEndpoint,
+        };
+      }
+    }
   }
-  throw new TypeError(
-    `Interface ${iface.interfaceNumber} does not have an ${direction} endpoint.`,
-  );
+  throw new TypeError('Unable to find a CDC-ACM data interface with bulk IN and OUT endpoints.');
 }
 
 /**
@@ -174,6 +211,15 @@ class BulkInPipeline {
  * settled. That single property is the fix described at the top of this file.
  */
 class UsbEndpointUnderlyingSource implements UnderlyingDefaultSource<Uint8Array> {
+  /**
+   * Set by cancel(). A pull() that was awaiting a transfer when the reader was
+   * cancelled is still alive; when its transfer completes it must not touch
+   * the (closed) controller — enqueue would throw, and the catch below used to
+   * stop the *shared* pipeline, killing the fresh stream that had already
+   * adopted it.
+   */
+  private cancelled = false;
+
   constructor(
     private readonly pipeline: BulkInPipeline,
     private readonly onError: () => void,
@@ -182,6 +228,10 @@ class UsbEndpointUnderlyingSource implements UnderlyingDefaultSource<Uint8Array>
   async pull(controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
     try {
       const result = await this.pipeline.next();
+      // The transfer completed for a stream nobody reads any more. Its bytes
+      // are dropped — the successor stream was built after the cancel, so the
+      // client has already treated everything before it as stale.
+      if (this.cancelled) return;
 
       // Any non-ok status ends the stream, including `stall`. Clearing the halt
       // and carrying on was tried and removed: a halted endpoint completes the
@@ -208,6 +258,7 @@ class UsbEndpointUnderlyingSource implements UnderlyingDefaultSource<Uint8Array>
         );
       }
     } catch (error) {
+      if (this.cancelled) return;
       this.pipeline.stop();
       controller.error(error instanceof Error ? error : new Error(String(error)));
       this.onError();
@@ -226,6 +277,7 @@ class UsbEndpointUnderlyingSource implements UnderlyingDefaultSource<Uint8Array>
    * off rather than racing it.
    */
   cancel(): void {
+    this.cancelled = true;
     this.onError();
   }
 }
@@ -238,30 +290,28 @@ class UsbEndpointUnderlyingSink implements UnderlyingSink<Uint8Array> {
     private readonly onError: () => void,
   ) {}
 
-  async write(
-    chunk: Uint8Array,
-    controller: WritableStreamDefaultController,
-  ): Promise<void> {
+  async write(chunk: Uint8Array): Promise<void> {
     try {
       const result = await this.device.transferOut(
         this.endpointNumber,
         chunk as BufferSource,
       );
-      if (result.status !== 'ok') {
-        controller.error(new Error(`USB error: ${result.status}`));
-        this.onError();
-      }
+      if (result.status !== 'ok') throw new Error(`USB error: ${result.status}`);
     } catch (error) {
-      controller.error(error instanceof Error ? error : new Error(String(error)));
+      // Throw, not controller.error() + return. With the latter the write()
+      // that hit the fault resolved as if the frame had gone out, and only the
+      // *next* write rejected — so the client waited a full read deadline for
+      // an answer to a request that was never sent. A rejected sink write
+      // errors the stream and rejects this very writer.write().
       this.onError();
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 }
 
 /** A CDC-ACM device presented through the Web Serial `SerialPort` shape. */
 export class WebUsbSerialPort {
-  private readonly controlInterface: USBInterface;
-  private readonly transferInterface: USBInterface;
+  private readonly layout: CdcLayout;
   private readonly inEndpoint: USBEndpoint;
   private readonly outEndpoint: USBEndpoint;
 
@@ -276,10 +326,14 @@ export class WebUsbSerialPort {
   };
 
   constructor(private readonly device: USBDevice) {
-    this.controlInterface = findInterface(device, kUsbControlInterfaceClass);
-    this.transferInterface = findInterface(device, kUsbTransferInterfaceClass);
-    this.inEndpoint = findEndpoint(this.transferInterface, 'in');
-    this.outEndpoint = findEndpoint(this.transferInterface, 'out');
+    this.layout = findCdcLayout(device);
+    this.inEndpoint = this.layout.inEndpoint;
+    this.outEndpoint = this.layout.outEndpoint;
+  }
+
+  /** True when `device` is the very USBDevice behind this port. */
+  isDevice(device: USBDevice): boolean {
+    return device === this.device;
   }
 
   get readable(): ReadableStream<Uint8Array> | null {
@@ -292,30 +346,34 @@ export class WebUsbSerialPort {
           BULK_IN_PIPELINE_DEPTH,
         );
       }
-      this.readable_ = new ReadableStream<Uint8Array>(
+      // Identity-checked: a late callback from a previous stream must not
+      // clear the reference to its successor.
+      const stream: ReadableStream<Uint8Array> = new ReadableStream<Uint8Array>(
         new UsbEndpointUnderlyingSource(this.pipeline_, () => {
-          this.readable_ = null;
+          if (this.readable_ === stream) this.readable_ = null;
         }),
         { highWaterMark: this.serialOptions_.bufferSize ?? kDefaultBufferSize },
       );
+      this.readable_ = stream;
     }
     return this.readable_;
   }
 
   get writable(): WritableStream<Uint8Array> | null {
     if (!this.writable_ && this.device.opened) {
-      this.writable_ = new WritableStream<Uint8Array>(
+      const stream: WritableStream<Uint8Array> = new WritableStream<Uint8Array>(
         new UsbEndpointUnderlyingSink(
           this.device,
           this.outEndpoint.endpointNumber,
           () => {
-            this.writable_ = null;
+            if (this.writable_ === stream) this.writable_ = null;
           },
         ),
         new ByteLengthQueuingStrategy({
           highWaterMark: this.serialOptions_.bufferSize ?? kDefaultBufferSize,
         }),
       );
+      this.writable_ = stream;
     }
     return this.writable_;
   }
@@ -324,13 +382,19 @@ export class WebUsbSerialPort {
     this.serialOptions_ = options;
     this.validateOptions();
     try {
+      const { configurationValue, controlInterface, dataInterface, dataAlternate } = this.layout;
       await this.device.open();
-      if (this.device.configuration === null) {
-        await this.device.selectConfiguration(1);
+      if (this.device.configuration?.configurationValue !== configurationValue) {
+        await this.device.selectConfiguration(configurationValue);
       }
-      await this.device.claimInterface(this.controlInterface.interfaceNumber);
-      if (this.controlInterface !== this.transferInterface) {
-        await this.device.claimInterface(this.transferInterface.interfaceNumber);
+      await this.device.claimInterface(controlInterface);
+      if (controlInterface !== dataInterface) {
+        await this.device.claimInterface(dataInterface);
+      }
+      // Only when non-default: alternate 0 is what a fresh claim already has,
+      // and some CDC firmwares STALL a redundant SET_INTERFACE.
+      if (dataAlternate !== 0) {
+        await this.device.selectAlternateInterface(dataInterface, dataAlternate);
       }
       await this.setLineCoding();
       await this.setSignals({ dataTerminalReady: true });
@@ -408,7 +472,7 @@ export class WebUsbSerialPort {
         recipient: 'interface',
         request: kSetControlLineState,
         value,
-        index: this.controlInterface.interfaceNumber,
+        index: this.layout.controlInterface,
       });
     }
     if (signals.break !== undefined) {
@@ -418,7 +482,7 @@ export class WebUsbSerialPort {
         recipient: 'interface',
         request: kSendBreak,
         value: this.outputSignals_.break ? 0xffff : 0x0000,
-        index: this.controlInterface.interfaceNumber,
+        index: this.layout.controlInterface,
       });
     }
   }
@@ -459,7 +523,7 @@ export class WebUsbSerialPort {
         recipient: 'interface',
         request: kSetLineCoding,
         value: 0x00,
-        index: this.controlInterface.interfaceNumber,
+        index: this.layout.controlInterface,
       },
       buffer,
     );
