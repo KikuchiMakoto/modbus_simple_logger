@@ -5,29 +5,11 @@ export interface AxisDescriptor {
   readonly index: number;
 }
 
-/**
- * Resolves the numeric value of an axis from a DataPoint.
- */
-export function getAxisValue(point: DataPoint, desc: AxisDescriptor): number {
-  switch (desc.kind) {
-    case 'time':
-      return point.timestamp;
-    case 'raw':
-      return point.aiRaw[desc.index] ?? 0;
-    case 'physical':
-      return point.aiPhysical[desc.index] ?? 0;
-    case 'param':
-      return point.param[desc.index] ?? 0;
-    default:
-      return 0;
-  }
-}
-
 export type AxisAccessor = (point: DataPoint) => number;
 
 /**
- * Returns a high-performance accessor function for an axis descriptor,
- * eliminating switch dispatch in hot loops.
+ * Returns an accessor for an axis descriptor, so the hot loops below do not
+ * dispatch on `kind` per sample.
  */
 export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
   const index = desc.index;
@@ -45,342 +27,411 @@ export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
   }
 }
 
-/**
- * 2D-M4 (MinMax) decimation for parametric / hysteresis / time-series display (間引B).
- *
- * Divides the input points into K buckets and extracts extrema, endpoints, and
- * up to two invalid-value boundary points per bucket.
- * Points are returned in original sequential order (sorted by source index and deduplicated).
- *
- * This aims to preserve:
- * 1. Both X and Y extrema (peaks and valleys) are preserved.
- * 2. Hysteresis loops, Lissajous curves, and direction-reversal trajectories in source order.
- * 3. Constant O(N) single-pass scan with near-zero allocations (typically ~0.2ms for 65k points).
- * 4. Fused min/max extent calculation avoiding secondary O(N) traversal passes.
- *
- * @param points Source array of DataPoint
- * @param xDesc Descriptor for the X axis
- * @param yDesc Descriptor for the Y axis
- * @param targetPoints Target output points (currently 1024). Parametric output may reach 1.5x.
- * @returns Decimated tuple of [outX, outY, xMin, xMax, yMin, yMax]
- */
-/** Specialized M4 decimation for monotonic time-series (X = 'time').
- * Because time is strictly monotonic, in every block [start, end) Xmin is always
- * at `start` and Xmax is always at `end - 1`.
- *
- * Specializing this path:
- * 1. Eliminates searching for Xmin/Xmax in each block, halving inner-loop comparisons.
- * 2. Eliminates calling `getX(pt)` inside the inner loop.
- * 3. Replaces the 6-element insertion sort with O(1) two-element comparator.
- * 4. Reduces max bucket points from 6 to 4, cutting buffer allocations by 33%.
- */
-function decimateTimeM4(
-  points: readonly DataPoint[],
-  yDesc: AxisDescriptor,
-  targetPoints: number,
-): [Float64Array, Float64Array, number, number, number, number] {
-  const n = points.length;
-  const getY = getAxisAccessor(yDesc);
+/** [outX, outY, xMin, xMax, yMin, yMax]. Extents are over finite values only. */
+export type DecimationResult = [Float64Array, Float64Array, number, number, number, number];
 
-  if (n <= targetPoints) {
-    const outX = new Float64Array(n);
-    const outY = new Float64Array(n);
-    let globalYmin = Infinity;
-    let globalYmax = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const pt = points[i];
-      const x = pt.timestamp;
-      const y = getY(pt);
-      outX[i] = x;
-      outY[i] = y;
-      if (Number.isFinite(y)) {
-        if (y < globalYmin) globalYmin = y;
-        if (y > globalYmax) globalYmax = y;
-      }
-    }
-    const globalXmin = n > 0 ? points[0].timestamp : Infinity;
-    const globalXmax = n > 0 ? points[n - 1].timestamp : -Infinity;
-    return [outX, outY, globalXmin, globalXmax, globalYmin, globalYmax];
-  }
+/** Output cap as a multiple of the target. See decimate2DM4. */
+export const DECIMATION_MAX_OUTPUT_RATIO = 1.5;
 
-  // Two additional candidates preserve the first and last non-finite Y values
-  // in each bucket, so Plotly can break a line at Parameter NaNs. The global
-  // output budget remains targetPoints * 1.5.
-  const maxOutputPoints = Math.floor(targetPoints * 1.5);
-  const numBuckets = Math.max(1, Math.floor(maxOutputPoints / 6));
-  const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
-  const maxBucketOutputPoints = numBuckets * 6;
+// Scratch buffers reused across calls. Four charts decimate one after another
+// on the main thread on every redraw, and the buffer can hold 65,536 points;
+// reallocating ~1.3 MB of typed arrays per chart per redraw is pure GC churn.
+// Nothing here escapes: the returned arrays are always fresh copies, because
+// Plotly keeps a reference to the trace data it was handed.
+let scratchX = new Float64Array(0);
+let scratchY = new Float64Array(0);
+let scratchValid = new Uint8Array(0);
+let scratchBoundary = new Int32Array(0);
 
-  const outX = new Float64Array(maxBucketOutputPoints);
-  const outY = new Float64Array(maxBucketOutputPoints);
-  let outCount = 0;
-  const candidates = new Int32Array(6);
-
-  let globalYmin = Infinity;
-  let globalYmax = -Infinity;
-  const globalXmin = points[0].timestamp;
-  const globalXmax = points[n - 1].timestamp;
-
-  for (let b = 0; b < numBuckets; b++) {
-    const start = b * bucketSize;
-    const end = start + bucketSize < n ? start + bucketSize : n;
-    if (start >= end) break;
-
-    let ymin = Infinity;
-    let ymax = -Infinity;
-    let ymin_i = -1;
-    let ymax_i = -1;
-    let firstNonFiniteY = -1;
-    let lastNonFiniteY = -1;
-
-    for (let i = start; i < end; i++) {
-      const y = getY(points[i]);
-      if (!Number.isFinite(y)) {
-        if (firstNonFiniteY < 0) firstNonFiniteY = i;
-        lastNonFiniteY = i;
-        continue;
-      }
-      if (y < ymin) {
-        ymin = y;
-        ymin_i = i;
-      }
-      if (y > ymax) {
-        ymax = y;
-        ymax_i = i;
-      }
-    }
-
-    if (Number.isFinite(ymin) && ymin < globalYmin) globalYmin = ymin;
-    if (Number.isFinite(ymax) && ymax > globalYmax) globalYmax = ymax;
-
-    let candidateCount = 0;
-    candidates[candidateCount++] = start;
-    if (ymin_i >= 0) candidates[candidateCount++] = ymin_i;
-    if (ymax_i >= 0) candidates[candidateCount++] = ymax_i;
-    if (firstNonFiniteY >= 0) candidates[candidateCount++] = firstNonFiniteY;
-    if (lastNonFiniteY >= 0 && lastNonFiniteY !== firstNonFiniteY) {
-      candidates[candidateCount++] = lastNonFiniteY;
-    }
-    if (end - 1 !== start) candidates[candidateCount++] = end - 1;
-
-    // Sort the fixed-size candidate list into original sample order.
-    for (let i = 1; i < candidateCount; i++) {
-      const key = candidates[i];
-      let j = i - 1;
-      while (j >= 0 && candidates[j] > key) {
-        candidates[j + 1] = candidates[j];
-        j--;
-      }
-      candidates[j + 1] = key;
-    }
-
-    let previous = -1;
-    for (let i = 0; i < candidateCount; i++) {
-      const index = candidates[i];
-      if (index === previous) continue;
-      outX[outCount] = points[index].timestamp;
-      outY[outCount] = getY(points[index]);
-      outCount++;
-      previous = index;
-    }
-  }
-
-  return [outX.subarray(0, outCount), outY.subarray(0, outCount), globalXmin, globalXmax, globalYmin, globalYmax];
+function ensureScratch(n: number): void {
+  if (scratchX.length >= n) return;
+  // Grow geometrically so a buffer filling towards its cap does not reallocate
+  // on every call.
+  const size = Math.max(n, scratchX.length * 2, 1024);
+  scratchX = new Float64Array(size);
+  scratchY = new Float64Array(size);
+  scratchValid = new Uint8Array(size);
+  // Portion bounds are stored as [start, end) pairs; a bucket of k samples has
+  // at most ceil(k / 2) + 1 portions, so 2 * size + 4 always suffices.
+  scratchBoundary = new Int32Array(size * 2 + 4);
 }
 
 /**
- * Full 2D-M4 decimation for non-monotonic parametric curves (X != 'time').
- * Retains endpoints, X/Y extrema, and invalid-value boundaries per bucket to
- * preserve sample order, loop shape, and visible breaks at Parameter NaNs.
- */
-function decimateParametric2DM4(
-  points: readonly DataPoint[],
-  xDesc: AxisDescriptor,
-  yDesc: AxisDescriptor,
-  targetPoints: number,
-): [Float64Array, Float64Array, number, number, number, number] {
-  const n = points.length;
-  const getX = getAxisAccessor(xDesc);
-  const getY = getAxisAccessor(yDesc);
-
-  let globalXmin = Infinity;
-  let globalXmax = -Infinity;
-  let globalYmin = Infinity;
-  let globalYmax = -Infinity;
-
-  if (n <= targetPoints) {
-    const outX = new Float64Array(n);
-    const outY = new Float64Array(n);
-    for (let i = 0; i < n; i++) {
-      const pt = points[i];
-      const x = getX(pt);
-      const y = getY(pt);
-      outX[i] = x;
-      outY[i] = y;
-      if (Number.isFinite(x)) {
-        if (x < globalXmin) globalXmin = x;
-        if (x > globalXmax) globalXmax = x;
-      }
-      if (Number.isFinite(y)) {
-        if (y < globalYmin) globalYmin = y;
-        if (y > globalYmax) globalYmax = y;
-      }
-    }
-    return [outX, outY, globalXmin, globalXmax, globalYmin, globalYmax];
-  }
-
-  // Eight candidates are possible per bucket: endpoints, four extrema, and
-  // two invalid-value boundaries. Keep the actual output bounded to
-  // targetPoints * 1.5 (1024 -> 1536), rather than allowing the candidate
-  // count to grow to targetPoints * 1.5 or more by accident.
-  // Two extra candidates retain the first/last invalid XY samples in each
-  // bucket. These NaNs are line breaks, not values to replace or interpolate.
-  const maxOutputPoints = Math.floor(targetPoints * 1.5);
-  const numBuckets = Math.max(1, Math.floor(maxOutputPoints / 8));
-  const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
-
-  // Maximum possible points = numBuckets * 8
-  const maxOutput = numBuckets * 8;
-  const outX = new Float64Array(maxOutput);
-  const outY = new Float64Array(maxOutput);
-  let outCount = 0;
-
-  // Reusable candidate buffer on stack/closure (no GC)
-  const cand = new Int32Array(8);
-
-  for (let b = 0; b < numBuckets; b++) {
-    const start = b * bucketSize;
-    const end = start + bucketSize < n ? start + bucketSize : n;
-    if (start >= end) break;
-
-    const first = points[start];
-    const firstX = getX(first);
-    const firstY = getY(first);
-    let xmin = Number.isFinite(firstX) ? firstX : Infinity;
-    let xmax = Number.isFinite(firstX) ? firstX : -Infinity;
-    let ymin = Number.isFinite(firstY) ? firstY : Infinity;
-    let ymax = Number.isFinite(firstY) ? firstY : -Infinity;
-
-    let xmin_i = Number.isFinite(firstX) ? start : -1;
-    let xmax_i = Number.isFinite(firstX) ? start : -1;
-    let ymin_i = Number.isFinite(firstY) ? start : -1;
-    let ymax_i = Number.isFinite(firstY) ? start : -1;
-    let firstInvalid = Number.isFinite(firstX) && Number.isFinite(firstY) ? -1 : start;
-    let lastInvalid = firstInvalid;
-
-    for (let i = start + 1; i < end; i++) {
-      const pt = points[i];
-      const x = getX(pt);
-      const y = getY(pt);
-
-      if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        if (firstInvalid < 0) firstInvalid = i;
-        lastInvalid = i;
-      }
-
-      if (Number.isFinite(x) && x < xmin) {
-        xmin = x;
-        xmin_i = i;
-      }
-      if (Number.isFinite(x) && x > xmax) {
-        xmax = x;
-        xmax_i = i;
-      }
-      if (Number.isFinite(y) && y < ymin) {
-        ymin = y;
-        ymin_i = i;
-      }
-      if (Number.isFinite(y) && y > ymax) {
-        ymax = y;
-        ymax_i = i;
-      }
-    }
-
-    if (Number.isFinite(xmin) && xmin < globalXmin) globalXmin = xmin;
-    if (Number.isFinite(xmax) && xmax > globalXmax) globalXmax = xmax;
-    if (Number.isFinite(ymin) && ymin < globalYmin) globalYmin = ymin;
-    if (Number.isFinite(ymax) && ymax > globalYmax) globalYmax = ymax;
-
-    let candidateCount = 0;
-    cand[candidateCount++] = start;
-    if (xmin_i >= 0) cand[candidateCount++] = xmin_i;
-    if (xmax_i >= 0) cand[candidateCount++] = xmax_i;
-    if (ymin_i >= 0) cand[candidateCount++] = ymin_i;
-    if (ymax_i >= 0) cand[candidateCount++] = ymax_i;
-    if (firstInvalid >= 0) cand[candidateCount++] = firstInvalid;
-    if (lastInvalid >= 0 && lastInvalid !== firstInvalid) cand[candidateCount++] = lastInvalid;
-    if (end - 1 !== start) cand[candidateCount++] = end - 1;
-
-    // Fast 6-element insertion sort
-    for (let i = 1; i < candidateCount; i++) {
-      const key = cand[i];
-      let j = i - 1;
-      while (j >= 0 && cand[j] > key) {
-        cand[j + 1] = cand[j];
-        j--;
-      }
-      cand[j + 1] = key;
-    }
-
-    // Deduplicate and output in sequential order
-    let prev = -1;
-    for (let j = 0; j < candidateCount; j++) {
-      const idx = cand[j];
-      if (idx !== prev) {
-        const pt = points[idx];
-        outX[outCount] = getX(pt);
-        outY[outCount] = getY(pt);
-        outCount++;
-        prev = idx;
-      }
-    }
-  }
-
-  // Subarray view if not full (zero-copy slice)
-  return [outX.subarray(0, outCount), outY.subarray(0, outCount), globalXmin, globalXmax, globalYmin, globalYmax];
-}
-
-/**
- * 2D-M4 (MinMax) chart decimation algorithm with fused extents calculation.
- * Preserves local extremes (xmin, xmax, ymin, ymax) and start/end points in O(N) time,
- * guaranteeing envelope preservation without peak-shaving.
+ * Chart M4 decimation for both time series and XY (parametric) curves.
  *
- * Automatically branches:
- * - When X is 'time' (strictly monotonic): uses decimateTimeM4 (halves comparisons, skips X search)
- * - When X is parametric (hysteresis/XY): uses decimateParametric2DM4 (full 6-point retention)
+ * Splits the input into buckets by sample index and, within each bucket, keeps
+ * the first/last sample and the Y extrema of every *valid run* — plus the X
+ * extrema when X is not monotonic time, where a hysteresis loop turns around on
+ * X as often as on Y. Points stay in source order, so loops are drawn in the
+ * order they were traced; nothing is sorted by X.
  *
- * @param points Source array of DataPoint
- * @param xDesc Descriptor for the X axis
- * @param yDesc Descriptor for the Y axis
- * @param targetPoints Target output points (e.g. 1024). Actual output will be ~1000 - 1500 points.
- * @returns Decimated tuple of [outX, outY, xMin, xMax, yMin, yMax]
+ * Invariant (the reason this is not a plain per-bucket M4): between any two
+ * consecutive finite output points there is no invalid input sample. A NaN in
+ * X or Y is a gap in the record, and bridging it draws a line through data that
+ * does not exist. Every time output crosses one or more invalid samples a
+ * single NaN marker is emitted, which scattergl renders as a line break
+ * (`connectgaps: false`).
+ *
+ * Budget: output never exceeds floor(target * DECIMATION_MAX_OUTPUT_RATIO)
+ * points, markers included. A bucket whose runs would not fit keeps its
+ * longest runs and drops the rest — a dropped run is shown as part of the gap,
+ * never joined across it. Short runs are what get dropped, and a run of one
+ * sample draws nothing in `lines` mode anyway.
+ *
+ * Extents are computed in the same pass, over finite values of each axis.
  */
 export function decimate2DM4(
   points: readonly DataPoint[],
   xDesc: AxisDescriptor,
   yDesc: AxisDescriptor,
   targetPoints: number,
-): [Float64Array, Float64Array, number, number, number, number] {
-  if (points.length === 0) {
-    return [new Float64Array(0), new Float64Array(0), Infinity, -Infinity, Infinity, -Infinity];
-  }
-  let monotonicTime = xDesc.kind === 'time';
-  if (monotonicTime) {
-    if (!Number.isFinite(points[0].timestamp)) monotonicTime = false;
-    for (let i = 1; i < points.length; i++) {
-      if (
-        !Number.isFinite(points[i].timestamp) ||
-        points[i].timestamp < points[i - 1].timestamp
-      ) {
-        monotonicTime = false;
-        break;
+): DecimationResult {
+  const n = points.length;
+  const getX = getAxisAccessor(xDesc);
+  const getY = getAxisAccessor(yDesc);
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+
+  if (n <= targetPoints) {
+    // Nothing to reduce: every point, NaNs included, goes to Plotly as is, and
+    // Plotly breaks the line at each NaN itself.
+    const outX = new Float64Array(n);
+    const outY = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = points[i];
+      const x = getX(p);
+      const y = getY(p);
+      outX[i] = x;
+      outY[i] = y;
+      if (Number.isFinite(x)) {
+        if (x < xMin) xMin = x;
+        if (x > xMax) xMax = x;
+      }
+      if (Number.isFinite(y)) {
+        if (y < yMin) yMin = y;
+        if (y > yMax) yMax = y;
       }
     }
+    return [outX, outY, xMin, xMax, yMin, yMax];
   }
-  if (monotonicTime) {
-    return decimateTimeM4(points, yDesc, targetPoints);
+
+  // Fast path for the overwhelmingly common case — every sample finite, and on
+  // a time axis, timestamps non-decreasing. One fused pass straight off the
+  // DataPoints, no scratch copies. It bails out (null) the moment it sees an
+  // invalid sample or a clock step, and the general path below takes over;
+  // for finite data both paths produce identical output.
+  const fast = decimateFinite(points, getX, getY, xDesc.kind !== 'time', targetPoints);
+  if (fast) return fast;
+
+  // General path. Pass 1: read each axis once, into flat arrays, since the run
+  // split and the per-run extrema below each revisit samples.
+  ensureScratch(n);
+  const xs = scratchX;
+  const ys = scratchY;
+  const valid = scratchValid;
+  let monotonic = xDesc.kind === 'time';
+  let prevX = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const x = getX(p);
+    const y = getY(p);
+    xs[i] = x;
+    ys[i] = y;
+    const fx = Number.isFinite(x);
+    const fy = Number.isFinite(y);
+    valid[i] = fx && fy ? 1 : 0;
+    if (fx) {
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+      if (monotonic) {
+        if (x < prevX) monotonic = false;
+        prevX = x;
+      }
+    } else {
+      monotonic = false;
+    }
+    if (fy) {
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+    }
   }
-  return decimateParametric2DM4(points, xDesc, yDesc, targetPoints);
+
+  // Monotonic time: a run's X extrema are its first and last sample, so only
+  // Y needs searching. Anything else (XY, or a clock that stepped backwards)
+  // tracks X extrema too.
+  const trackX = !monotonic;
+  // Bucket count is sized for one full run plus two markers per bucket; the
+  // spare slot per bucket is the slack gap-heavy buckets draw on (see budget).
+  const { core, maxOutput, numBuckets, bucketSize } = layout(n, trackX, targetPoints);
+
+  const outX = new Float64Array(maxOutput);
+  const outY = new Float64Array(maxOutput);
+  let out = 0;
+  // Source index of the last finite point written, and of the latest invalid
+  // sample seen so far. A marker is owed exactly when the latter is newer.
+  let lastEmitted = -1;
+  let lastInvalid = -1;
+  const bounds = scratchBoundary;
+  const cand = new Int32Array(core);
+  // Per-portion "keep" flags for over-budget buckets; reused.
+  let keep = new Uint8Array(64);
+
+  const emitRun = (start: number, end: number, invalidBefore: number): void => {
+    if (invalidBefore > lastEmitted && out > 0) {
+      outX[out] = NaN;
+      outY[out] = NaN;
+      out++;
+    }
+    let count = 0;
+    cand[count++] = start;
+    if (end - 1 !== start) {
+      let yminI = start;
+      let ymaxI = start;
+      let xminI = start;
+      let xmaxI = start;
+      for (let i = start + 1; i < end; i++) {
+        const y = ys[i];
+        if (y < ys[yminI]) yminI = i;
+        if (y > ys[ymaxI]) ymaxI = i;
+        if (trackX) {
+          const x = xs[i];
+          if (x < xs[xminI]) xminI = i;
+          if (x > xs[xmaxI]) xmaxI = i;
+        }
+      }
+      cand[count++] = yminI;
+      cand[count++] = ymaxI;
+      if (trackX) {
+        cand[count++] = xminI;
+        cand[count++] = xmaxI;
+      }
+      cand[count++] = end - 1;
+      // Insertion sort into source order; at most six entries.
+      for (let i = 1; i < count; i++) {
+        const key = cand[i];
+        let j = i - 1;
+        while (j >= 0 && cand[j] > key) {
+          cand[j + 1] = cand[j];
+          j--;
+        }
+        cand[j + 1] = key;
+      }
+    }
+    let prev = -1;
+    for (let i = 0; i < count; i++) {
+      const idx = cand[i];
+      if (idx === prev) continue;
+      outX[out] = xs[idx];
+      outY[out] = ys[idx];
+      out++;
+      prev = idx;
+    }
+    lastEmitted = end - 1;
+  };
+
+  // Cost of a run including its (possible) marker. Conservative: the marker is
+  // counted even where none is owed.
+  const costOf = (len: number): number => (len < core ? len : core) + 1;
+
+  for (let b = 0; b < numBuckets; b++) {
+    const bStart = b * bucketSize;
+    if (bStart >= n) break;
+    const bEnd = Math.min(n, bStart + bucketSize);
+
+    // Split the bucket into valid runs. `invalidAtStart` is the latest invalid
+    // sample before the bucket, which is what a run starting at bStart follows.
+    const invalidAtStart = lastInvalid;
+    let portions = 0;
+    let runStart = -1;
+    for (let i = bStart; i < bEnd; i++) {
+      if (valid[i]) {
+        if (runStart < 0) runStart = i;
+      } else {
+        if (runStart >= 0) {
+          bounds[portions * 2] = runStart;
+          bounds[portions * 2 + 1] = i;
+          portions++;
+          runStart = -1;
+        }
+        lastInvalid = i;
+      }
+    }
+    if (runStart >= 0) {
+      bounds[portions * 2] = runStart;
+      bounds[portions * 2 + 1] = bEnd;
+      portions++;
+    }
+    if (portions === 0) continue;
+
+    // This bucket may spend whatever is left after reserving one full run plus
+    // marker (core + 1) for every bucket still to come. Ordinary buckets use at
+    // most `core`, so the slack they leave accumulates for the buckets that do
+    // contain gaps, rather than those having to drop runs.
+    const budget = maxOutput - out - (numBuckets - b - 1) * (core + 1);
+    let total = 0;
+    for (let r = 0; r < portions; r++) total += costOf(bounds[r * 2 + 1] - bounds[r * 2]);
+
+    if (total <= budget) {
+      for (let r = 0; r < portions; r++) {
+        const s = bounds[r * 2];
+        emitRun(s, bounds[r * 2 + 1], s === bStart ? invalidAtStart : s - 1);
+      }
+      continue;
+    }
+
+    // Over budget: keep the longest runs that fit, greedily.
+    if (keep.length < portions) keep = new Uint8Array(portions * 2);
+    keep.fill(0, 0, portions);
+    let remaining = budget;
+    for (;;) {
+      let best = -1;
+      let bestLen = 0;
+      for (let r = 0; r < portions; r++) {
+        if (keep[r]) continue;
+        const len = bounds[r * 2 + 1] - bounds[r * 2];
+        if (len > bestLen && costOf(len) <= remaining) {
+          best = r;
+          bestLen = len;
+        }
+      }
+      if (best < 0) break;
+      keep[best] = 1;
+      remaining -= costOf(bestLen);
+    }
+    for (let r = 0; r < portions; r++) {
+      if (!keep[r]) continue;
+      const s = bounds[r * 2];
+      // A dropped run is treated as part of the gap: anything before this run
+      // that was not emitted forces a marker. The run's own predecessor is an
+      // invalid sample (or, at bStart, whatever preceded the bucket), and a
+      // dropped run in between leaves lastEmitted older than that, so the
+      // marker condition below still sees it.
+      const before = s === bStart ? invalidAtStart : s - 1;
+      emitRun(s, bounds[r * 2 + 1], before);
+    }
+  }
+
+  return [outX.subarray(0, out), outY.subarray(0, out), xMin, xMax, yMin, yMax];
+}
+
+/** Bucket layout shared by both paths, so they agree exactly on finite data. */
+function layout(n: number, trackX: boolean, targetPoints: number) {
+  const core = trackX ? 6 : 4;
+  const capacity = core + 2;
+  const maxOutput = Math.max(capacity, Math.floor(targetPoints * DECIMATION_MAX_OUTPUT_RATIO));
+  const numBuckets = Math.max(1, Math.floor(maxOutput / capacity));
+  return { core, capacity, maxOutput, numBuckets, bucketSize: Math.ceil(n / numBuckets) };
+}
+
+/**
+ * Single-pass M4 for all-finite input. Returns null (having written nothing
+ * anyone sees) on the first non-finite sample, or — when `trackX` is false —
+ * on the first timestamp that steps backwards.
+ */
+function decimateFinite(
+  points: readonly DataPoint[],
+  getX: AxisAccessor,
+  getY: AxisAccessor,
+  trackX: boolean,
+  targetPoints: number,
+): DecimationResult | null {
+  const n = points.length;
+  const { maxOutput, numBuckets, bucketSize } = layout(n, trackX, targetPoints);
+  const outX = new Float64Array(maxOutput);
+  const outY = new Float64Array(maxOutput);
+  const cand = [0, 0, 0, 0, 0, 0];
+  let out = 0;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  let prevX = -Infinity;
+
+  for (let b = 0; b < numBuckets; b++) {
+    const start = b * bucketSize;
+    if (start >= n) break;
+    const end = Math.min(n, start + bucketSize);
+
+    const p0 = points[start];
+    const x0 = getX(p0);
+    const y0 = getY(p0);
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return null;
+    if (!trackX) {
+      if (x0 < prevX) return null;
+      prevX = x0;
+    }
+    let ylo = y0;
+    let yhi = y0;
+    let xlo = x0;
+    let xhi = x0;
+    let yloI = start;
+    let yhiI = start;
+    let xloI = start;
+    let xhiI = start;
+
+    for (let i = start + 1; i < end; i++) {
+      const p = points[i];
+      const x = getX(p);
+      const y = getY(p);
+      // x - x is NaN exactly for NaN and ±Infinity: one test, no call.
+      if (x - x !== 0 || y - y !== 0) return null;
+      if (trackX) {
+        if (x < xlo) { xlo = x; xloI = i; }
+        else if (x > xhi) { xhi = x; xhiI = i; }
+      } else {
+        if (x < prevX) return null;
+        prevX = x;
+      }
+      if (y < ylo) { ylo = y; yloI = i; }
+      else if (y > yhi) { yhi = y; yhiI = i; }
+    }
+
+    if (ylo < yMin) yMin = ylo;
+    if (yhi > yMax) yMax = yhi;
+    if (trackX) {
+      if (xlo < xMin) xMin = xlo;
+      if (xhi > xMax) xMax = xhi;
+    }
+
+    let count = 0;
+    cand[count++] = start;
+    if (end - 1 !== start) {
+      cand[count++] = yloI;
+      cand[count++] = yhiI;
+      if (trackX) {
+        cand[count++] = xloI;
+        cand[count++] = xhiI;
+      }
+      cand[count++] = end - 1;
+      for (let i = 1; i < count; i++) {
+        const key = cand[i];
+        let j = i - 1;
+        while (j >= 0 && cand[j] > key) {
+          cand[j + 1] = cand[j];
+          j--;
+        }
+        cand[j + 1] = key;
+      }
+    }
+    let prev = -1;
+    for (let i = 0; i < count; i++) {
+      const idx = cand[i];
+      if (idx === prev) continue;
+      const p = points[idx];
+      outX[out] = getX(p);
+      outY[out] = getY(p);
+      out++;
+      prev = idx;
+    }
+  }
+
+  if (!trackX) {
+    xMin = getX(points[0]);
+    xMax = getX(points[n - 1]);
+  }
+  return [outX.subarray(0, out), outY.subarray(0, out), xMin, xMax, yMin, yMax];
 }
 
 /**
@@ -393,12 +444,7 @@ export function decimate2DM4(
  */
 export function foldDataBufferHalf(buffer: readonly DataPoint[]): DataPoint[] {
   const n = buffer.length;
-  if (n <= 1) {
-    return buffer.slice();
-  }
-  // Origami folding is intentionally simple: retain even source positions.
-  // The caller doubles the future intake stride at the same time, so both the
-  // existing history and newly accepted samples stay on the same grid.
+  if (n <= 1) return buffer.slice();
   const result = new Array<DataPoint>(Math.ceil(n / 2));
   for (let source = 0, target = 0; source < n; source += 2, target += 1) {
     result[target] = buffer[source];
