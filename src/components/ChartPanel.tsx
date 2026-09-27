@@ -81,12 +81,14 @@ const LIGHT_PALETTE = Object.freeze({
 });
 
 // Invariant Plotly configuration hoisted to module scope to eliminate per-render useMemo overhead.
+// `staticPlot: true` disables all mouse/touch interactions (left-drag zoom,
+// axis-edge drag, wheel zoom, double-click, and the modebar) and skips
+// creating Plotly's `.drag` overlay rects altogether.
 const PLOT_CONFIG: Partial<Config> = Object.freeze<Partial<Config>>({
+  staticPlot: true,
   displayModeBar: false,
   responsive: true,
   displaylogo: false,
-  scrollZoom: true,
-  doubleClick: 'reset',
 });
 
 // Force-release the WebGL context(s) behind a graph div.
@@ -278,11 +280,11 @@ function ChartPanelComponent({
         gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
         // Explicit padded range (matplotlib-style 10% X margin). Falls back to
-        // Plotly autorange when the data has no finite extent. uirevision below
-        // still lets a user's manual zoom/pan persist across data updates.
+        // Plotly autorange when the data has no finite extent.
         ...(plot.xRange
           ? { range: plot.xRange, autorange: false as const }
           : { autorange: true as const }),
+        fixedrange: true,
       },
       yaxis: {
         title: { text: yTitle, font: { size: 11 } },
@@ -290,6 +292,7 @@ function ChartPanelComponent({
         ...(plot.yRange
           ? { range: plot.yRange, autorange: false as const }
           : { autorange: true as const }),
+        fixedrange: true,
       },
       // Margins sized to what is actually drawn in them, not to a uniform frame.
       // At 240px tall and a card wide, the difference is most of the plot: the
@@ -318,7 +321,7 @@ function ChartPanelComponent({
       // only hide the labels (plotly.js#1987 — the spike lines still render),
       // which is why both are set.
       hovermode: false as const,
-      uirevision: `${xAxis}-${yAxis}`,
+      dragmode: false as const,
       datarevision: displayRevision,
     }),
     [xAxis, yAxis, palette, displayRevision, plot, xTitle, yTitle],
