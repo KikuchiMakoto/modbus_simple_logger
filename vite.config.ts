@@ -134,6 +134,14 @@ function precacheManifest(): Plugin {
 
 export default defineConfig(({ command, isPreview }) => ({
   plugins: [react(), pyodideAssets(), precacheManifest()],
+  resolve: {
+    // typedarray-pool is a Plotly WebGL dependency. Its legacy CommonJS
+    // `require('buffer')` must resolve to the browser implementation rather
+    // than being externalized as a Node builtin by the browser build.
+    alias: {
+      buffer: 'buffer/',
+    },
+  },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
     'import.meta.env.VITE_APP_NAME': JSON.stringify(pkg.name),

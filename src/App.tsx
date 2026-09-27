@@ -1,4 +1,5 @@
 import {
+  memo,
   startTransition,
   useCallback,
   useEffect,
@@ -32,14 +33,12 @@ import {
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
   MAX_POINTS_IN_MEMORY,
   SAVE_BUFFER_MAX_POINTS,
-  SAVE_BUFFER_FOLD_TARGET_POINTS,
   CHART_REDRAW_INTERVAL_MS,
   CHART_REDRAW_INTERVAL_CONSTRAINED_MS,
   CHART_REDRAW_CONSTRAINED_MAX_CORES,
   CHART_REDRAW_DEFER_RETRY_MS,
   CHART_REDRAW_DEFER_MAX_MS,
   READOUT_PUBLISH_INTERVAL_MS,
-  CHANNEL_CARD_MIN_INTERVAL_MS,
   CHART_INPUT_INTERVAL_MS,
   NON_SAVING_CHART_PREVIEW_POINTS,
   BATCH_FLUSH_THRESHOLD,
@@ -54,10 +53,9 @@ import {
   loadAiCalibration,
   saveAiCalibration,
   getAiStatus,
-  hx711RawToMvPerV,
-  hx711RawToMicroStrain,
-  ads1115RawToVolt,
-  rawToDisplayValue,
+  DEFAULT_AI_CALIBRATION,
+  rawToVoltageValue,
+  VOLTAGE_UNITS,
   hx711SlopePerRaw,
   HX711_DENOMINATOR_UNITS,
   getLevelColor,
@@ -75,7 +73,7 @@ import {
   StoredDataPoint,
 } from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
-import { foldDataBufferM4 } from './utils/m4Decimation';
+import { foldDataBufferHalf } from './utils/m4Decimation';
 import {
   discardRecoveredRun,
   downloadRecoveredRun,
@@ -210,30 +208,25 @@ const FIXED_SERIAL_SETTINGS: SerialSettings = {
   parity: 'none',
 };
 const FIXED_SLAVE_ID = 1;
+// How long Disconnect waits for a poll already on the wire before tearing the
+// link down anyway. Longer than any healthy poll (read deadline ~200 ms plus a
+// possible 200 ms quiet period and a reopen), short enough that the button
+// never looks dead.
+const DISCONNECT_POLL_WAIT_MS = 3000;
 // The register map on the wire is always 16-bit int (i16t) Input Registers;
 // the 32-bit float (f32t) "Extended" mode has been removed.
 const PRECISION_LABEL = 'i16t';
 
-const computeSensorValues = (raw: number, idx: number) => {
-  if (idx < 8) {
-    return { voltage: hx711RawToMvPerV(raw), microStrain: hx711RawToMicroStrain(raw) };
-  }
-  return { voltage: ads1115RawToVolt(raw), microStrain: 0 };
-};
-
 const createAiChannels = (calibration: AiCalibration[]): AiChannel[] =>
   Array.from({ length: AI_CHANNELS }, (_, idx) => {
     const raw = 0;
-    const physical = aiToPhysical(raw, calibration[idx]);
-    const { voltage, microStrain } = computeSensorValues(raw, idx);
+    const physical = aiToPhysical(raw, calibration[idx] ?? DEFAULT_AI_CALIBRATION);
     return {
       id: idx,
       raw,
       physical,
       label: `CH ${idx.toString().padStart(2, '0')}`,
       status: getAiStatus(raw),
-      voltage,
-      microStrain,
     };
   });
 
@@ -337,6 +330,193 @@ function ChannelSpecNote({
   );
 }
 
+const AiChannelCard = memo(function AiChannelCard({
+  id,
+  raw,
+  physical,
+  label,
+  mode,
+  isLocked,
+  onLabelChange,
+}: {
+  id: number;
+  raw: number;
+  physical: number;
+  label: string;
+  mode: VoltageMode;
+  isLocked: boolean;
+  onLabelChange: (id: number, text: string) => void;
+}) {
+  const voltage = rawToVoltageValue(raw, mode);
+  const unit = VOLTAGE_UNITS[mode];
+  const aiRatio = Math.min(1, Math.abs(raw) / 32767);
+  const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
+  const aiMeterHeight = Math.max(2, aiRatio * 100);
+
+  return (
+    <div
+      translate="no"
+      className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+    >
+      <div className="min-w-0 flex-1 px-1 py-0.5">
+        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+          <ChannelSpecNote
+            id={`ai-spec-note-${id}`}
+            label={formatAiChannelDisplayLabel(id)}
+            note={id < 8 ? HX711_SPEC_NOTE : ADS1115_SPEC_NOTE}
+            align={id % 8 < 4 ? 'left' : 'right'}
+          />
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => onLabelChange(id, e.target.value)}
+            disabled={isLocked}
+            title={isLocked ? LABEL_LOCKED_TITLE : undefined}
+            placeholder="Label"
+            className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+          />
+        </div>
+        <div className="space-y-0 pt-px text-base leading-none">
+          <div className="flex justify-between items-center leading-none">
+            <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
+            <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
+              {/* i16t Input Registers, so raw is an integer count —
+                  a decimal point here would be noise. */}
+              {raw}
+            </span>
+          </div>
+          <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
+            <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
+            <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
+              {physical.toFixed(3)}
+            </span>
+          </div>
+          <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
+            <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
+              {unit}
+            </span>
+            <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+              {voltage.toFixed(3)}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex w-1 items-end overflow-hidden rounded-r">
+        <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
+      </div>
+    </div>
+  );
+});
+
+const AoChannelCard = memo(function AoChannelCard({
+  id,
+  physical,
+  label,
+  isLocked,
+  onLabelChange,
+}: {
+  id: number;
+  physical: number;
+  label: string;
+  isLocked: boolean;
+  onLabelChange: (id: number, text: string) => void;
+}) {
+  const aoMeterHeight = Math.max(2, Math.min(1, Math.abs(physical) / AO_FULL_SCALE_MV) * 100);
+
+  return (
+    <div
+      translate="no"
+      className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
+    >
+      <div className="min-w-0 flex-1 px-1 py-0.5">
+        <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+          <ChannelSpecNote
+            id={`ao-spec-note-${id}`}
+            label={`CH ${id}`}
+            note={GP8403_SPEC_NOTE}
+            align={id % 8 < 4 ? 'left' : 'right'}
+          />
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => onLabelChange(id, e.target.value)}
+            disabled={isLocked}
+            title={isLocked ? LABEL_LOCKED_TITLE : undefined}
+            placeholder="Label"
+            className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+          />
+        </div>
+        <div className="pt-px text-base leading-none">
+          <div className="flex items-center justify-between leading-none">
+            <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
+            <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
+              {(physical / 1000).toFixed(3)}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex w-1 items-end overflow-hidden rounded-r">
+        <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
+      </div>
+    </div>
+  );
+});
+
+const ParamChannelCard = memo(function ParamChannelCard({
+  id,
+  value,
+  label,
+  isLocked,
+  onLabelChange,
+}: {
+  id: number;
+  value: number;
+  label: string;
+  isLocked: boolean;
+  onLabelChange: (id: number, text: string) => void;
+}) {
+  const formatted = formatFloat32(value);
+
+  return (
+    <div
+      translate="no"
+      className="min-w-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
+    >
+      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
+        <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
+          {`CH ${id.toString().padStart(2, '0')}`}
+        </span>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => onLabelChange(id, e.target.value)}
+          disabled={isLocked}
+          title={isLocked ? LABEL_LOCKED_TITLE : undefined}
+          placeholder="Label"
+          className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+        />
+      </div>
+      <div className="pt-px text-base leading-none">
+        <div className="flex items-center justify-between gap-1 leading-none">
+          <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
+          {/* Same rule as the Param Editor's cells (formatFloat32): a
+              fixed 3 decimals turned a 2.5e-5 gain into "0.000" in the
+              one place it is meant to be watched, and made the same
+              channel read differently in two windows. Long values
+              truncate rather than widen the card — the full string is
+              in the title, and the Editor shows it untruncated. */}
+          <span
+            title={formatted}
+            className="min-w-0 truncate text-right text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400"
+          >
+            {formatted}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -392,7 +572,15 @@ const axisOptions = [
   })),
 ];
 
-const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
+// '----' hides a chart; it is a Y choice only (X always has something to plot
+// against, and 'time' is an X choice only).
+const HIDDEN_AXIS_KEY = '----';
+const yAxisOptions = [
+  { key: HIDDEN_AXIS_KEY, label: HIDDEN_AXIS_KEY },
+  ...axisOptions.filter((option) => option.key !== 'time'),
+];
+const xAxisOptionKeys: ReadonlySet<string> = new Set(axisOptions.map((option) => option.key));
+const yAxisOptionKeys: ReadonlySet<string> = new Set(yAxisOptions.map((option) => option.key));
 
 // Module scope, not a ref: StrictMode mounts the app twice in development, and
 // the recovery prompt is a blocking dialog the user would have to dismiss twice
@@ -406,7 +594,7 @@ function App() {
     chart2X, setChart2X, chart2Y, setChart2Y,
     chart3X, setChart3X, chart3Y, setChart3Y,
     chart4X, setChart4X, chart4Y, setChart4Y,
-  } = useChartAxes(axisOptionKeys);
+  } = useChartAxes(xAxisOptionKeys, yAxisOptionKeys);
 
   // The link is one fixed configuration (slave id, serial framing, register
   // map, poll rate) — see FIXED_SLAVE_ID / FIXED_SERIAL_SETTINGS /
@@ -419,9 +607,12 @@ function App() {
   const [saveRate, setSaveRate] = useState<PollingRateOption>(
     SAVE_RATE_OPTIONS.find((p) => p.valueMs === DEFAULT_SAVE_RATE_MS)!,
   );
-  const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
-  const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
-  const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels());
+  // Lazy initialisers: App re-renders on every published reading, and the
+  // eager form re-read and re-parsed localStorage and rebuilt both channel
+  // arrays on every one of those renders, only for useState to discard them.
+  const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(() => loadAiCalibration(AI_CHANNELS));
+  const [aiChannels, setAiChannels] = useState<AiChannel[]>(() => createAiChannels(aiCalibration));
+  const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels);
   const [connected, setConnected] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
   const [activeSaveFilename, setActiveSaveFilename] = useState('');
@@ -469,6 +660,19 @@ function App() {
     }
     return m;
   }, [aiFreeLabels, paramFreeLabels]);
+  const chartSlots = [
+    { color: '#34d399', x: chart1X, y: chart1Y, setX: setChart1X, setY: setChart1Y },
+    { color: '#60a5fa', x: chart2X, y: chart2Y, setX: setChart2X, setY: setChart2Y },
+    { color: '#f472b6', x: chart3X, y: chart3Y, setX: setChart3X, setY: setChart3Y },
+    { color: '#fbbf24', x: chart4X, y: chart4Y, setX: setChart4X, setY: setChart4Y },
+  ];
+  // Read by flushPendingDataPoints (a stable callback on the acquisition path),
+  // so a ref rather than a dependency. With every chart set to '----' nothing
+  // would redraw, and bumping displayRevision still re-renders App's subtree;
+  // the buffer keeps filling either way so a chart shows current data the
+  // moment it is re-enabled (the axis change itself re-renders it).
+  const anyChartVisibleRef = useRef(true);
+  anyChartVisibleRef.current = chartSlots.some((slot) => slot.y !== HIDDEN_AXIS_KEY);
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
   // AO and Parameter start collapsed: AI is what a session is normally watching,
@@ -496,7 +700,6 @@ function App() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   // Readouts (measured rate, saved-point count) are published to React on a
   // budget rather than per sample — see READOUT_PUBLISH_INTERVAL_MS.
-  const lastCardPublishRef = useRef(0);
   const lastSaveCountPublishRef = useRef(0);
   const savePointCountRef = useRef(0);
   const pendingDataPoints = useRef<DataPoint[]>([]);
@@ -538,9 +741,9 @@ function App() {
   const requestAoWriteRef = useRef<() => void>(() => {});
   const idealScheduleRef = useRef(0);
   const dataBufferRef = useRef<DataPoint[]>([]);
-  // While saving, the chart shows the whole capture downsampled to
-  // CHART_MAX_POINTS via count-stride decimation. These track the decimation
-  // stride and raw-point counter (reset on each save start).
+  // While saving, the chart shows the whole capture through Origami folding and
+  // count-stride intake. These track the stride and raw-point counter (reset on
+  // each save start).
   const saveDecimationStrideRef = useRef(1);
   const saveRawCounterRef = useRef(0);
   // The Modbus poll interval on the wire — NOT the save rate. Everything that
@@ -882,9 +1085,9 @@ function App() {
     if (tsvWriterRef.current) {
       // Saving: keep the chart buffer bounded by downsampling the WHOLE capture
       // (save-start → now) into OrigamiBuffer with capacity up to SAVE_BUFFER_MAX_POINTS (65,536).
-      // Add 1 of every `stride` raw points. When buffer reaches 65,536 points, fold it
-      // via multi-channel M4 (block W=4) down to ~SAVE_BUFFER_FOLD_TARGET_POINTS (32,768)
-      // and double the stride. The full data still streams to TSV.
+       // Add 1 of every `stride` raw points. When buffer reaches 65,536 points,
+       // retain its even positions and double the stride. The full data still
+       // streams to TSV.
       for (const p of pointsToAdd) {
         if (saveRawCounterRef.current % saveDecimationStrideRef.current === 0) {
           buffer.push(p);
@@ -893,10 +1096,10 @@ function App() {
         saveRawCounterRef.current++;
       }
       // Fold at SAVE_BUFFER_MAX_POINTS (65,536 points).
-      // The folding preserves all channel envelopes and hysteresis endpoints
-      // while halving points down to ~32,768 in O(N) in-place time (~1-2 ms).
+        // Origami folding is deliberately channel-neutral and O(N): it keeps
+        // [0, 2, 4, ...] rather than selecting extrema from one channel.
       if (buffer.length >= SAVE_BUFFER_MAX_POINTS) {
-        dataBufferRef.current = foldDataBufferM4(buffer, SAVE_BUFFER_FOLD_TARGET_POINTS);
+        dataBufferRef.current = foldDataBufferHalf(buffer);
         saveDecimationStrideRef.current *= 2;
       }
     } else {
@@ -957,7 +1160,7 @@ function App() {
     //
     // Reset paths (connect/disconnect/start/stop-save) still bump
     // setDisplayRevision directly for an immediate redraw.
-    if (bufferChanged && chartRedrawTimerRef.current === undefined) {
+    if (bufferChanged && anyChartVisibleRef.current && chartRedrawTimerRef.current === undefined) {
       chartRedrawDueSinceRef.current = 0;
       chartRedrawTimerRef.current = window.setTimeout(
         commitChartRedraw,
@@ -1022,9 +1225,13 @@ function App() {
     (channels: AiChannel[], calibration: AiCalibration[]) =>
       channels.map((ch, idx) => {
         const rawValue = aiRawSourceRef.current[idx] ?? ch.raw;
-        const physical = aiToPhysical(rawValue, calibration[idx] ?? { a: 0, b: 1, c: 0 });
-        const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-        return { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue), voltage, microStrain };
+        const physical = aiToPhysical(rawValue, calibration[idx] ?? DEFAULT_AI_CALIBRATION);
+        return {
+          ...ch,
+          raw: rawValue,
+          physical,
+          status: getAiStatus(rawValue),
+        };
       }),
     [],
   );
@@ -1038,7 +1245,7 @@ function App() {
       const cal = prev[idx];
       if (!cal) return prev;
       const raw = aiRawSourceRef.current[idx] ?? 0;
-      const newC = -(cal.a * raw * raw + cal.b * raw);
+      const newC = cal.a === 0 ? -(cal.b * raw) : -((cal.a * raw + cal.b) * raw);
       const next = [...prev];
       next[idx] = { ...cal, c: newC };
       setAiChannels((chs) => applyCalibrationToChannels(chs, next));
@@ -1167,31 +1374,6 @@ function App() {
   const enqueueDisplayUpdate = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array, plot: boolean) => {
     displayUpdateChainRef.current = displayUpdateChainRef.current
       .then(() => {
-        // Card values are published at CHANNEL_CARD_MIN_INTERVAL_MS at most, and
-        // only when the poll interval is shorter than that — i.e. at the 25 and
-        // 50 ms settings. There one render per sample is not affordable: every
-        // publish re-renders 40 channel cards between two Modbus transfers, and
-        // nobody can read a number changing 40 times a second anyway.
-        const cardsDue =
-          pollIntervalRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS ||
-          timestamp - lastCardPublishRef.current >= CHANNEL_CARD_MIN_INTERVAL_MS;
-        if (cardsDue) {
-          lastCardPublishRef.current = timestamp;
-          setAiChannels((prev) =>
-            prev.map((ch, idx) => {
-              const rawValue = aiRaw[idx] ?? ch.raw;
-              const { voltage, microStrain } = computeSensorValues(rawValue, idx);
-              return {
-                ...ch,
-                raw: rawValue,
-                physical: aiPhysical[idx] ?? ch.physical,
-                status: getAiStatus(rawValue),
-                voltage,
-                microStrain,
-              };
-            }),
-          );
-        }
         if (plot) updateDataHistory(timestamp, aiRaw, aiPhysical, param);
       })
       .catch((err) => {
@@ -1208,9 +1390,11 @@ function App() {
     if (!writer) return;
     try {
       const aoRaw = new Float32Array(aoRawSourceRef.current);
-      const aiVoltage = new Float32Array(aiRaw.length);
-      for (let i = 0; i < aiRaw.length; i++) {
-        aiVoltage[i] = rawToDisplayValue(aiRaw[i], voltageConfigRef.current[i] ?? DEFAULT_VOLTAGE_CONFIG[i]).value;
+      const len = aiRaw.length;
+      const aiVoltage = new Float32Array(len);
+      const vConfig = voltageConfigRef.current;
+      for (let i = 0; i < len; i++) {
+        aiVoltage[i] = rawToVoltageValue(aiRaw[i], vConfig[i] ?? DEFAULT_VOLTAGE_CONFIG[i]);
       }
       writer.writeRow(timestamp, aiRaw, aiPhysical, aoRaw, aiVoltage, param);
       // The exact count lives in a ref; React only hears about it a few times a
@@ -1398,12 +1582,13 @@ function App() {
     if (aiSourceValues) {
       lastAiReadCompletedAtRef.current = Date.now();
       aiRawSourceRef.current = aiSourceValues;
+      const len = aiSourceValues.length;
       const aiRaw = new Float32Array(aiSourceValues);
-      const aiPhysical = new Float32Array(
-        aiSourceValues.map((value, idx) =>
-          aiToPhysical(value, aiCalibrationRef.current[idx] ?? { a: 0, b: 1, c: 0 })
-        )
-      );
+      const aiPhysical = new Float32Array(len);
+      const calib = aiCalibrationRef.current;
+      for (let i = 0; i < len; i++) {
+        aiPhysical[i] = aiToPhysical(aiSourceValues[i], calib[i] ?? DEFAULT_AI_CALIBRATION);
+      }
 
       const aiRawShare = scriptRunner.aiRawShareRef.current;
       const aiPhysicalShare = scriptRunner.aiPhysicalShareRef.current;
@@ -1418,6 +1603,27 @@ function App() {
       const param = paramShare
         ? new Float32Array(paramShare)
         : new Float32Array(PARAM_CHANNELS);
+
+      // Cards are the live readout. Publish directly from the completed read,
+      // outside the display/history promise chain, so chart or IndexedDB work
+      // cannot make the visible value older than the latest device response.
+      //
+      // Returns `prev` untouched when no channel moved (an idle input, a
+      // disconnected sensor pinned at a rail), so React bails out of the render
+      // entirely; a changed channel gets a new object, an unchanged one keeps
+      // its identity. The cards are memo'd on primitives either way.
+      setAiChannels((prev) => {
+        let next: AiChannel[] | null = null;
+        for (let idx = 0; idx < prev.length; idx++) {
+          const ch = prev[idx];
+          const rawValue = aiRaw[idx] ?? ch.raw;
+          const physical = aiPhysical[idx] ?? ch.physical;
+          if (rawValue === ch.raw && Object.is(physical, ch.physical)) continue;
+          next ??= prev.slice();
+          next[idx] = { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue) };
+        }
+        return next ?? prev;
+      });
 
       // One capture time for every sink: chart, IndexedDB, TSV and the rate
       // readout all describe this sample as having happened here.
@@ -1749,12 +1955,31 @@ function App() {
     stopPolling();
     // Then wait for it, so the cleanup below runs after it has finished rather
     // than merely being immune to it.
+    //
+    // Bounded. The transport now puts a deadline on its own writes and reopens,
+    // but a Disconnect that can hang is the worst failure this button can have
+    // (the save never closes, Connect never comes back), so it does not depend
+    // on that. Past the bound the poll is abandoned: the generation bump above
+    // already makes its result a no-op, and client.disconnect() below detaches
+    // the handles it would have used.
     const inFlightPoll = pollInFlightRef.current;
     if (inFlightPoll) {
-      try {
-        await inFlightPoll;
-      } catch (err) {
-        console.warn('In-flight poll failed during disconnect:', err);
+      let timer: number | undefined;
+      const timedOut = await Promise.race([
+        inFlightPoll.then(
+          () => false,
+          (err) => {
+            console.warn('In-flight poll failed during disconnect:', err);
+            return false;
+          },
+        ),
+        new Promise<boolean>((resolve) => {
+          timer = setBackgroundTimeout(() => resolve(true), DISCONNECT_POLL_WAIT_MS);
+        }),
+      ]);
+      clearBackgroundTimer(timer);
+      if (timedOut) {
+        console.warn(`[App] in-flight poll did not settle within ${DISCONNECT_POLL_WAIT_MS} ms; abandoning it`);
       }
     }
     clearBackgroundTimer(flushTimerRef.current);
@@ -1839,20 +2064,24 @@ function App() {
         const connectedPort = clientRef.current?.getPort();
         if (!connectedPort) return;
 
-        // Match by USB vendor/product id via the port's own getInfo(), rather
-        // than by reaching into the polyfill's private device_ field, which a
-        // minified build is free to rename. navigator.usb only fires for
-        // devices this origin already has permission for, so on the rare tie
-        // (two identical adapters paired) the worst case is tearing down a run
-        // the user was about to lose anyway.
-        const info = connectedPort.getInfo?.();
+        // Match by object identity: the WebUSB port exposes isDevice() for
+        // exactly this. VID/PID alone tore down a live run whenever a second,
+        // identical adapter (same VID/PID, permitted for this origin) was
+        // unplugged. Only if the port cannot answer (not ours) is VID/PID the
+        // fallback.
         const device = (event as { device?: USBDevice }).device;
-        if (
-          info && device &&
-          info.usbVendorId !== undefined && info.usbProductId !== undefined &&
-          (info.usbVendorId !== device.vendorId || info.usbProductId !== device.productId)
-        ) {
-          return;
+        const identity = (connectedPort as { isDevice?: (d: USBDevice) => boolean }).isDevice;
+        if (device && typeof identity === 'function') {
+          if (!identity.call(connectedPort, device)) return;
+        } else {
+          const info = connectedPort.getInfo?.();
+          if (
+            info && device &&
+            info.usbVendorId !== undefined && info.usbProductId !== undefined &&
+            (info.usbVendorId !== device.vendorId || info.usbProductId !== device.productId)
+          ) {
+            return;
+          }
         }
 
         console.warn('[App] WebUSB disconnect event received for active port');
@@ -1941,7 +2170,8 @@ function App() {
       const options: DenominatorOption[] = [];
       const mode = voltageConfig[ch];
       if (mode) {
-        const { value: slope, unit } = rawToDisplayValue(1, mode);
+        const slope = rawToVoltageValue(1, mode);
+        const unit = VOLTAGE_UNITS[mode];
         if (Number.isFinite(slope) && unit) {
           options.push({ value: 'volt', label: unit, slopePerRaw: slope });
         }
@@ -2369,67 +2599,18 @@ function App() {
         </div>
         {!aiCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
-          {aiChannels.map((ch) => {
-            const mode = voltageConfig[ch.id];
-            const display = rawToDisplayValue(ch.raw, mode);
-            const aiRatio = Math.min(1, Math.abs(ch.raw) / 32767);
-            const { bar: aiMeterColor, text: aiTextColor } = getLevelColor(aiRatio);
-            const aiMeterHeight = Math.max(2, aiRatio * 100);
-            return (
-            <div
+          {aiChannels.map((ch) => (
+            <AiChannelCard
               key={ch.id}
-              translate="no"
-              className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
-            >
-              <div className="min-w-0 flex-1 px-1 py-0.5">
-                <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                  <ChannelSpecNote
-                    id={`ai-spec-note-${ch.id}`}
-                    label={formatAiChannelDisplayLabel(ch.id)}
-                    note={ch.id < 8 ? HX711_SPEC_NOTE : ADS1115_SPEC_NOTE}
-                    align={ch.id % 8 < 4 ? 'left' : 'right'}
-                  />
-                  <input
-                    type="text"
-                    value={aiFreeLabels[ch.id] ?? ''}
-                    onChange={(e) => handleAiFreeLabelChange(ch.id, e.target.value)}
-                    disabled={scriptRunner.scriptRunning}
-                    title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
-                    placeholder="Label"
-                    className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
-                  />
-                </div>
-                <div className="space-y-0 pt-px text-base leading-none">
-                  <div className="flex justify-between items-center leading-none">
-                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Raw</span>
-                    <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {/* i16t Input Registers, so raw is an integer count —
-                          a decimal point here would be noise. */}
-                      {ch.raw}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
-                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">Phy</span>
-                    <span className={`text-xl font-bold leading-none tabular-nums ${aiTextColor}`}>
-                      {ch.physical.toFixed(3)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center pt-px border-t border-slate-200 dark:border-slate-700 leading-none">
-                    <span className="shrink-0 text-sm text-slate-600 font-medium dark:text-slate-300 leading-none">
-                      {display.unit}
-                    </span>
-                    <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
-                      {display.value.toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex w-1 items-end overflow-hidden rounded-r">
-                <div className={`w-full ${aiMeterColor}`} style={{ height: `${aiMeterHeight}%` }} />
-              </div>
-            </div>
-            );
-          })}
+              id={ch.id}
+              raw={ch.raw}
+              physical={ch.physical}
+              label={aiFreeLabels[ch.id] ?? ''}
+              mode={voltageConfig[ch.id]}
+              isLocked={scriptRunner.scriptRunning}
+              onLabelChange={handleAiFreeLabelChange}
+            />
+          ))}
         </div>
         )}
       </section>
@@ -2441,51 +2622,16 @@ function App() {
         </div>
         {!aoCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
-          {aoChannels.map((ch) => {
-            // AO is a commanded value, not a measurement: the full scale is the
-            // DAC's own 0-10 V range, and there is no "too high" to warn about.
-            // Hence one flat colour — the AI meter's green/yellow/red would
-            // imply a limit the output does not have.
-            const aoMeterHeight = Math.max(2, Math.min(1, Math.abs(ch.physical) / AO_FULL_SCALE_MV) * 100);
-            return (
-            <div
+          {aoChannels.map((ch) => (
+            <AoChannelCard
               key={ch.id}
-              translate="no"
-              className="flex min-w-0 rounded border border-slate-200 bg-slate-100 dark:border-slate-700/50 dark:bg-slate-900/60"
-            >
-              <div className="min-w-0 flex-1 px-1 py-0.5">
-                <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                  <ChannelSpecNote
-                    id={`ao-spec-note-${ch.id}`}
-                    label={ch.label}
-                    note={GP8403_SPEC_NOTE}
-                    align={ch.id % 8 < 4 ? 'left' : 'right'}
-                  />
-                  <input
-                    type="text"
-                    value={aoFreeLabels[ch.id] ?? ''}
-                    onChange={(e) => handleAoFreeLabelChange(ch.id, e.target.value)}
-                    disabled={scriptRunner.scriptRunning}
-                    title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
-                    placeholder="Label"
-                    className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
-                  />
-                </div>
-                <div className="pt-px text-base leading-none">
-                  <div className="flex items-center justify-between leading-none">
-                    <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">V</span>
-                    <span className="text-xl font-bold leading-none tabular-nums text-sky-600 dark:text-sky-400">
-                      {(ch.physical / 1000).toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex w-1 items-end overflow-hidden rounded-r">
-                <div className="w-full bg-sky-500" style={{ height: `${aoMeterHeight}%` }} />
-              </div>
-            </div>
-            );
-          })}
+              id={ch.id}
+              physical={ch.physical}
+              label={aoFreeLabels[ch.id] ?? ''}
+              isLocked={scriptRunner.scriptRunning}
+              onLabelChange={handleAoFreeLabelChange}
+            />
+          ))}
         </div>
         )}
       </section>
@@ -2498,101 +2644,38 @@ function App() {
         {!paramCollapsed && (
         <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-8 xl:grid-cols-8">
           {paramValues.map((value, idx) => (
-            <div
+            <ParamChannelCard
               key={idx}
-              translate="no"
-              className="min-w-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 dark:border-slate-700/50 dark:bg-slate-900/60"
-            >
-              <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700">
-                <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
-                  {`CH ${idx.toString().padStart(2, '0')}`}
-                </span>
-                <input
-                  type="text"
-                  value={paramFreeLabels[idx] ?? ''}
-                  onChange={(e) => handleParamFreeLabelChange(idx, e.target.value)}
-                  disabled={scriptRunner.scriptRunning}
-                  title={scriptRunner.scriptRunning ? LABEL_LOCKED_TITLE : undefined}
-                  placeholder="Label"
-                  className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
-                />
-              </div>
-              <div className="pt-px text-base leading-none">
-                <div className="flex items-center justify-between gap-1 leading-none">
-                  <span className="shrink-0 text-sm font-medium text-slate-600 dark:text-slate-300 leading-none">Val</span>
-                  {/* Same rule as the Param Editor's cells (formatFloat32): a
-                      fixed 3 decimals turned a 2.5e-5 gain into "0.000" in the
-                      one place it is meant to be watched, and made the same
-                      channel read differently in two windows. Long values
-                      truncate rather than widen the card — the full string is
-                      in the title, and the Editor shows it untruncated. */}
-                  <span
-                    title={formatFloat32(value)}
-                    className="min-w-0 truncate text-right text-xl font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400"
-                  >
-                    {formatFloat32(value)}
-                  </span>
-                </div>
-              </div>
-            </div>
+              id={idx}
+              value={value}
+              label={paramFreeLabels[idx] ?? ''}
+              isLocked={scriptRunner.scriptRunning}
+              onLabelChange={handleParamFreeLabelChange}
+            />
           ))}
         </div>
         )}
       </section>
 
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-4">
-        <ChartPanel
-          color="#34d399"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart1X}
-          yAxis={chart1Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart1X}
-          onYAxisChange={setChart1Y}
-        />
-        <ChartPanel
-          color="#60a5fa"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart2X}
-          yAxis={chart2Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart2X}
-          onYAxisChange={setChart2Y}
-        />
-        <ChartPanel
-          color="#f472b6"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart3X}
-          yAxis={chart3Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart3X}
-          onYAxisChange={setChart3Y}
-        />
-        <ChartPanel
-          color="#fbbf24"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart4X}
-          yAxis={chart4Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart4X}
-          onYAxisChange={setChart4Y}
-        />
+        {chartSlots.map((slot) => (
+          <ChartPanel
+            key={slot.color}
+            color={slot.color}
+            dataPoints={dataBufferRef.current}
+            purgeEpoch={chartEpoch}
+            displayRevision={displayRevision}
+            axisOptions={axisOptions}
+            yAxisOptions={yAxisOptions}
+            xLabel={chartAxisLabels[slot.x] ?? ''}
+            yLabel={chartAxisLabels[slot.y] ?? ''}
+            xAxis={slot.x}
+            yAxis={slot.y}
+            isDarkMode={isDarkMode}
+            onXAxisChange={slot.setX}
+            onYAxisChange={slot.setY}
+          />
+        ))}
       </div>
       </div>
 

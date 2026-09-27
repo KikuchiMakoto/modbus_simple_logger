@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { readJsonCookie, writeJsonCookie } from '../utils/cookies';
 
 type ChartAxes = { x: string; y: string };
@@ -19,8 +19,15 @@ const DEFAULT_CHART_AXES: ChartAxisSelections = {
   chart4: { x: 'time', y: 'raw_03' },
 };
 
-export function useChartAxes(axisOptionKeys: Set<string>) {
-  const initialAxes = useMemo(() => loadChartAxes(axisOptionKeys), [axisOptionKeys]);
+/**
+ * @param xAxisKeys - Keys valid on X (includes 'time', never '----').
+ * @param yAxisKeys - Keys valid on Y (includes '----' = hidden, never 'time').
+ *   Separate sets because a stored X of '----' would otherwise be accepted and
+ *   rendered as a timestamp axis the picker cannot show.
+ */
+export function useChartAxes(xAxisKeys: ReadonlySet<string>, yAxisKeys: ReadonlySet<string>) {
+  // Read once: the stored value only seeds the state below.
+  const [initialAxes] = useState(() => loadChartAxes(xAxisKeys, yAxisKeys));
   const [chart1X, setChart1X] = useState(initialAxes.chart1.x);
   const [chart1Y, setChart1Y] = useState(initialAxes.chart1.y);
   const [chart2X, setChart2X] = useState(initialAxes.chart2.x);
@@ -47,16 +54,13 @@ export function useChartAxes(axisOptionKeys: Set<string>) {
   };
 }
 
-function loadChartAxes(axisOptionKeys: Set<string>): ChartAxisSelections {
+function loadChartAxes(xAxisKeys: ReadonlySet<string>, yAxisKeys: ReadonlySet<string>): ChartAxisSelections {
   const saved = readJsonCookie<Partial<ChartAxisSelections>>(CHART_AXES_COOKIE_KEY) ?? {};
-  const sanitize = (value: string | undefined, fallback: string, allowTime: boolean) => {
-    if (!value || !axisOptionKeys.has(value)) return fallback;
-    if (!allowTime && value === 'time') return fallback;
-    return value;
-  };
+  const sanitize = (value: unknown, fallback: string, keys: ReadonlySet<string>) =>
+    typeof value === 'string' && keys.has(value) ? value : fallback;
   const load = (key: keyof ChartAxisSelections): ChartAxes => ({
-    x: sanitize(saved[key]?.x, DEFAULT_CHART_AXES[key].x, true),
-    y: sanitize(saved[key]?.y, DEFAULT_CHART_AXES[key].y, false),
+    x: sanitize(saved[key]?.x, DEFAULT_CHART_AXES[key].x, xAxisKeys),
+    y: sanitize(saved[key]?.y, DEFAULT_CHART_AXES[key].y, yAxisKeys),
   });
   return {
     chart1: load('chart1'),

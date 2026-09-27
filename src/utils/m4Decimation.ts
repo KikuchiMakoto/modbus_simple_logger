@@ -5,245 +5,449 @@ export interface AxisDescriptor {
   readonly index: number;
 }
 
+export type AxisAccessor = (point: DataPoint) => number;
+
 /**
- * Resolves the numeric value of an axis from a DataPoint.
+ * Returns an accessor for an axis descriptor, so the hot loops below do not
+ * dispatch on `kind` per sample.
  */
-export function getAxisValue(point: DataPoint, desc: AxisDescriptor): number {
+export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
+  const index = desc.index;
   switch (desc.kind) {
     case 'time':
-      return point.timestamp;
+      return (p) => p.timestamp;
     case 'raw':
-      return point.aiRaw[desc.index] ?? 0;
+      return (p) => p.aiRaw[index] ?? 0;
     case 'physical':
-      return point.aiPhysical[desc.index] ?? 0;
+      return (p) => p.aiPhysical[index] ?? 0;
     case 'param':
-      return point.param[desc.index] ?? 0;
+      return (p) => p.param[index] ?? 0;
     default:
-      return 0;
+      return () => 0;
   }
 }
 
+/** [outX, outY, xMin, xMax, yMin, yMax]. Extents are over finite values only. */
+export type DecimationResult = [Float64Array, Float64Array, number, number, number, number];
+
+/** Output cap as a multiple of the target. See decimate2DM4. */
+export const DECIMATION_MAX_OUTPUT_RATIO = 1.5;
+
+// Scratch buffers reused across calls. Four charts decimate one after another
+// on the main thread on every redraw, and the buffer can hold 65,536 points;
+// reallocating ~1.3 MB of typed arrays per chart per redraw is pure GC churn.
+// Nothing here escapes: the returned arrays are always fresh copies, because
+// Plotly keeps a reference to the trace data it was handed.
+let scratchX = new Float64Array(0);
+let scratchY = new Float64Array(0);
+let scratchValid = new Uint8Array(0);
+let scratchBoundary = new Int32Array(0);
+
+function ensureScratch(n: number): void {
+  if (scratchX.length >= n) return;
+  // Grow geometrically so a buffer filling towards its cap does not reallocate
+  // on every call.
+  const size = Math.max(n, scratchX.length * 2, 1024);
+  scratchX = new Float64Array(size);
+  scratchY = new Float64Array(size);
+  scratchValid = new Uint8Array(size);
+  // Portion bounds are stored as [start, end) pairs; a bucket of k samples has
+  // at most ceil(k / 2) + 1 portions, so 2 * size + 4 always suffices.
+  scratchBoundary = new Int32Array(size * 2 + 4);
+}
+
 /**
- * 2D-M4 (MinMax) decimation for parametric / hysteresis / time-series display (間引B).
+ * Chart M4 decimation for both time series and XY (parametric) curves.
  *
- * Divides the input points into K buckets and extracts up to 6 critical points
- * per bucket: [First, Xmin, Xmax, Ymin, Ymax, Last].
- * Points are returned in original sequential order (sorted by source index and deduplicated).
+ * Splits the input into buckets by sample index and, within each bucket, keeps
+ * the first/last sample and the Y extrema of every *valid run* — plus the X
+ * extrema when X is not monotonic time, where a hysteresis loop turns around on
+ * X as often as on Y. Points stay in source order, so loops are drawn in the
+ * order they were traced; nothing is sorted by X.
  *
- * This guarantees:
- * 1. Both X and Y extrema (peaks and valleys) are preserved.
- * 2. Hysteresis loops, Lissajous curves, and direction-reversal trajectories remain 100% intact.
- * 3. Constant O(N) single-pass scan with near-zero allocations (typically ~0.2ms for 65k points).
+ * Invariant (the reason this is not a plain per-bucket M4): between any two
+ * consecutive finite output points there is no invalid input sample. A NaN in
+ * X or Y is a gap in the record, and bridging it draws a line through data that
+ * does not exist. Every time output crosses one or more invalid samples a
+ * single NaN marker is emitted, which scattergl renders as a line break
+ * (`connectgaps: false`).
  *
- * @param points Source array of DataPoint
- * @param xDesc Descriptor for the X axis
- * @param yDesc Descriptor for the Y axis
- * @param targetPoints Target output points (e.g. 2048). Actual output will be ~1500 - 2500 points.
- * @param voltageConfig Optional voltage mode config for voltage axis
- * @returns Decimated array of [outX, outY]
+ * Budget: output never exceeds floor(target * DECIMATION_MAX_OUTPUT_RATIO)
+ * points, markers included. A bucket whose runs would not fit keeps its
+ * longest runs and drops the rest — a dropped run is shown as part of the gap,
+ * never joined across it. Short runs are what get dropped, and a run of one
+ * sample draws nothing in `lines` mode anyway.
+ *
+ * Extents are computed in the same pass, over finite values of each axis.
  */
 export function decimate2DM4(
   points: readonly DataPoint[],
   xDesc: AxisDescriptor,
   yDesc: AxisDescriptor,
   targetPoints: number,
-): [Float64Array, Float64Array] {
+): DecimationResult {
   const n = points.length;
+  const getX = getAxisAccessor(xDesc);
+  const getY = getAxisAccessor(yDesc);
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+
   if (n <= targetPoints) {
+    // Nothing to reduce: every point, NaNs included, goes to Plotly as is, and
+    // Plotly breaks the line at each NaN itself.
     const outX = new Float64Array(n);
     const outY = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      const pt = points[i];
-      outX[i] = getAxisValue(pt, xDesc);
-      outY[i] = getAxisValue(pt, yDesc);
+      const p = points[i];
+      const x = getX(p);
+      const y = getY(p);
+      outX[i] = x;
+      outY[i] = y;
+      if (Number.isFinite(x)) {
+        if (x < xMin) xMin = x;
+        if (x > xMax) xMax = x;
+      }
+      if (Number.isFinite(y)) {
+        if (y < yMin) yMin = y;
+        if (y > yMax) yMax = y;
+      }
     }
-    return [outX, outY];
+    return [outX, outY, xMin, xMax, yMin, yMax];
   }
 
-  // Matches DigitShowModbus formula:
-  // num_buckets = targetPoints / 4 (e.g. 2048 / 4 = 512)
-  // Each bucket yields on average ~3-4 points after deduplication,
-  // yielding ~1500 - 2048 points (bounded by num_buckets * 4 or 6).
-  const numBuckets = Math.max(1, Math.floor(targetPoints / 4));
-  const bucketSize = Math.max(1, Math.ceil(n / numBuckets));
+  // Fast path for the overwhelmingly common case — every sample finite, and on
+  // a time axis, timestamps non-decreasing. One fused pass straight off the
+  // DataPoints, no scratch copies. It bails out (null) the moment it sees an
+  // invalid sample or a clock step, and the general path below takes over;
+  // for finite data both paths produce identical output.
+  const fast = decimateFinite(points, getX, getY, xDesc.kind !== 'time', targetPoints);
+  if (fast) return fast;
 
-  // Maximum possible points = numBuckets * 6
-  const maxOutput = numBuckets * 6;
+  // General path. Pass 1: read each axis once, into flat arrays, since the run
+  // split and the per-run extrema below each revisit samples.
+  ensureScratch(n);
+  const xs = scratchX;
+  const ys = scratchY;
+  const valid = scratchValid;
+  let monotonic = xDesc.kind === 'time';
+  let prevX = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const x = getX(p);
+    const y = getY(p);
+    xs[i] = x;
+    ys[i] = y;
+    const fx = Number.isFinite(x);
+    const fy = Number.isFinite(y);
+    valid[i] = fx && fy ? 1 : 0;
+    if (fx) {
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+      if (monotonic) {
+        if (x < prevX) monotonic = false;
+        prevX = x;
+      }
+    } else {
+      monotonic = false;
+    }
+    if (fy) {
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+    }
+  }
+
+  // Monotonic time: a run's X extrema are its first and last sample, so only
+  // Y needs searching. Anything else (XY, or a clock that stepped backwards)
+  // tracks X extrema too.
+  const trackX = !monotonic;
+  // Bucket count is sized for one full run plus two markers per bucket; the
+  // spare slot per bucket is the slack gap-heavy buckets draw on (see budget).
+  const { core, maxOutput, numBuckets, bucketSize } = layout(n, trackX, targetPoints);
+
   const outX = new Float64Array(maxOutput);
   const outY = new Float64Array(maxOutput);
-  let outCount = 0;
+  let out = 0;
+  // Source index of the last finite point written, and of the latest invalid
+  // sample seen so far. A marker is owed exactly when the latter is newer.
+  let lastEmitted = -1;
+  let lastInvalid = -1;
+  const bounds = scratchBoundary;
+  const cand = new Int32Array(core);
+  // Per-portion "keep" flags for over-budget buckets; reused.
+  let keep = new Uint8Array(64);
 
-  // Reusable candidate buffer on stack/closure (no GC)
-  const cand = new Int32Array(6);
+  const emitRun = (start: number, end: number, invalidBefore: number): void => {
+    if (invalidBefore > lastEmitted && out > 0) {
+      outX[out] = NaN;
+      outY[out] = NaN;
+      out++;
+    }
+    let count = 0;
+    cand[count++] = start;
+    if (end - 1 !== start) {
+      let yminI = start;
+      let ymaxI = start;
+      let xminI = start;
+      let xmaxI = start;
+      for (let i = start + 1; i < end; i++) {
+        const y = ys[i];
+        if (y < ys[yminI]) yminI = i;
+        if (y > ys[ymaxI]) ymaxI = i;
+        if (trackX) {
+          const x = xs[i];
+          if (x < xs[xminI]) xminI = i;
+          if (x > xs[xmaxI]) xmaxI = i;
+        }
+      }
+      cand[count++] = yminI;
+      cand[count++] = ymaxI;
+      if (trackX) {
+        cand[count++] = xminI;
+        cand[count++] = xmaxI;
+      }
+      cand[count++] = end - 1;
+      // Insertion sort into source order; at most six entries.
+      for (let i = 1; i < count; i++) {
+        const key = cand[i];
+        let j = i - 1;
+        while (j >= 0 && cand[j] > key) {
+          cand[j + 1] = cand[j];
+          j--;
+        }
+        cand[j + 1] = key;
+      }
+    }
+    let prev = -1;
+    for (let i = 0; i < count; i++) {
+      const idx = cand[i];
+      if (idx === prev) continue;
+      outX[out] = xs[idx];
+      outY[out] = ys[idx];
+      out++;
+      prev = idx;
+    }
+    lastEmitted = end - 1;
+  };
+
+  // Cost of a run including its (possible) marker. Conservative: the marker is
+  // counted even where none is owed.
+  const costOf = (len: number): number => (len < core ? len : core) + 1;
 
   for (let b = 0; b < numBuckets; b++) {
-    const start = b * bucketSize;
-    const end = start + bucketSize < n ? start + bucketSize : n;
-    if (start >= end) break;
+    const bStart = b * bucketSize;
+    if (bStart >= n) break;
+    const bEnd = Math.min(n, bStart + bucketSize);
 
-    const firstPt = points[start];
-    let xmin = getAxisValue(firstPt, xDesc);
-    let xmax = xmin;
-    let ymin = getAxisValue(firstPt, yDesc);
-    let ymax = ymin;
-
-    let xmin_i = start;
-    let xmax_i = start;
-    let ymin_i = start;
-    let ymax_i = start;
-
-    for (let i = start + 1; i < end; i++) {
-      const pt = points[i];
-      const x = getAxisValue(pt, xDesc);
-      const y = getAxisValue(pt, yDesc);
-
-      if (x < xmin) {
-        xmin = x;
-        xmin_i = i;
-      }
-      if (x > xmax) {
-        xmax = x;
-        xmax_i = i;
-      }
-      if (y < ymin) {
-        ymin = y;
-        ymin_i = i;
-      }
-      if (y > ymax) {
-        ymax = y;
-        ymax_i = i;
+    // Split the bucket into valid runs. `invalidAtStart` is the latest invalid
+    // sample before the bucket, which is what a run starting at bStart follows.
+    const invalidAtStart = lastInvalid;
+    let portions = 0;
+    let runStart = -1;
+    for (let i = bStart; i < bEnd; i++) {
+      if (valid[i]) {
+        if (runStart < 0) runStart = i;
+      } else {
+        if (runStart >= 0) {
+          bounds[portions * 2] = runStart;
+          bounds[portions * 2 + 1] = i;
+          portions++;
+          runStart = -1;
+        }
+        lastInvalid = i;
       }
     }
-
-    cand[0] = start;
-    cand[1] = xmin_i;
-    cand[2] = xmax_i;
-    cand[3] = ymin_i;
-    cand[4] = ymax_i;
-    cand[5] = end - 1;
-
-    // Fast 6-element insertion sort
-    for (let i = 1; i < 6; i++) {
-      const key = cand[i];
-      let j = i - 1;
-      while (j >= 0 && cand[j] > key) {
-        cand[j + 1] = cand[j];
-        j--;
-      }
-      cand[j + 1] = key;
+    if (runStart >= 0) {
+      bounds[portions * 2] = runStart;
+      bounds[portions * 2 + 1] = bEnd;
+      portions++;
     }
+    if (portions === 0) continue;
 
-    // Deduplicate and output in sequential order
-    let prev = -1;
-    for (let j = 0; j < 6; j++) {
-      const idx = cand[j];
-      if (idx !== prev) {
-        const pt = points[idx];
-        outX[outCount] = getAxisValue(pt, xDesc);
-        outY[outCount] = getAxisValue(pt, yDesc);
-        outCount++;
-        prev = idx;
+    // This bucket may spend whatever is left after reserving one full run plus
+    // marker (core + 1) for every bucket still to come. Ordinary buckets use at
+    // most `core`, so the slack they leave accumulates for the buckets that do
+    // contain gaps, rather than those having to drop runs.
+    const budget = maxOutput - out - (numBuckets - b - 1) * (core + 1);
+    let total = 0;
+    for (let r = 0; r < portions; r++) total += costOf(bounds[r * 2 + 1] - bounds[r * 2]);
+
+    if (total <= budget) {
+      for (let r = 0; r < portions; r++) {
+        const s = bounds[r * 2];
+        emitRun(s, bounds[r * 2 + 1], s === bStart ? invalidAtStart : s - 1);
       }
-    }
-  }
-
-  // Subarray view if not full (zero-copy slice)
-  return [outX.subarray(0, outCount), outY.subarray(0, outCount)];
-}
-
-/**
- * Multi-channel M4 / Origami folding for in-memory capture buffer (間引A).
- *
- * When the buffer reaches 65,536 points, it compresses the points by ~50%
- * down to ~26,000 - 35,000 points (target: 32,768) and allows doubling the
- * sampling stride.
- *
- * To preserve peaks across ALL channels (CH00-15, Params) without bias:
- * Blocks of size W = 4 are inspected.
- * For each block [start, end), we retain:
- * 1. start (First)
- * 2. The point with the largest L1 or variance change across AI channels (Peak/Extreme)
- * 3. end - 1 (Last)
- *
- * This produces ~2 points per 4 points (50% reduction = 32,768 points),
- * perfectly preserving step edges, peaks, and endpoints across the entire dataset.
- *
- * @param buffer In-memory DataPoint buffer of length >= SAVE_BUFFER_MAX_POINTS
- * @param targetPoints Target points after folding (default 32768)
- * @returns Folded array of DataPoint
- */
-/**
- * Fast approximate folding of the in-memory capture buffer when SAVE_BUFFER_MAX_POINTS is reached.
- * Directly follows DigitShowModbus PreviewFolding:
- * Uses a block window W = 4. For each block, extracts [First, Min, Max, Last]
- * using CH00 (axial representative) and sorts/deduplicates indices.
- *
- * This performs an ultra-fast O(N) single-pass sweep without distance calculations,
- * reducing ~65,536 points to an approximate half (~25,000 - 35,000 points).
- */
-export function foldDataBufferM4(
-  buffer: readonly DataPoint[],
-  targetPoints: number = 32768,
-): DataPoint[] {
-  const n = buffer.length;
-  if (n <= targetPoints) {
-    return buffer.slice();
-  }
-
-  // W = 4 block window, matching DigitShowModbus
-  const W = 4;
-  const result: DataPoint[] = [];
-  result.length = n; // pre-allocate upper bound
-  let outCount = 0;
-
-  for (let blockStart = 0; blockStart < n; blockStart += W) {
-    const blockEnd = blockStart + W < n ? blockStart + W : n;
-    const blockSize = blockEnd - blockStart;
-
-    if (blockSize === 1) {
-      result[outCount++] = buffer[blockStart];
       continue;
     }
 
-    let minIdx = blockStart;
-    let maxIdx = blockStart;
-    const firstPt = buffer[blockStart];
-    let minVal = firstPt.aiRaw[0] ?? 0;
-    let maxVal = minVal;
-
-    for (let i = blockStart + 1; i < blockEnd; i++) {
-      const v = buffer[i].aiRaw[0] ?? 0;
-      if (v < minVal) {
-        minVal = v;
-        minIdx = i;
+    // Over budget: keep the longest runs that fit, greedily.
+    if (keep.length < portions) keep = new Uint8Array(portions * 2);
+    keep.fill(0, 0, portions);
+    let remaining = budget;
+    for (;;) {
+      let best = -1;
+      let bestLen = 0;
+      for (let r = 0; r < portions; r++) {
+        if (keep[r]) continue;
+        const len = bounds[r * 2 + 1] - bounds[r * 2];
+        if (len > bestLen && costOf(len) <= remaining) {
+          best = r;
+          bestLen = len;
+        }
       }
-      if (v > maxVal) {
-        maxVal = v;
-        maxIdx = i;
-      }
+      if (best < 0) break;
+      keep[best] = 1;
+      remaining -= costOf(bestLen);
     }
-
-    // Candidate indices: [First, Min, Max, Last]
-    const lastIdx = blockEnd - 1;
-    let c0 = blockStart;
-    let c1 = minIdx;
-    let c2 = maxIdx;
-    let c3 = lastIdx;
-
-    // Small 4-element in-place sorting network
-    if (c0 > c1) { const t = c0; c0 = c1; c1 = t; }
-    if (c2 > c3) { const t = c2; c2 = c3; c3 = t; }
-    if (c0 > c2) { const t = c0; c0 = c2; c2 = t; }
-    if (c1 > c3) { const t = c1; c1 = c3; c3 = t; }
-    if (c1 > c2) { const t = c1; c1 = c2; c2 = t; }
-
-    // Push deduplicated indices in ascending order
-    result[outCount++] = buffer[c0];
-    if (c1 !== c0) result[outCount++] = buffer[c1];
-    if (c2 !== c1) result[outCount++] = buffer[c2];
-    if (c3 !== c2) result[outCount++] = buffer[c3];
+    for (let r = 0; r < portions; r++) {
+      if (!keep[r]) continue;
+      const s = bounds[r * 2];
+      // A dropped run is treated as part of the gap: anything before this run
+      // that was not emitted forces a marker. The run's own predecessor is an
+      // invalid sample (or, at bStart, whatever preceded the bucket), and a
+      // dropped run in between leaves lastEmitted older than that, so the
+      // marker condition below still sees it.
+      const before = s === bStart ? invalidAtStart : s - 1;
+      emitRun(s, bounds[r * 2 + 1], before);
+    }
   }
 
-  result.length = outCount;
+  return [outX.subarray(0, out), outY.subarray(0, out), xMin, xMax, yMin, yMax];
+}
+
+/** Bucket layout shared by both paths, so they agree exactly on finite data. */
+function layout(n: number, trackX: boolean, targetPoints: number) {
+  const core = trackX ? 6 : 4;
+  const capacity = core + 2;
+  const maxOutput = Math.max(capacity, Math.floor(targetPoints * DECIMATION_MAX_OUTPUT_RATIO));
+  const numBuckets = Math.max(1, Math.floor(maxOutput / capacity));
+  return { core, capacity, maxOutput, numBuckets, bucketSize: Math.ceil(n / numBuckets) };
+}
+
+/**
+ * Single-pass M4 for all-finite input. Returns null (having written nothing
+ * anyone sees) on the first non-finite sample, or — when `trackX` is false —
+ * on the first timestamp that steps backwards.
+ */
+function decimateFinite(
+  points: readonly DataPoint[],
+  getX: AxisAccessor,
+  getY: AxisAccessor,
+  trackX: boolean,
+  targetPoints: number,
+): DecimationResult | null {
+  const n = points.length;
+  const { maxOutput, numBuckets, bucketSize } = layout(n, trackX, targetPoints);
+  const outX = new Float64Array(maxOutput);
+  const outY = new Float64Array(maxOutput);
+  const cand = [0, 0, 0, 0, 0, 0];
+  let out = 0;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  let prevX = -Infinity;
+
+  for (let b = 0; b < numBuckets; b++) {
+    const start = b * bucketSize;
+    if (start >= n) break;
+    const end = Math.min(n, start + bucketSize);
+
+    const p0 = points[start];
+    const x0 = getX(p0);
+    const y0 = getY(p0);
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return null;
+    if (!trackX) {
+      if (x0 < prevX) return null;
+      prevX = x0;
+    }
+    let ylo = y0;
+    let yhi = y0;
+    let xlo = x0;
+    let xhi = x0;
+    let yloI = start;
+    let yhiI = start;
+    let xloI = start;
+    let xhiI = start;
+
+    for (let i = start + 1; i < end; i++) {
+      const p = points[i];
+      const x = getX(p);
+      const y = getY(p);
+      // x - x is NaN exactly for NaN and ±Infinity: one test, no call.
+      if (x - x !== 0 || y - y !== 0) return null;
+      if (trackX) {
+        if (x < xlo) { xlo = x; xloI = i; }
+        else if (x > xhi) { xhi = x; xhiI = i; }
+      } else {
+        if (x < prevX) return null;
+        prevX = x;
+      }
+      if (y < ylo) { ylo = y; yloI = i; }
+      else if (y > yhi) { yhi = y; yhiI = i; }
+    }
+
+    if (ylo < yMin) yMin = ylo;
+    if (yhi > yMax) yMax = yhi;
+    if (trackX) {
+      if (xlo < xMin) xMin = xlo;
+      if (xhi > xMax) xMax = xhi;
+    }
+
+    let count = 0;
+    cand[count++] = start;
+    if (end - 1 !== start) {
+      cand[count++] = yloI;
+      cand[count++] = yhiI;
+      if (trackX) {
+        cand[count++] = xloI;
+        cand[count++] = xhiI;
+      }
+      cand[count++] = end - 1;
+      for (let i = 1; i < count; i++) {
+        const key = cand[i];
+        let j = i - 1;
+        while (j >= 0 && cand[j] > key) {
+          cand[j + 1] = cand[j];
+          j--;
+        }
+        cand[j + 1] = key;
+      }
+    }
+    let prev = -1;
+    for (let i = 0; i < count; i++) {
+      const idx = cand[i];
+      if (idx === prev) continue;
+      const p = points[idx];
+      outX[out] = getX(p);
+      outY[out] = getY(p);
+      out++;
+      prev = idx;
+    }
+  }
+
+  if (!trackX) {
+    xMin = getX(points[0]);
+    xMax = getX(points[n - 1]);
+  }
+  return [outX.subarray(0, out), outY.subarray(0, out), xMin, xMax, yMin, yMax];
+}
+
+/**
+ * Origami folding for the in-memory capture buffer.
+ *
+ * The existing history is reduced by exactly one half by retaining source
+ * positions [0, 2, 4, ...]. The caller doubles the future intake stride at the
+ * same time, so all channels and Parameters remain on one consistent sampling
+ * grid without selecting peaks from one representative channel.
+ */
+export function foldDataBufferHalf(buffer: readonly DataPoint[]): DataPoint[] {
+  const n = buffer.length;
+  if (n <= 1) return buffer.slice();
+  const result = new Array<DataPoint>(Math.ceil(n / 2));
+  for (let source = 0, target = 0; source < n; source += 2, target += 1) {
+    result[target] = buffer[source];
+  }
   return result;
 }

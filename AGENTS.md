@@ -21,6 +21,7 @@ bun run dev
 bun run build            # typecheck -> vite build
 bun run typecheck        # アプリ（src/）
 bun run typecheck:launcher   # launcher/ + scripts/ + vite.config.ts（generate-embed の実行後でないと通らない）
+bun run test             # tests/（bun:test。純粋関数・偽ポートでの transport 検証）
 ```
 
 - **`bun run build` は `tsc --noEmit` を先に通す**。vite は型を見ないので、これを外すと型エラーがそのままリリースまで乗る（実際 v7.0 時点で3件乗っていた）
@@ -156,15 +157,14 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
 - **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
   - 非保存時: 直近 `NON_SAVING_CHART_PREVIEW_POINTS`(768) 点のスライディングプレビュー（間引き無し・全点描画）。チャート入力レートが 100ms 固定なので **768 点 = 約77秒**であり、時間窓と同義。**点数で持つのは時刻窓より素直だから** — 切り捨てが splice 1回で済み、時計も走査も要らない。さらにフィードが止まったとき、時刻窓は勝手に空になって「最後にいくつだったか」すら消えるが、点数窓は次のデータが押し出すまで直近77秒を保持する
-  - 保存時: 保存開始〜現在の全期間を `CHART_MAX_POINTS`(2048) へストライド間引き（`saveDecimationStrideRef`/`saveRawCounterRef`、バッファが `CHART_MAX_POINTS` 超で偶数 index 再間引き＆stride 倍化 → メモリ一定）
-  - **再間引きのしきい値を `2 × CHART_MAX_POINTS` に戻さないこと**。2倍の余裕を持たせるとバッファは 2048〜4096 を往復し平均 3000 点になる（20Hz 非保存時の 1200 点の 2.5 倍）。これを4枚のチャートが毎秒数回 O(n) で再構築するため、**保存開始から数分で 20Hz が 17〜18Hz へ落ちて安定する**（v3.19 で観測・v3.20 で修正）。バッファが定常サイズに達した時点で劣化も頭打ちになるのが特徴的な症状
+  - 保存時: 保存開始〜現在の全期間を Origami バッファへ取り込む。バッファが `SAVE_BUFFER_MAX_POINTS` に達したら既存点の `[0,2,4,...]` だけを残し、`saveDecimationStrideRef` を2倍にする。以後の受け入れ頻度も1/2になり、バッファ密度を一定に保つ。全点はTSVへ記録する
   - **再間引きで `chartEpoch`（purge + remount）を bump しないこと**。計測中に4枚を作り直すのは v3.1 で廃止した定期パージと同じ悪手で、しきい値を下げた分だけ発生頻度が上がる。purge が必要なのは WebGL コンテキスト蓄積の抑制だけなので、**接続時（チャートが空でタイミングが問題にならない唯一の瞬間）に1回だけ**行う
   - チャート再描画の最小間隔は保存中・非保存時とも `CHART_REDRAW_INTERVAL_MS`(500ms) の**1本**。以前は保存中だけ 500ms・非保存 200ms に分けていたが、768 点プレビューも1サンプルでは数ピクセルしか動かないので分ける根拠が無く、**2つの数字は考えることが2つ増えるだけ**だった
   - **再描画は「バッファに点が増えたフラッシュ」だけがタイマーを張る**（`bufferChanged`）。間引きストライドは保存が伸びるほど倍々になるので、新しい点は stride 1 なら 100ms 毎だが stride 64 では 6.4 秒毎になる — 一方フラッシュ自体は終始 10 回/秒で回る。無条件に張っていた頃は、計測後半で**1回の変化あたり十数回**、前回と同一のトレースを4枚描き直しており、その無駄は計測時間に比例して増え続けた。しかもそのコストは Modbus 転送の合間の主スレッドに落ちる。上の間隔は**周期ではなく下限**として残す（stride 1 の序盤は実際に 10 点/秒来るため）。結果として再描画レートは「点のレート」と「この下限」の**遅い方**になり、どちらの端でも空打ちが出ない
   - 共通上限 `CHART_MAX_POINTS`。`MAX_POINTS_IN_MEMORY`(256) は IndexedDB trim 専用
 - ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファ更新と IndexedDB バッチ書込みを実施）
 - **タイムスタンプは AI 読取り完了時刻（`lastAiReadCompletedAtRef`）を1つだけ使い、チャート・IndexedDB・TSV・レート表示すべてに同じ値を渡す**。`updateDataHistory` は Promise チェーンの継続として走るため、**その中で `Date.now()` を読んではならない** — 表示キューが捌けた時刻が記録され、レンダリング遅延が時間軸に混入する（v3.18 以前はチャート/IndexedDB と TSV で同じサンプルの時刻が食い違っていた）
-- **表示系の state 更新には予算を設ける**（`READOUT_PUBLISH_INTERVAL_MS` = 実測レートと保存点数、`CHANNEL_CARD_MIN_INTERVAL_MS` = AI チャネルカード）。値そのものは ref で正確に持ち、React へ渡す頻度だけを絞る。1サンプルごとに setState すると **40枚のカードの再レンダリングが Modbus 転送の合間に挟まり、描画コストがそのままポーリングジッタになる**。カード側の絞りはポーリング周期が `CHANNEL_CARD_MIN_INTERVAL_MS`(100ms) より**速いときだけ**効くので、**Polling Rate = 25ms と 50ms の両方で**効き、既定の 100ms では効かない（100ms 自身は閾値と同じで絞られない）。**記録すると決めたサンプルのデータ経路（`updateDataHistory` 以降）は絞らないこと**
+- **表示系の state 更新には予算を設ける**（`READOUT_PUBLISH_INTERVAL_MS` = 実測レートと保存点数）。値そのものは ref で正確に持ち、React へ渡す頻度だけを絞る。1サンプルごとに setState すると **40枚のカードの再レンダリングが Modbus 転送の合間に挟まり、描画コストがそのままポーリングジッタになる**。AI カードは poll 完了時に直接 publish するが、**値が変わったチャネルだけ新オブジェクトにし、全チャネル不変なら `prev` を返して render ごと省く**（カードは primitive props の `memo`）。旧 `CHANNEL_CARD_MIN_INTERVAL_MS` は Polling 100ms 固定で何も絞らなくなったため撤去した — 速いポーリングを戻す場合はカードの絞りも戻すこと。**記録すると決めたサンプルのデータ経路（`updateDataHistory` 以降）は絞らないこと**
 - `pageshow` / `visibilitychange` による復帰時即時ポーリング（`acquiring` 状態を ref で確認）
 - USB 物理抜けの `disconnect` イベント自動検知
 - **キャリブレーション変更時もポーリングは継続**（`aiCalibrationRef` で最新値を参照）
@@ -287,7 +287,9 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
 
-### PWA / Service Worker
+### PWA / Service Worker（最重要・絶対条件）
+- **ユーザーの99%がPWAとして利用する**ため、「**PWAで確実に動く、確実に更新できること**」が本アプリの絶対条件である
+  - オフライン動作や更新過渡期における白画面・ロード失敗を構造的に防ぐため、主要機能・チャート描画（Plotly 等）の**遅延ロード（React.lazy / 動的 import）は原則禁止**。全アセットを静的バンドル・プリキャッシュし、初回オフライン訪問でも完全動作を保証する
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
 - **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.png`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
@@ -366,23 +368,12 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - なお SW 登録は `window.addEventListener('load')` なので、**install の 19.5MB は初回描画を
   ブロックしていない**。ここを「初回表示が遅い」と誤診しないこと
 
-### Plotly の遅延ロード（効果 初期転送 630KB → 約140KB gzip / 推奨）
+### Plotly の遅延ロード（検討したが却下 — PWA 動作保証を優先）
 
-**パネル（Manual / ScriptRunner / AppInfo / InputCalibrator）の `React.lazy` 化は却下した。**
-効果は gzip 約20KB＝転送 JS の3%しかなく、しかも全チャンクが precache されるので2回目以降は
-削減ゼロ。対して ScriptRunner を lazy にすると Prism が非同期チャンクへ移り、
-`utils/prismManual.ts` と `vite.config.ts` の `manualChunks` が依存している
-「core とグラマーが同一チャンクに居る」不変条件に触れる。**これは過去に本番ビルドだけ白画面**という
-形で実際に起きた事故で、dev では再現しない。3% のために踏む取引ではない。
-
-本命は Plotly のほう。`ChartPanel` は **データが0点の間 `<Plot>` をマウントしていない**
-（"No data" プレースホルダのみ / `isEmpty`）。つまりデバイスを繋ぐまで Plotly は描画に使われないのに、
-静的 import なので **1.45MB / gzip 489KB を起動時に必ず落として評価している**。転送 JS の78%。
-
-- `src/plotly.ts` を動的 import にし、`isEmpty` の間は読まない
-- Suspense の fallback は**既存の "No data" プレースホルダをそのまま使える**
-- 代償はポーリング開始からグラフ描画までの一拍。SW キャッシュが温まっていれば体感ゼロ
-- Prism には一切触れないので、上の白画面クラスとは無関係
+`ChartPanel` の `Plot` を `React.lazy` で動的 import 化する案を検討・計測したが、**却下した**。
+ユーザーの99%がPWA環境でオフライン利用するため、動的 import に伴う非同期チャンク分割は、
+オフライン起動やキャッシュ更新時のネットワークフェッチ失敗によるグラフ描画不可・白画面リスクを抱える。
+静的 import のまま全アセットを確実にプリキャッシュし、オフライン完全動作と更新信頼性を死守する。
 
 ## 主要定数（`src/constants.ts`）
 
@@ -399,7 +390,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 | `OUTPUT_HOLDING_RETRY_WINDOW_MS` | 60000 | AO 書込みリトライ制限の評価ウィンドウ |
 | `OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AO 書込み最大失敗回数 |
 | `MAX_POINTS_IN_MEMORY` | 256 | 非保存時の IndexedDB 保持点数（trim 専用） |
-| `CHART_MAX_POINTS` | 2048 | チャート描画点数の上限（保存時ダウンサンプル目標）。v3.1 で 1024→2048 |
+| `CHART_MAX_POINTS` | 1024 | 初期検証時のチャート予算。実機・低スペック機で確認後に2048、4096を段階評価 |
 | `NON_SAVING_CHART_PREVIEW_POINTS` | 768 | 非保存時チャートのプレビュー点数（×100ms ≒ 77秒） |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
 | `BATCH_FLUSH_INTERVAL_MS` | 100 | バッチフラッシュの最大遅延 |
@@ -412,7 +403,6 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 | `TSV_MIRROR_FLUSH_INTERVAL_MS` | 1000 | OPFS ミラーの追記間隔（ストリームとは独立。起動直後の空ミラーを避けるため） |
 | `TSV_MIRROR_FLUSH_MAX_ROWS` | 100 | 同・行数キャップ |
 | `CHART_INPUT_INTERVAL_MS` | 100 | チャートへの入力レート（固定。ポーリング回数のストライドで実現） |
-| `CHANNEL_CARD_MIN_INTERVAL_MS` | 100 | AI チャネルカードの state 更新下限。ポーリングがこれより速いときだけ絞りが効く |
 | `READOUT_PUBLISH_INTERVAL_MS` | 250 | 実測レート・保存点数を React へ渡す間隔 |
 | `INPUT_READ_MAX_FAILURE_RATIO` | 0.1 | AI 読取り失敗予算をポーリング頻度に比例させる係数（下限は `INPUT_READ_MAX_FAILURES_PER_WINDOW`） |
 
@@ -425,9 +415,9 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
 - **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
 - **`scattergl` は性能上の選択ではなくデータモデル上の必然**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。scatter トレースは点列を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**scatter 相当のパラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`
-- **`hoverinfo: 'skip'` + `hovermode: false` を外さないこと**（`ChartPanel.tsx`）。scattergl はホバー判定用の空間インデックスを毎更新で構築し、そのコストは `CHART_MAX_POINTS` に比例する。本アプリは `hovertemplate` も `onHover`/`onClick` も使っていないため純粋な無駄であり、これを止めた前提で `CHART_MAX_POINTS` を 2048 に上げている。**ホバーでの値読みを復活させる場合は `CHART_MAX_POINTS` を 1024 に戻すこと**
-- **WebGL コンテキストは明示的に解放する**（`ChartPanel.tsx` の `releaseWebglContext`）。`Plotly.purge()`（react-plotly.js がアンマウント時に呼ぶ）は scattergl の WebGL コンテキストを破棄しない（plotly.js #2852 / #6365、後者は未解決）。解放しないとチャート差し替えのたびにコンテキストが増え、ブラウザ上限（概ね 8〜16）に達した時点で**古いチャートが黙って描画を停止する**。v3.1 以前にあった定期パージ（15分ごとの remount）はこの問題を悪化させるだけだったため廃止した。**「GPU 状態が溜まるから定期的に作り直す」という対策を再導入しないこと**
-- **チャート間引きは描画モードで手法を変えること。** 時系列モード（X=time）は 1px ごとの **min/max 間引き**が使え、描画コストを O(点数)→O(ピクセル幅) に落としつつ尖頭値を保存できる。**XY パラメトリックモードでは min/max は使用不可** — 同一 x に往路と復路の異なる y が乗るため、列ごとの集約はループ形状（囲む面積＝散逸エネルギー）を破壊する。XY では連続ピクセルセル重複除去や RDP を用い、**周回ごとのドリフト情報を消さないこと**（グローバル重複除去は不可）。なお現行の stride 間引き（`App.tsx`）は 2 点に 1 点を無条件に捨てるため**単サンプル幅のスパイクを取りこぼす**。トレードオフ分析は `docs/chart-library-comparison.md` §4-4
+- **`hoverinfo: 'skip'` + `hovermode: false` を外さないこと**（`ChartPanel.tsx`）。scattergl はホバー判定用の空間インデックスを毎更新で構築する。本アプリは `hovertemplate` も `onHover`/`onClick` も使っていないため純粋な無駄であり、初期の1024点検証でもこの前提を維持する。**ホバーでの値読みを復活させる場合は、実機測定なしに点数を引き上げないこと**
+- **WebGL コンテキストは明示的に解放する**（`ChartPanel.tsx` の `releaseWebglContext`）。`Plotly.purge()`（react-plotly.js がアンマウント時に呼ぶ）は scattergl の WebGL コンテキストを破棄しない（plotly.js #2852 / #6365、後者は未解決）。**解放は Plot の `onPurge` で行うこと** — react-plotly.js は `onPurge` → `Plotly.purge()` の順に呼び、purge がプロットコンテナ（canvas ごと）を DOM から外すため、親の effect から後で `querySelectorAll('canvas')` しても何も見つからない（v7.2 の `Y=----` 非表示で実際に解放漏れになっていた）。解放しないとチャート差し替えのたびにコンテキストが増え、ブラウザ上限（概ね 8〜16）に達した時点で**古いチャートが黙って描画を停止する**。v3.1 以前にあった定期パージ（15分ごとの remount）はこの問題を悪化させるだけだったため廃止した。**「GPU 状態が溜まるから定期的に作り直す」という対策を再導入しないこと**
+- **チャート間引きは描画モードで手法を変えること。** 時系列モード（X=time）は 1px ごとの **min/max 間引き**が使え、描画コストを O(点数)→O(ピクセル幅) に落としつつ尖頭値を保存できる。**XY パラメトリックモードでは min/max は使用不可** — 同一 x に往路と復路の異なる y が乗るため、列ごとの集約はループ形状（囲む面積＝散逸エネルギー）を破壊する。現行の Chart M4 は X/Y の局所極値と点列順を保持し、目標1024点・最大1536点（時系列/XY 共通・欠測マーカー込み）で描画する（下限は波形の重複により保証しない）。**不変条件：出力の連続する有限2点の間に、元データの無効点（X/Y いずれかが NaN）が存在しないこと** — 間引きで NaN を落とすと `connectgaps: false` でも欠測をまたいで線が引かれる（v7.2 で XY に混入し修正）。バケット内は有効区間（run）ごとに極値を取り、区間の間に NaN マーカーを1つ置く。予算が足りないバケットは短い run を落とす（落とした run は欠測側として扱い、決して結線しない）。`tests/m4Decimation.test.ts` がこの不変条件を検査する。なお保存中の Origami バッファ折り畳みは別経路で、既存点の `[0,2,4,...]` 抽出と取り込み stride 倍化だけを行い、個別チャンネルのピーク保持は保証しない。トレードオフ分析は `docs/chart-library-comparison.md` §4-4
 - **間引き・描画の計算を主スレッドで重くしないこと。** 本アプリはデータロガーであり Modbus ポーリングも主スレッドで回るため、**描画側の負荷はポーリング周期のジッタ＝計測品質の劣化に直結する**。取り込み時の間引きは O(1)/点 を維持し、再描画時の走査が数 ms を超えるなら Worker へ移すこと（`tsvWriterWorker` / `pyodideWorker` に前例あり）
 - **`detectRenderBackend()`（`ChartPanel.tsx`）の GPU/CPU バッジは概算**。Canvas2D は Chromium で GPU アクセラレーション対象だが、Skia は**アンチエイリアス付きの凹パス**（長い折れ線）を GPU でラスタライズできず CPU 経路に落ちるため、「Canvas2D=CPU」「WebGL=GPU」の二分法は**どちらの方向にも不正確**。描画方式の性能判断は必ず実機計測で行い、この表示を根拠にしないこと
 - **ビルドチャンク分割**（`vite.config.ts`）: Plotly 等の vendor を `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
@@ -476,8 +466,8 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
   push/リリースの直前に1回だけ。バージョンは「配布物の識別子」であって作業ログではない
   （PWA の Application Info と GitHub Release のタグが指すのは配布された成果物であり、
   中間コミットには対応する配布物が存在しない）
-- したがって**バージョンを上げるのは「push」「リリース」と言われたとき**（下記）。
-  それ以外のタイミングで上げるのは、ユーザーが明示的に指示した場合のみ
+- したがって**バージョンを上げるのは明示的に「リリース」「Release」と指示されたときのみ**（下記）。
+  単なるコミットや作業途中の `push` では絶対にバージョンを上げず、リリース操作も行わないこと
 - 採番はリリース分をまとめて1回で判断する:
   - 小規模変更(主観でいいです)ではマイナーバージョンをインクリメント
   - マイナーバージョンが20になる場合は、メジャーバージョンを更新(Linux,Linus Torvaldsの思想)
@@ -503,10 +493,11 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 「タグだけ打って push」で済ませる軽量経路は**無い** — 配布物が付いてこないバージョンは、
 Application Info が名乗る版と Release ページからダウンロードできる版を食い違わせる。
 
-## 「push」「リリース」と言われたときの絶対的なルール
+## 「リリース」と言われたときの絶対的なルール
 
-ユーザーが「push」「リリース」「Release」「minor version update with tag and push」と言った場合、
+ユーザーが「リリース」「Release」「minor version update with tag and push」と明示的に指示した場合にのみ、
 単なる `git push` ではなく**リリース操作**として以下を一括で実行する。
+「push」や「commit and push」等の単なる git 操作指示でリリース操作を行ってはならない。
 
 **手順の詳細・コマンド・落とし穴は `.claude/skills/release/SKILL.md` が一次情報源**（Claude Code なら
 `/release` で読み込まれる）。exe 生成と GitHub Release 作成まで含めた完全な手順はそちらにある。

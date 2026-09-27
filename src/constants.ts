@@ -9,33 +9,15 @@ export const AO_START_REGISTER = 0;
 // on-screen chart).
 export const MAX_POINTS_IN_MEMORY = 256;
 
-// On-screen chart budget while SAVING: the whole capture (save-start → now) is
-// downsampled to this many points. The not-saving preview has its own, smaller
-// budget (NON_SAVING_CHART_PREVIEW_POINTS). The full data is always written to
-// TSV regardless.
-// Raised 1024 → 2048 in v3.1, funded by disabling the scattergl hover pick-index
-// (`hoverinfo: 'skip'`, see ChartPanel.tsx): that index is rebuilt per update and
-// its cost scales with this constant, so removing it buys headroom at the same
-// redraw rate. Deliberately conservative — the headroom has not been measured
-// on-device yet (docs/chart-library-comparison.md §11-1), so this is a doubling
-// rather than the 8192 the hardware may well allow.
-//
-// That headroom has since been spent from the other side: CHART_REDRAW_INTERVAL_MS
-// went 500 -> 200 ms, so the same point budget is now drawn 2.5x as often. This
-// number and that one draw on the same unmeasured budget.
-export const CHART_MAX_POINTS = 2048;
-// Target points for 2D-M4 chart rendering decimation.
-// Reduces down to ~1200-1600 points (target 1024) right before feeding Plotly.
-// On 1080p screens, each quadrant chart is ~800-900px wide, so ~1200-1600 points
-// perfectly preserves hysteresis peaks and loops while substantially lowering
-// GPU/CPU overhead on entry devices like Intel N100.
+// Target points for Chart M4 (utils/m4Decimation.ts). Output — time series and
+// XY alike, gap markers included — is capped at 1.5x this (1536). Fewer points
+// come out when extrema coincide. Increase only after real-device and low-end
+// measurements.
 export const CHART_RENDER_TARGET_POINTS = 1024;
-// Maximum capacity of the in-memory capture buffer during data saving (OrigamiBuffer).
-// Once reached, it folds down by ~50% (to ~26000-35000 points, target 32768)
-// via multi-channel M4 decimation and doubles the sampling stride.
+// Maximum capacity of the in-memory capture buffer during data saving.
+// Once reached, Origami folding retains [0, 2, 4, ...] (so the buffer drops to
+// half) and the intake stride doubles. The full-rate data continues to go to TSV.
 export const SAVE_BUFFER_MAX_POINTS = 65536;
-// Target folded points when SAVE_BUFFER_MAX_POINTS is reached.
-export const SAVE_BUFFER_FOLD_TARGET_POINTS = 32768;
 // How often a polled sample is fed to the chart buffer (and, while not saving,
 // to IndexedDB). Applied as a poll-count stride, so
 // it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
@@ -75,8 +57,8 @@ export const NON_SAVING_CHART_PREVIEW_POINTS = 600;
 // chart input rate so no flush goes unseen.
 //
 // The cost is real and unmeasured on-device: 2.5x the redraws, each over up to
-// CHART_MAX_POINTS x 4 charts. Which is why this is now the CAPABLE-device
-// figure only — see CHART_REDRAW_INTERVAL_CONSTRAINED_MS.
+// the current M4 target x 4 charts. Which is why this is now the
+// CAPABLE-device figure only — see CHART_REDRAW_INTERVAL_CONSTRAINED_MS.
 //
 // This is a FLOOR, not a period. A redraw is only armed by a flush that
 // actually added a point to the chart buffer (see flushPendingDataPoints), so
@@ -115,14 +97,9 @@ export const CHART_REDRAW_DEFER_MAX_MS = 1_000;
 // polling jitter. The underlying values are exact and kept in refs; only the
 // publishing is on a budget.
 export const READOUT_PUBLISH_INTERVAL_MS = 250;
-// Floor on how often the AI channel cards are refreshed, applied only when
-// polling faster than this (at the default 100 ms poll rate nothing changes). A
-// publish re-renders every channel card, and at 20 Hz that render lands between
-// two Modbus transfers — display cost turning straight into polling jitter,
-// which is the one trade this app must never make. 10 Hz is already past what
-// anyone can read off a moving number. Raise it to 0 to go back to one render
-// per sample; the recorded data is unaffected either way.
-export const CHANNEL_CARD_MIN_INTERVAL_MS = 100;
+// (CHANNEL_CARD_MIN_INTERVAL_MS was removed: with polling fixed at 100 ms it
+// never throttled anything. Card renders are instead bounded by memo'd cards and
+// by skipping the state update when no channel changed — see pollOnce.)
 // NOTE: CHART_PURGE_INTERVAL_MS (periodic 15-minute purge + remount) was removed
 // in v3.1. It was counterproductive: `Plotly.purge()` does not destroy the
 // scattergl WebGL context (plotly.js issues #2852 / #6365, the latter still open),
@@ -189,4 +166,3 @@ export const TSV_MIRROR_FLUSH_INTERVAL_MS = 1_000;
 // Row-count cap for the same, so a high sampling rate does not leave a second's
 // worth of rows sitting in memory between ticks.
 export const TSV_MIRROR_FLUSH_MAX_ROWS = 100;
-

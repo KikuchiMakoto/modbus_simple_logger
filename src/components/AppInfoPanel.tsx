@@ -23,6 +23,7 @@ const LIBRARIES = [
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
   { name: 'Prism', pkg: 'prismjs', license: 'MIT' },
+  { name: 'buffer', pkg: 'buffer', license: 'MIT' },
   { name: 'react-simple-code-editor', pkg: 'react-simple-code-editor', license: 'MIT' },
   { name: 'Pyodide', pkg: 'pyodide', license: 'MPL-2.0' },
 ].map((lib) => ({ ...lib, version: DEP_VERSIONS[lib.pkg] ?? 'unknown' }));

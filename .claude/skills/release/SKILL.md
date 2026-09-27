@@ -1,6 +1,6 @@
 ---
 name: release
-description: このリポジトリのリリース操作を一括実行する。ユーザーが「リリース」「Release」「push」「minor version update with tag and push」と言った場合に使用。バージョン更新 → ビルド検証 → コミット → 注釈付きタグ → push（必要ならmainへマージ）→ Web版公開（gh-pages）→ exe生成 → GitHub Release作成 → exe添付、までを行う。
+description: このリポジトリのリリース操作を一括実行する。ユーザーが「リリース」「Release」「minor version update with tag and push」と明示的に指示した場合にのみ使用。「push」や「commit and push」等の単なるgit操作では使用しない。バージョン更新 → ビルド検証 → コミット → 注釈付きタグ → push（必要ならmainへマージ）→ Web版公開（gh-pages）→ exe生成 → GitHub Release作成 → exe添付、までを行う。
 ---
 
 # リリース手順

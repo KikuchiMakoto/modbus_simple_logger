@@ -31,6 +31,7 @@ type PendingTimer = {
   delayMs: number;
   repeat: boolean;
   backend: Backend;
+  generation: number;
   /** Only set while `backend` is 'window'. */
   handle?: number;
 };
@@ -38,6 +39,7 @@ type PendingTimer = {
 let worker: Worker | null = null;
 let workerUsable = true;
 let nextId = 1;
+let nextGeneration = 1;
 
 /** Live timers, keyed by our id. Entries stay for the lifetime of a repeat. */
 const pending = new Map<number, PendingTimer>();
@@ -45,9 +47,10 @@ const pending = new Map<number, PendingTimer>();
 const pageVisible = (): boolean =>
   typeof document === 'undefined' || document.visibilityState === 'visible';
 
-const fire = (id: number): void => {
+const fire = (id: number, generation?: number): void => {
   const timer = pending.get(id);
   if (!timer) return;
+  if (generation !== undefined && generation !== timer.generation) return;
   if (!timer.repeat) pending.delete(id);
   timer.fn();
 };
@@ -55,8 +58,8 @@ const fire = (id: number): void => {
 const runOnWindow = (id: number, timer: PendingTimer): void => {
   timer.backend = 'window';
   timer.handle = timer.repeat
-    ? window.setInterval(() => fire(id), timer.delayMs)
-    : window.setTimeout(() => fire(id), timer.delayMs);
+    ? window.setInterval(() => fire(id, timer.generation), timer.delayMs)
+    : window.setTimeout(() => fire(id, timer.generation), timer.delayMs);
 };
 
 const stopWindowTimer = (timer: PendingTimer): void => {
@@ -76,7 +79,12 @@ const fallBackToWindowTimers = (): void => {
   workerUsable = false;
   worker = null;
   for (const [id, timer] of pending) {
-    if (timer.backend === 'worker') runOnWindow(id, timer);
+    if (timer.backend === 'worker') {
+      // Invalidate messages already queued by the failed worker before
+      // re-arming the same logical timer on the window backend.
+      timer.generation = nextGeneration++;
+      runOnWindow(id, timer);
+    }
   }
 };
 
@@ -85,7 +93,8 @@ const ensureWorker = (): Worker | null => {
   if (worker) return worker;
   try {
     const created = new Worker(new URL('../timerWorker.ts', import.meta.url), { type: 'module' });
-    created.onmessage = (event: MessageEvent<{ id: number }>) => fire(event.data.id);
+    created.onmessage = (event: MessageEvent<{ id: number; generation: number }>) =>
+      fire(event.data.id, event.data.generation);
     created.onerror = () => {
       created.terminate();
       fallBackToWindowTimers();
@@ -105,7 +114,14 @@ const runOnWorker = (id: number, timer: PendingTimer): void => {
     return;
   }
   timer.backend = 'worker';
-  active.postMessage({ type: 'set', id, delayMs: timer.delayMs, repeat: timer.repeat });
+  timer.generation = nextGeneration++;
+  active.postMessage({
+    type: 'set',
+    id,
+    generation: timer.generation,
+    delayMs: timer.delayMs,
+    repeat: timer.repeat,
+  });
 };
 
 // Going hidden is exactly when window timers start being throttled, so anything
@@ -125,7 +141,7 @@ if (typeof document !== 'undefined') {
 
 const schedule = (fn: () => void, delayMs: number, repeat: boolean): number => {
   const id = nextId++;
-  const timer: PendingTimer = { fn, delayMs, repeat, backend: 'window' };
+  const timer: PendingTimer = { fn, delayMs, repeat, backend: 'window', generation: nextGeneration++ };
   pending.set(id, timer);
   if (pageVisible()) runOnWindow(id, timer);
   else runOnWorker(id, timer);

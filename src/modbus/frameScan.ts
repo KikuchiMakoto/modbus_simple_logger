@@ -2,7 +2,7 @@
 //
 // Split out of webserialClient's transfer() so the one part of the transport
 // with no I/O in it — deciding what a pile of received bytes *is* — can be
-// exercised without a device attached. There is no test suite in this repo; a
+// exercised without a device attached (tests/frameScan.test.ts). A
 // pure function with an explicit result type is the next best thing.
 //
 // What this replaces: transfer() used to frame responses purely by byte count
@@ -18,6 +18,11 @@ import { crc16 } from '../utils/crc16';
 
 /** addr + (fc | 0x80) + exception code + CRC16. */
 export const MODBUS_EXCEPTION_FRAME_LENGTH = 5;
+
+/** Function codes whose response is addr + fc + byteCount + data + CRC16. */
+const READ_FUNCTION_CODES: ReadonlySet<number> = new Set([1, 2, 3, 4]);
+/** addr + fc + byteCount + CRC16. */
+const READ_RESPONSE_OVERHEAD = 5;
 
 const MODBUS_EXCEPTION_TEXT: Record<number, string> = {
   0x01: 'illegal function',
@@ -93,6 +98,18 @@ export function scanModbusFrame(
   if ((fc & 0x7f) !== functionCode) return { kind: 'drop', count: 1 };
 
   const isException = (fc & 0x80) !== 0;
+
+  // Read responses (FC1/3/4) carry their own byte count at [2], and for the
+  // request just sent it is known exactly. Checking it here, before waiting for
+  // `successLength` bytes, is what stops a stray `addr fc` pair in line noise
+  // from being taken as the start of a 37-byte frame: without it, a complete
+  // 5-byte exception queued right behind the noise was never looked at, and the
+  // transfer timed out waiting for bytes that were never coming.
+  if (!isException && READ_FUNCTION_CODES.has(functionCode)) {
+    if (buffer.length < 3) return { kind: 'need', atLeast: 3 };
+    if (buffer[2] !== successLength - READ_RESPONSE_OVERHEAD) return { kind: 'drop', count: 1 };
+  }
+
   const length = isException ? MODBUS_EXCEPTION_FRAME_LENGTH : successLength;
   if (buffer.length < length) return { kind: 'need', atLeast: length };
 
@@ -100,7 +117,7 @@ export function scanModbusFrame(
   // tail reproduces a plausible address and function code often enough that
   // neither is evidence on its own.
   const received = buffer[length - 2] | (buffer[length - 1] << 8);
-  if (crc16(buffer.slice(0, length - 2)) !== received) return { kind: 'drop', count: 1 };
+  if (crc16(buffer, length - 2) !== received) return { kind: 'drop', count: 1 };
 
   return { kind: 'frame', length, isException };
 }
