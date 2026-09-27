@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bunx vite dev",
     "typecheck": "bunx tsc --noEmit",
+    "test": "bun test tests",
     "typecheck:launcher": "bunx tsc -p tsconfig.launcher.json --noEmit",
     "build": "bun run typecheck && bunx vite build",
     "preview": "bunx vite preview",
@@ -40,6 +41,6 @@
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.1"
   }
 }
