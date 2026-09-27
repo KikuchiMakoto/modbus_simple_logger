@@ -208,6 +208,11 @@ const FIXED_SERIAL_SETTINGS: SerialSettings = {
   parity: 'none',
 };
 const FIXED_SLAVE_ID = 1;
+// How long Disconnect waits for a poll already on the wire before tearing the
+// link down anyway. Longer than any healthy poll (read deadline ~200 ms plus a
+// possible 200 ms quiet period and a reopen), short enough that the button
+// never looks dead.
+const DISCONNECT_POLL_WAIT_MS = 3000;
 // The register map on the wire is always 16-bit int (i16t) Input Registers;
 // the 32-bit float (f32t) "Extended" mode has been removed.
 const PRECISION_LABEL = 'i16t';
@@ -567,9 +572,15 @@ const axisOptions = [
   })),
 ];
 
-const yAxisOptions = [{ key: '----', label: '----' }, ...axisOptions.filter((option) => option.key !== 'time')];
-const axisOptionKeys = new Set(axisOptions.map((option) => option.key));
-axisOptionKeys.add('----');
+// '----' hides a chart; it is a Y choice only (X always has something to plot
+// against, and 'time' is an X choice only).
+const HIDDEN_AXIS_KEY = '----';
+const yAxisOptions = [
+  { key: HIDDEN_AXIS_KEY, label: HIDDEN_AXIS_KEY },
+  ...axisOptions.filter((option) => option.key !== 'time'),
+];
+const xAxisOptionKeys: ReadonlySet<string> = new Set(axisOptions.map((option) => option.key));
+const yAxisOptionKeys: ReadonlySet<string> = new Set(yAxisOptions.map((option) => option.key));
 
 // Module scope, not a ref: StrictMode mounts the app twice in development, and
 // the recovery prompt is a blocking dialog the user would have to dismiss twice
@@ -583,7 +594,7 @@ function App() {
     chart2X, setChart2X, chart2Y, setChart2Y,
     chart3X, setChart3X, chart3Y, setChart3Y,
     chart4X, setChart4X, chart4Y, setChart4Y,
-  } = useChartAxes(axisOptionKeys);
+  } = useChartAxes(xAxisOptionKeys, yAxisOptionKeys);
 
   // The link is one fixed configuration (slave id, serial framing, register
   // map, poll rate) — see FIXED_SLAVE_ID / FIXED_SERIAL_SETTINGS /
@@ -596,9 +607,12 @@ function App() {
   const [saveRate, setSaveRate] = useState<PollingRateOption>(
     SAVE_RATE_OPTIONS.find((p) => p.valueMs === DEFAULT_SAVE_RATE_MS)!,
   );
-  const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(loadAiCalibration(AI_CHANNELS));
-  const [aiChannels, setAiChannels] = useState<AiChannel[]>(createAiChannels(aiCalibration));
-  const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels());
+  // Lazy initialisers: App re-renders on every published reading, and the
+  // eager form re-read and re-parsed localStorage and rebuilt both channel
+  // arrays on every one of those renders, only for useState to discard them.
+  const [aiCalibration, setAiCalibration] = useState<AiCalibration[]>(() => loadAiCalibration(AI_CHANNELS));
+  const [aiChannels, setAiChannels] = useState<AiChannel[]>(() => createAiChannels(aiCalibration));
+  const [aoChannels, setAoChannels] = useState<AoChannel[]>(createAoChannels);
   const [connected, setConnected] = useState(false);
   const [acquiring, setAcquiring] = useState(false);
   const [activeSaveFilename, setActiveSaveFilename] = useState('');
@@ -646,6 +660,19 @@ function App() {
     }
     return m;
   }, [aiFreeLabels, paramFreeLabels]);
+  const chartSlots = [
+    { color: '#34d399', x: chart1X, y: chart1Y, setX: setChart1X, setY: setChart1Y },
+    { color: '#60a5fa', x: chart2X, y: chart2Y, setX: setChart2X, setY: setChart2Y },
+    { color: '#f472b6', x: chart3X, y: chart3Y, setX: setChart3X, setY: setChart3Y },
+    { color: '#fbbf24', x: chart4X, y: chart4Y, setX: setChart4X, setY: setChart4Y },
+  ];
+  // Read by flushPendingDataPoints (a stable callback on the acquisition path),
+  // so a ref rather than a dependency. With every chart set to '----' nothing
+  // would redraw, and bumping displayRevision still re-renders App's subtree;
+  // the buffer keeps filling either way so a chart shows current data the
+  // moment it is re-enabled (the axis change itself re-renders it).
+  const anyChartVisibleRef = useRef(true);
+  anyChartVisibleRef.current = chartSlots.some((slot) => slot.y !== HIDDEN_AXIS_KEY);
   const [paramValues, setParamValues] = useState<number[]>(() => Array(PARAM_CHANNELS).fill(0));
   const [aiCollapsed, setAiCollapsed] = useState<boolean>(() => readJsonStorage<boolean>('ai_collapsed') ?? false);
   // AO and Parameter start collapsed: AI is what a session is normally watching,
@@ -1133,7 +1160,7 @@ function App() {
     //
     // Reset paths (connect/disconnect/start/stop-save) still bump
     // setDisplayRevision directly for an immediate redraw.
-    if (bufferChanged && chartRedrawTimerRef.current === undefined) {
+    if (bufferChanged && anyChartVisibleRef.current && chartRedrawTimerRef.current === undefined) {
       chartRedrawDueSinceRef.current = 0;
       chartRedrawTimerRef.current = window.setTimeout(
         commitChartRedraw,
@@ -1580,17 +1607,23 @@ function App() {
       // Cards are the live readout. Publish directly from the completed read,
       // outside the display/history promise chain, so chart or IndexedDB work
       // cannot make the visible value older than the latest device response.
-      setAiChannels((prev) =>
-        prev.map((ch, idx) => {
+      //
+      // Returns `prev` untouched when no channel moved (an idle input, a
+      // disconnected sensor pinned at a rail), so React bails out of the render
+      // entirely; a changed channel gets a new object, an unchanged one keeps
+      // its identity. The cards are memo'd on primitives either way.
+      setAiChannels((prev) => {
+        let next: AiChannel[] | null = null;
+        for (let idx = 0; idx < prev.length; idx++) {
+          const ch = prev[idx];
           const rawValue = aiRaw[idx] ?? ch.raw;
-          return {
-            ...ch,
-            raw: rawValue,
-            physical: aiPhysical[idx] ?? ch.physical,
-            status: getAiStatus(rawValue),
-          };
-        }),
-      );
+          const physical = aiPhysical[idx] ?? ch.physical;
+          if (rawValue === ch.raw && Object.is(physical, ch.physical)) continue;
+          next ??= prev.slice();
+          next[idx] = { ...ch, raw: rawValue, physical, status: getAiStatus(rawValue) };
+        }
+        return next ?? prev;
+      });
 
       // One capture time for every sink: chart, IndexedDB, TSV and the rate
       // readout all describe this sample as having happened here.
@@ -1922,12 +1955,31 @@ function App() {
     stopPolling();
     // Then wait for it, so the cleanup below runs after it has finished rather
     // than merely being immune to it.
+    //
+    // Bounded. The transport now puts a deadline on its own writes and reopens,
+    // but a Disconnect that can hang is the worst failure this button can have
+    // (the save never closes, Connect never comes back), so it does not depend
+    // on that. Past the bound the poll is abandoned: the generation bump above
+    // already makes its result a no-op, and client.disconnect() below detaches
+    // the handles it would have used.
     const inFlightPoll = pollInFlightRef.current;
     if (inFlightPoll) {
-      try {
-        await inFlightPoll;
-      } catch (err) {
-        console.warn('In-flight poll failed during disconnect:', err);
+      let timer: number | undefined;
+      const timedOut = await Promise.race([
+        inFlightPoll.then(
+          () => false,
+          (err) => {
+            console.warn('In-flight poll failed during disconnect:', err);
+            return false;
+          },
+        ),
+        new Promise<boolean>((resolve) => {
+          timer = setBackgroundTimeout(() => resolve(true), DISCONNECT_POLL_WAIT_MS);
+        }),
+      ]);
+      clearBackgroundTimer(timer);
+      if (timedOut) {
+        console.warn(`[App] in-flight poll did not settle within ${DISCONNECT_POLL_WAIT_MS} ms; abandoning it`);
       }
     }
     clearBackgroundTimer(flushTimerRef.current);
@@ -2012,20 +2064,24 @@ function App() {
         const connectedPort = clientRef.current?.getPort();
         if (!connectedPort) return;
 
-        // Match by USB vendor/product id via the port's own getInfo(), rather
-        // than by reaching into the polyfill's private device_ field, which a
-        // minified build is free to rename. navigator.usb only fires for
-        // devices this origin already has permission for, so on the rare tie
-        // (two identical adapters paired) the worst case is tearing down a run
-        // the user was about to lose anyway.
-        const info = connectedPort.getInfo?.();
+        // Match by object identity: the WebUSB port exposes isDevice() for
+        // exactly this. VID/PID alone tore down a live run whenever a second,
+        // identical adapter (same VID/PID, permitted for this origin) was
+        // unplugged. Only if the port cannot answer (not ours) is VID/PID the
+        // fallback.
         const device = (event as { device?: USBDevice }).device;
-        if (
-          info && device &&
-          info.usbVendorId !== undefined && info.usbProductId !== undefined &&
-          (info.usbVendorId !== device.vendorId || info.usbProductId !== device.productId)
-        ) {
-          return;
+        const identity = (connectedPort as { isDevice?: (d: USBDevice) => boolean }).isDevice;
+        if (device && typeof identity === 'function') {
+          if (!identity.call(connectedPort, device)) return;
+        } else {
+          const info = connectedPort.getInfo?.();
+          if (
+            info && device &&
+            info.usbVendorId !== undefined && info.usbProductId !== undefined &&
+            (info.usbVendorId !== device.vendorId || info.usbProductId !== device.productId)
+          ) {
+            return;
+          }
         }
 
         console.warn('[App] WebUSB disconnect event received for active port');
@@ -2602,62 +2658,24 @@ function App() {
       </section>
 
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-4">
-        <ChartPanel
-          color="#34d399"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          yAxisOptions={yAxisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart1X}
-          yAxis={chart1Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart1X}
-          onYAxisChange={setChart1Y}
-        />
-        <ChartPanel
-          color="#60a5fa"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          yAxisOptions={yAxisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart2X}
-          yAxis={chart2Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart2X}
-          onYAxisChange={setChart2Y}
-        />
-        <ChartPanel
-          color="#f472b6"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          yAxisOptions={yAxisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart3X}
-          yAxis={chart3Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart3X}
-          onYAxisChange={setChart3Y}
-        />
-        <ChartPanel
-          color="#fbbf24"
-          dataPoints={dataBufferRef.current}
-          purgeEpoch={chartEpoch}
-          displayRevision={displayRevision}
-          axisOptions={axisOptions}
-          yAxisOptions={yAxisOptions}
-          axisLabels={chartAxisLabels}
-          xAxis={chart4X}
-          yAxis={chart4Y}
-          isDarkMode={isDarkMode}
-          onXAxisChange={setChart4X}
-          onYAxisChange={setChart4Y}
-        />
+        {chartSlots.map((slot) => (
+          <ChartPanel
+            key={slot.color}
+            color={slot.color}
+            dataPoints={dataBufferRef.current}
+            purgeEpoch={chartEpoch}
+            displayRevision={displayRevision}
+            axisOptions={axisOptions}
+            yAxisOptions={yAxisOptions}
+            xLabel={chartAxisLabels[slot.x] ?? ''}
+            yLabel={chartAxisLabels[slot.y] ?? ''}
+            xAxis={slot.x}
+            yAxis={slot.y}
+            isDarkMode={isDarkMode}
+            onXAxisChange={slot.setX}
+            onYAxisChange={slot.setY}
+          />
+        ))}
       </div>
       </div>
 

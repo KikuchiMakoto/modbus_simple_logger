@@ -3,7 +3,6 @@ import {
   type ComponentType,
   memo,
   useCallback,
-  useEffect,
   useId,
   useMemo,
   useRef,
@@ -30,10 +29,11 @@ interface ChartPanelProps {
   purgeEpoch: number;
   axisOptions: AxisOption[];
   yAxisOptions: AxisOption[];
-  /** Free-text labels keyed by axis key (e.g. "raw_0", "par_3"). When present
-   * and non-empty, the axis title shows the label instead of the raw key.
-   * The "time" axis never has a label. */
-  axisLabels: Record<string, string>;
+  /** The user's free-text label for the X / Y channel ('' = none). Resolved
+   * strings rather than the whole label map, so typing a label on one channel
+   * re-renders only the charts that plot it. Ignored for 'time'. */
+  xLabel: string;
+  yLabel: string;
   xAxis: string;
   yAxis: string;
   isDarkMode: boolean;
@@ -48,6 +48,8 @@ type PlotProps = {
   style?: CSSProperties;
   onInitialized?: (figure: unknown, graphDiv: HTMLElement) => void;
   onUpdate?: (figure: unknown, graphDiv: HTMLElement) => void;
+  /** Runs before Plotly.purge(), i.e. while the canvases are still in the DOM. */
+  onPurge?: (figure: unknown, graphDiv: HTMLElement) => void;
 };
 
 // The factory in src/plotly.ts already returns the React component directly, so
@@ -80,18 +82,11 @@ const LIGHT_PALETTE = Object.freeze({
 
 // Invariant Plotly configuration hoisted to module scope to eliminate per-render useMemo overhead.
 const PLOT_CONFIG: Partial<Config> = Object.freeze<Partial<Config>>({
-  displayModeBar: 'hover',
+  displayModeBar: false,
   responsive: true,
   displaylogo: false,
   scrollZoom: true,
   doubleClick: 'reset',
-  modeBarButtonsToRemove: [
-    'select2d',
-    'lasso2d',
-    'hoverClosestCartesian',
-    'hoverCompareCartesian',
-    'toggleSpikelines',
-  ],
 });
 
 // Force-release the WebGL context(s) behind a graph div.
@@ -156,7 +151,8 @@ function ChartPanelComponent({
   purgeEpoch,
   axisOptions,
   yAxisOptions,
-  axisLabels,
+  xLabel,
+  yLabel,
   xAxis,
   yAxis,
   isDarkMode,
@@ -180,37 +176,24 @@ function ChartPanelComponent({
   const graphDivRef = useRef<HTMLElement | null>(null);
 
   const handleGraphDiv = useCallback((_figure: unknown, graphDiv: HTMLElement) => {
-    // A different div means the previous chart was remounted (purgeEpoch bump).
-    // react-plotly.js already purged it, but the purge leaves the WebGL context
-    // alive, so drop it here before it accumulates.
-    const previous = graphDivRef.current;
-    if (previous !== graphDiv) {
-      if (previous) releaseWebglContext(previous);
-      graphDivRef.current = graphDiv;
-
-      // Published to the shared store rather than shown here — the App Info panel
-      // is what displays it. Only probe the WebGL context when the DOM container
-      // or canvas is first attached or replaced, avoiding querying WebGL extensions
-      // on every 2fps redraw.
-      reportRenderBackend(detectRenderBackend(graphDiv));
-    }
+    if (graphDivRef.current === graphDiv) return;
+    graphDivRef.current = graphDiv;
+    // Published to the shared store rather than shown here — the App Info panel
+    // is what displays it. Probed only when a plot is (re)attached, not on
+    // every redraw.
+    reportRenderBackend(detectRenderBackend(graphDiv));
   }, []);
 
-  // Release the last context when the panel itself goes away (chart count change,
-  // route teardown, HMR) — the remount path above never sees this one.
-  useEffect(
-    () => () => {
-      if (graphDivRef.current) releaseWebglContext(graphDivRef.current);
-      graphDivRef.current = null;
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (!isPlotDisabled || !graphDivRef.current) return;
-    releaseWebglContext(graphDivRef.current);
-    graphDivRef.current = null;
-  }, [isPlotDisabled]);
+  // The one place the context can still be reached. Every way a Plot goes away
+  // — purgeEpoch remount, Y switched to '----', data cleared, panel unmount —
+  // is a React unmount, and react-plotly.js calls onPurge *before*
+  // Plotly.purge(), which removes the plot container and the canvases with it.
+  // Releasing from a parent effect afterwards (the previous approach) found no
+  // canvas to release for the '----' and empty-data paths.
+  const handlePurge = useCallback((_figure: unknown, graphDiv: HTMLElement) => {
+    releaseWebglContext(graphDiv);
+    if (graphDivRef.current === graphDiv) graphDivRef.current = null;
+  }, []);
 
   const palette = isDarkMode ? DARK_PALETTE : LIGHT_PALETTE;
 
@@ -219,12 +202,9 @@ function ChartPanelComponent({
   const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
     if (isEmpty || isPlotDisabled) return { traces: [], xRange: null, yRange: null };
 
-    // Apply high-performance 2D-M4 (MinMax) decimation immediately before passing coordinates to Plotly.
-    // When the buffer exceeds CHART_RENDER_TARGET_POINTS (1024), reduces points
-    // in O(N) single-pass. The current XY path is capped at 1.5x the target;
-    // fewer points are valid when extrema or NaN boundaries overlap.
-    // Automatically uses time-series specialized M4 (skipping redundant X searches) when X is timestamp.
-    // When N <= CHART_RENDER_TARGET_POINTS, decimate2DM4 directly copies and computes extents in one pass.
+    // M4 decimation right before Plotly. Output is capped at 1.5x
+    // CHART_RENDER_TARGET_POINTS (gap markers included), extents come from the
+    // same pass, and no finite segment is drawn across a NaN — see decimate2DM4.
     const [xData, yData, xMin, xMax, yMin, yMax] = decimate2DM4(
       dataPoints,
       xDesc,
@@ -274,8 +254,8 @@ function ChartPanelComponent({
   // This title is not free — all four charts default to x: time, so it is the
   // difference between a 20px and a 36px bottom margin on every one of them
   // (see `margin` below).
-  const axisTitle = (key: string): string =>
-    key === 'time' ? 'Timestamp' : (axisLabels[key] ?? '');
+  const xTitle = xAxis === 'time' ? 'Timestamp' : xLabel;
+  const yTitle = yLabel;
 
   const plotLayout = useMemo(
     () => ({
@@ -294,7 +274,7 @@ function ChartPanelComponent({
       // these are the 100% sizes, not a fixed floor.
       font: { color: palette.text, size: 10 },
       xaxis: {
-        title: { text: axisTitle(xAxis), font: { size: 11 } },
+        title: { text: xTitle, font: { size: 11 } },
         gridcolor: palette.grid,
         type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
         // Explicit padded range (matplotlib-style 10% X margin). Falls back to
@@ -305,7 +285,7 @@ function ChartPanelComponent({
           : { autorange: true as const }),
       },
       yaxis: {
-        title: { text: axisTitle(yAxis), font: { size: 11 } },
+        title: { text: yTitle, font: { size: 11 } },
         gridcolor: palette.grid,
         ...(plot.yRange
           ? { range: plot.yRange, autorange: false as const }
@@ -320,18 +300,18 @@ function ChartPanelComponent({
       // (one trace) — so this is only enough to keep the last x tick label from
       // being clipped at the edge.
       // t: only enough to keep the topmost y tick label from clipping. It used
-      // to be 22 to clear the always-on modebar; that bar is `'hover'` now, so
-      // nothing is parked here for the whole session.
+      // to be 22 to clear the modebar; that bar is disabled (`displayModeBar:
+      // false`), so nothing is rendered here.
       // b/l: tick labels always, plus a row/column for the axis title only when
       // there is one — the time axis has no title, and a channel axis has none
-      // until the user labels the channel (see axisTitle). Both shrank again
+      // until the user labels the channel (see xTitle/yTitle). Both shrank again
       // with the 10px ticks above: a tick row is ~14px rather than ~18, and a
       // y label like "-1234.5" is ~36px wide rather than ~44.
       margin: {
         t: 8,
         r: 12,
-        b: axisTitle(xAxis) ? 36 : 20,
-        l: axisTitle(yAxis) ? 52 : 40,
+        b: xTitle ? 36 : 20,
+        l: yTitle ? 52 : 40,
       },
       // Belt-and-braces with the trace's `hoverinfo: 'skip'`: stops Plotly from
       // running hover hit-testing on mousemove at all. On its own this would
@@ -341,7 +321,7 @@ function ChartPanelComponent({
       uirevision: `${xAxis}-${yAxis}`,
       datarevision: displayRevision,
     }),
-    [xAxis, yAxis, palette, displayRevision, plot, axisLabels],
+    [xAxis, yAxis, palette, displayRevision, plot, xTitle, yTitle],
   );
 
   return (
@@ -444,6 +424,7 @@ function ChartPanelComponent({
             style={{ width: '100%', height: PLOT_HEIGHT }}
             onInitialized={handleGraphDiv}
             onUpdate={handleGraphDiv}
+            onPurge={handlePurge}
           />
         </div>
       )}
