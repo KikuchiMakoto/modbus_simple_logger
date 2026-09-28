@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { AiCalibration } from '../types';
-import { specToCalibration, fitCalibration, CalibrationFitPoint } from '../utils/calibration';
+import type { AiCalibration } from '../types';
+import { specToCalibration, fitCalibration, type CalibrationFitPoint } from '../utils/calibration';
 import { downloadCalibrationTsv } from '../utils/calibrationExport';
 import { FloatingWindow } from './FloatingWindow';
 

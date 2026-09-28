@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, memo } from 'react';
-import { AiCalibration } from '../types';
+import type { AiCalibration } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 
 type CalibCellProps = {

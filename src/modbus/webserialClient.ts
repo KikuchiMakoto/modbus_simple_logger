@@ -1,10 +1,10 @@
 /*
- * Web Serial API transport using modbus-serial helpers for CRC16.
+ * Web Serial API transport using pure utils/crc16 for CRC16.
  * Designed for CDC-ACM USB-Serial converters that work with OS drivers.
  */
 import { crc16 } from '../utils/crc16';
 import { ModbusExceptionError, scanModbusFrame } from './frameScan';
-import { SerialSettings } from '../types';
+import type { SerialSettings } from '../types';
 // Both timers below sit inside a transfer, holding the mutex: a throttled
 // window timer would stretch a 10 ms inter-frame gap or a 1 s read deadline to
 // a whole minute the moment the window stops being visible (see

@@ -10,7 +10,7 @@ import {
 import { type Config, type Data, type Layout } from 'plotly.js';
 import { CHART_RENDER_TARGET_POINTS } from '../constants';
 import { Plot } from '../plotly';
-import { DataPoint } from '../types';
+import type { DataPoint } from '../types';
 import { type AxisDescriptor, decimate2DM4 } from '../utils/m4Decimation';
 import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
 

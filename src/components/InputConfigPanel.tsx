@@ -1,4 +1,4 @@
-import { VoltageMode, VOLTAGE_MODES } from '../types';
+import { type VoltageMode, VOLTAGE_MODES } from '../types';
 import { AI_CHANNELS } from '../constants';
 import { FloatingWindow } from './FloatingWindow';
 
