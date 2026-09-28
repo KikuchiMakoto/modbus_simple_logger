@@ -2,7 +2,7 @@ const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
-const isBrowser = typeof window !== 'undefined';
+const isBrowser = typeof window !== 'undefined' && typeof localStorage !== 'undefined';
 
 // App-scoped prefix. modbus_extra_logger is a separate app from the same
 // lineage, so on any origin both can reach (the same loopback port, the same

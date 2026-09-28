@@ -1,4 +1,10 @@
-import { AiCalibration, AiChannel, VoltageMode, DEFAULT_VOLTAGE_CONFIG, VOLTAGE_MODES } from '../types';
+import {
+  type AiCalibration,
+  type AiChannel,
+  type VoltageMode,
+  DEFAULT_VOLTAGE_CONFIG,
+  VOLTAGE_MODES,
+} from '../types';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
 import { readJsonCookie, writeJsonCookie } from './cookies';
 

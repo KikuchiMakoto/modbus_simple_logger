@@ -10,13 +10,13 @@ import {
 } from 'react';
 import { WebSerialModbusClient } from './modbus/webserialClient';
 import {
-  AiCalibration,
-  AiChannel,
-  AoChannel,
-  PollingRateOption,
-  DataPoint,
-  SerialSettings,
-  VoltageMode,
+  type AiCalibration,
+  type AiChannel,
+  type AoChannel,
+  type PollingRateOption,
+  type DataPoint,
+  type SerialSettings,
+  type VoltageMode,
   DEFAULT_VOLTAGE_CONFIG,
 } from './types';
 import {
@@ -99,8 +99,8 @@ import { CalibrationPanel } from './components/CalibrationPanel';
 import { CollapseButton } from './components/CollapseButton';
 import {
   InputCalibratorPanel,
-  CalibratorChannelInfo,
-  DenominatorOption,
+  type CalibratorChannelInfo,
+  type DenominatorOption,
 } from './components/InputCalibratorPanel';
 import { HamburgerMenu } from './components/HamburgerMenu';
 import { InputConfigPanel } from './components/InputConfigPanel';
