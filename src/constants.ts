@@ -5,10 +5,6 @@ export const PARAM_CHANNELS = 16;
 export const AI_START_REGISTER = 0;
 export const AO_START_REGISTER = 0;
 
-// IndexedDB retention while NOT saving (session FIFO store, independent of the
-// on-screen chart).
-export const MAX_POINTS_IN_MEMORY = 256;
-
 // Target points for Chart M4 (utils/m4Decimation.ts). Output — time series and
 // XY alike, gap markers included — is capped at 1.5x this (1536). Fewer points
 // come out when extrema coincide. Increase only after real-device and low-end
@@ -18,8 +14,7 @@ export const CHART_RENDER_TARGET_POINTS = 1024;
 // Once reached, Origami folding retains [0, 2, 4, ...] (so the buffer drops to
 // half) and the intake stride doubles. The full-rate data continues to go to TSV.
 export const SAVE_BUFFER_MAX_POINTS = 65536;
-// How often a polled sample is fed to the chart buffer (and, while not saving,
-// to IndexedDB). Applied as a poll-count stride, so
+// How often a polled sample is fed to the chart buffer. Applied as a poll-count stride, so
 // it is exact on the poll grid: every poll at 100 ms polling, every 2nd at
 // 50 ms, every 5th at 20 ms.
 //
@@ -135,7 +130,6 @@ export const OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW = 10;
 
 export const BATCH_FLUSH_THRESHOLD = 5;
 export const BATCH_FLUSH_INTERVAL_MS = 100;
-export const KEEP_LATEST_TRIM_INTERVAL = 10;
 export const PROMISE_CHAIN_RESET_INTERVAL = 100;
 export const TSV_FLUSH_INTERVAL_MS = 60_000;
 // Row-count flush cap for TSV saving. The writer flushes on whichever comes

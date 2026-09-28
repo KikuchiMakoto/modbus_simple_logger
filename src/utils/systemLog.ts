@@ -9,7 +9,7 @@
 //
 // Module-level state rather than React state, for the reason the status bar
 // already needed it: the posters include the TSV worker's onError callback,
-// dataStorage.init()'s catch and the polling loop, none of which has a
+// the polling loop and connection/disconnection handlers, none of which has a
 // component to read a prop from. It also keeps the posting functions stable
 // (`useCallback([])`), which several App callbacks depend on.
 //
