@@ -31,7 +31,6 @@ import {
   INPUT_READ_MAX_FAILURE_RATIO,
   OUTPUT_HOLDING_RETRY_WINDOW_MS,
   OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW,
-  MAX_POINTS_IN_MEMORY,
   SAVE_BUFFER_MAX_POINTS,
   CHART_REDRAW_INTERVAL_MS,
   CHART_REDRAW_INTERVAL_CONSTRAINED_MS,
@@ -43,7 +42,6 @@ import {
   NON_SAVING_CHART_PREVIEW_POINTS,
   BATCH_FLUSH_THRESHOLD,
   BATCH_FLUSH_INTERVAL_MS,
-  KEEP_LATEST_TRIM_INTERVAL,
   PROMISE_CHAIN_RESET_INTERVAL,
   TSV_FLUSH_INTERVAL_MS,
   TSV_FLUSH_MAX_ROWS,
@@ -68,10 +66,6 @@ import {
   loadParamFreeLabels,
   saveParamFreeLabels,
 } from './utils/calibration';
-import {
-  dataStorage,
-  StoredDataPoint,
-} from './utils/dataStorage';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
 import { foldDataBufferHalf } from './utils/m4Decimation';
 import {
@@ -159,7 +153,7 @@ const DEFAULT_POLLING_RATE_MS = 100;
 /**
  * How often a polled sample is written to the TSV file.
  *
- * Only the file: the chart and IndexedDB stay on the poll rate, so the live
+ * Only the file: the chart stays on the poll rate, so the live
  * view is the same whether rows land every 200 ms or every half hour.
  *
  * Starts at 200 ms, independently of the poll rate. Faster save rates were
@@ -716,7 +710,6 @@ function App() {
   // When the pending redraw first came due, so deferring it around transfers
   // cannot postpone it for ever — see CHART_REDRAW_DEFER_MAX_MS. 0 = not due yet.
   const chartRedrawDueSinceRef = useRef(0);
-  const keepLatestCountRef = useRef(0);
   const disconnectInProgressRef = useRef(false);
   const connectInProgressRef = useRef(false);
   const saveStartInProgressRef = useRef(false);
@@ -828,13 +821,6 @@ function App() {
   const setStatus = useCallback((msg: string, source: AppStatusSource = 'app') => {
     console.info('[App]', msg);
     logSystem('INFO', SOURCE[source], msg);
-  }, []);
-
-  useEffect(() => {
-    dataStorage.init().catch((err) => {
-      console.error('Failed to initialize IndexedDB:', err);
-      reportError('storage', err, 'IndexedDB initialization failed');
-    });
   }, []);
 
   // Offer back any run whose picked file never closed cleanly. Blocking
@@ -1111,30 +1097,6 @@ function App() {
       if (buffer.length > NON_SAVING_CHART_PREVIEW_POINTS) {
         buffer.splice(0, buffer.length - NON_SAVING_CHART_PREVIEW_POINTS);
       }
-
-      // Persist this batch to IndexedDB in a single transaction (only while not
-      // saving; during save the TSV file is the durable store). Convert the
-      // Float32Array fields here so the conversion is skipped entirely on the
-      // save path.
-      const dbBatch: StoredDataPoint[] = pointsToAdd.map((p) => ({
-        seq: p.seq,
-        timestamp: p.timestamp,
-        aiRaw: Array.from(p.aiRaw),
-        aiPhysical: Array.from(p.aiPhysical),
-        param: Array.from(p.param),
-      }));
-      dataStorage.addDataPoints(dbBatch).catch((err) => {
-        console.error('Error adding data points:', err);
-        logSystem('ERROR', SOURCE.storage, `Failed to store points in IndexedDB: ${(err as Error).message}`);
-      });
-      keepLatestCountRef.current += dbBatch.length;
-      if (keepLatestCountRef.current >= KEEP_LATEST_TRIM_INTERVAL) {
-        keepLatestCountRef.current = 0;
-        dataStorage.keepLatestPoints(MAX_POINTS_IN_MEMORY).catch((err) => {
-          console.error('Error trimming data points:', err);
-          logSystem('WARN', SOURCE.storage, `Failed to trim IndexedDB: ${(err as Error).message}`);
-        });
-      }
     }
 
     // Redraws are data-driven AND rate-limited, and it takes both to be right.
@@ -1311,14 +1273,14 @@ function App() {
   // continuation, so reading the clock here would stamp every point with
   // whenever the display queue happened to drain, mixing render latency into
   // the recorded time base. That also made the two sinks disagree: TSV rows
-  // already carried the capture time, so the chart, IndexedDB and TSV described
+  // already carried the capture time, so the chart and TSV described
   // the same sample as having happened at different moments.
   const updateDataHistory = useCallback((timestamp: number, aiRaw: Float32Array, aiPhysical: Float32Array, param: Float32Array) => {
     const seq = seqCounterRef.current++;
 
-    // Persistence (IndexedDB while not saving) and display-buffer maintenance
-    // now happen in batches inside flushPendingDataPoints, so here we only
-    // enqueue the captured point (Float32Array kept as-is — no per-point copy).
+    // Display-buffer maintenance now happens in batches inside
+    // flushPendingDataPoints, so here we only enqueue the captured point
+    // (Float32Array kept as-is — no per-point copy).
     pendingDataPoints.current.push({
       seq,
       timestamp,
@@ -1335,9 +1297,8 @@ function App() {
       flushPendingDataPoints();
     } else if (batchUpdateTimer.current === undefined) {
       // Background timer: this is the path that moves captured points into the
-      // chart buffer and IndexedDB. Left on a window timer it would stall to
-      // one flush a minute behind a hidden window, so points would sit in
-      // `pendingDataPoints` unsaved.
+      // chart buffer. Left on a window timer it would stall to one flush a
+      // minute behind a hidden window.
       batchUpdateTimer.current = setBackgroundTimeout(() => {
         batchUpdateTimer.current = undefined;
         flushPendingDataPoints();
@@ -1360,7 +1321,7 @@ function App() {
 
   /**
    * The display side of a poll: channel cards, and — when `plot` is set — the
-   * chart buffer and IndexedDB.
+   * chart buffer.
    *
    * Both are on the poll clock, not the save rate. Only the TSV follows "Save
    * every"; a chart that advanced one point per half hour would make a
@@ -1502,7 +1463,7 @@ function App() {
     // handleDisconnect's awaits and writes into state that has just been reset:
     // it overwrote aiRawSourceRef (so the channel cards showed a reading after
     // disconnecting), re-armed batchUpdateTimer that stopPolling had just
-    // cleared, pushed a point into the cleared dataBufferRef and IndexedDB (so
+    // cleared, pushed a point into the cleared dataBufferRef (so
     // the charts drew a one-point trace instead of "No data"), and repopulated
     // inputReadFailureTimestampsRef so the *next* connection started out already
     // holding failure timestamps.
@@ -1597,15 +1558,15 @@ function App() {
         aiPhysicalShare.set(aiPhysical);
       }
 
-      // Snapshot PyScriptRunner Parameter values at capture time so the chart,
-      // IndexedDB, and TSV all see the same per-point values.
+      // Snapshot PyScriptRunner Parameter values at capture time so the chart
+      // and TSV all see the same per-point values.
       const paramShare = scriptRunner.paramShareRef.current;
       const param = paramShare
         ? new Float32Array(paramShare)
         : new Float32Array(PARAM_CHANNELS);
 
       // Cards are the live readout. Publish directly from the completed read,
-      // outside the display/history promise chain, so chart or IndexedDB work
+      // outside the display/history promise chain, so chart or storage work
       // cannot make the visible value older than the latest device response.
       //
       // Returns `prev` untouched when no channel moved (an idle input, a
@@ -1625,7 +1586,7 @@ function App() {
         return next ?? prev;
       });
 
-      // One capture time for every sink: chart, IndexedDB, TSV and the rate
+      // One capture time for every sink: chart, TSV and the rate
       // readout all describe this sample as having happened here.
       const timestamp = lastAiReadCompletedAtRef.current;
 
@@ -1865,7 +1826,6 @@ function App() {
 
       pendingDataPoints.current = [];
 
-      await dataStorage.clearAllData();
       dataBufferRef.current = [];
       setDisplayRevision((v) => v + 1);
       // The one place a full plot rebuild is free: no measurement is running
@@ -1912,7 +1872,6 @@ function App() {
         'link',
       );
       await requestWakeLock();
-      keepLatestCountRef.current = 0;
       console.info('[App] handleConnect complete');
     } catch (err) {
       console.error('[App] handleConnect failed', err);
@@ -2019,7 +1978,6 @@ function App() {
       lastPollRatePublishRef.current = 0;
       nextRecordAtRef.current = 0;
       setActualPollIntervalMs(0);
-      await dataStorage.clearAllData();
       dataBufferRef.current = [];
       setDisplayRevision((v) => v + 1);
       console.info('[App] handleDisconnect data/session cleanup complete');
@@ -2284,7 +2242,6 @@ function App() {
 
         pendingDataPoints.current = [];
 
-        await dataStorage.clearAllData();
         dataBufferRef.current = [];
         // Restart the whole-capture downsampling from this save start.
         saveDecimationStrideRef.current = 1;
@@ -2295,13 +2252,6 @@ function App() {
         // save start rather than wherever the free-running deadline happened to
         // be — at a 30 min save rate that is the difference between a file that
         // starts now and one that starts half an hour from now.
-        //
-        // It has to be adjacent to the writer assignment, not up with the other
-        // resets: `await clearAllData()` above can take longer than a poll
-        // interval, and a poll landing in that gap would consume the re-phase
-        // (advancing the deadline by a full save interval) while
-        // enqueueSaveUpdate still had no writer to write to — reintroducing
-        // exactly the delay this line exists to prevent.
         nextRecordAtRef.current = 0;
         tsvWriterRef.current = writer;
         // Background timer, for the same reason as the polling loop: a throttled
@@ -2321,8 +2271,8 @@ function App() {
         setStatus('Saving data to file', 'save');
         clearStatusSource('save');
       } catch (setupErr) {
-        // Post-creation setup failed (e.g. IndexedDB clear): close the writer
-        // so the worker and its open file are never orphaned.
+        // Post-creation setup failed: close the writer so the worker and its
+        // open file are never orphaned.
         writer.close().catch(() => {});
         throw setupErr;
       }
@@ -2368,7 +2318,6 @@ function App() {
     // all of this, so zeroing its readout would only blank a live number.
     nextRecordAtRef.current = 0;
 
-    await dataStorage.clearAllData();
     dataBufferRef.current = [];
     setDisplayRevision((v) => v + 1);
 
