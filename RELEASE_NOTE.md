@@ -2,6 +2,8 @@
 
 Git のタグ間のコミット履歴を基に、各版の主な変更を要約しています。詳細は [GitHub Releases](https://github.com/KikuchiMakoto/modbus_simple_logger/releases) と各タグの差分を参照してください。日付はタグ作成日（軽量タグの v2.14 のみ対象コミットの日付）です。
 
+v7 以降のバージョン番号は Linux kernel stable version の数字に追従しています。リリースのタイミングによって番号が飛ぶことがあり、欠番は本アプリのリリース漏れを意味しません。
+
 ## 7.x
 
 - **v7.2.9 (2026-09-29)**
