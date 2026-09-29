@@ -7,7 +7,7 @@
 - **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4** で構成された Modbus RTU ロガー SPA
 - 通信は **Web Serial API**（非対応環境では自前の WebUSB CDC-ACM 実装 `src/modbus/webusbSerial.ts` でフォールバック）
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
-- 計測データは IndexedDB（セッション中 FIFO）と TSV（File System Access API ストリーミング）で扱う
+- 計測中のプレビューはメモリ上の TypedArray バッファ、保存データは TSV（File System Access API ストリーミング）で扱う
 - Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
 - Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python**（Pyodide）のみ）
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
@@ -76,7 +76,6 @@ src/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── calibrationExport.ts         # キャリブレーションの JSON 入出力
     ├── systemLog.ts                 # アプリ唯一のログのモジュールレベルストア（log4j 6段階・同一文言の畳み込み・100ms コアレス発火・2000行/2000文字）
-    ├── dataStorage.ts               # IndexedDB ラッパー（Singleton・冪等 init）
     ├── tsvExport.ts                 # TSV ライターの主スレッド側（ファイルピッカー + Worker プロキシ）
     ├── opfsRecoveryShared.ts        # OPFS ミラーの命名規約（Worker と主スレッドで共有）
     ├── opfsRecovery.ts              # 起動時の残存ミラー検出・ダウンロード・削除（主スレッド側）
@@ -134,10 +133,10 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 ### ポーリング（`App.tsx`）
 - **通信レートと記録レートは独立した2つの設定**。**この2つを1つのレートに統合しないこと**
   - **Polling Rate**＝線上のポーリング周期。**固定 100ms**（`App.tsx` の `DEFAULT_POLLING_RATE_MS` 定数）。`setBackgroundTimeout` 再帰スケジュール。ループのスケジュール・読取りタイムアウト・リトライ予算はすべてここから導かれ、記録締切が乗るサンプルグリッド自体もここに乗る
-  - **Save Rate**（Start Save の横、`SAVE_RATE_OPTIONS` = **200ms〜30分**、既定 1s）＝ **TSV へ書く周期だけ**。「N回に1回書く」で実現する。**接続中・保存中も変更可**（締切を張り直すだけで済む）
-  - **チャート・IndexedDB は保存周期ではなくポーリング側**。ただし**入力レートは `CHART_INPUT_INTERVAL_MS`(100ms) 固定**で、ポーリング回数のストライド（`plotStrideRef`）で落とす。Polling Rate は 100ms 固定なので、両方が同じ 100ms でストライドは常に1（毎回）
+  - **Save Rate**（Start Save の横、`SAVE_RATE_OPTIONS` = **200ms〜30分**、既定 1s）＝ **TSV へ書く周期だけ**。次の記録時刻 `nextRecordAtRef` で判定する。**接続中・保存中も変更可**（締切を張り直すだけで済む）
+  - **チャート入力は保存周期ではなくポーリング側**。ただし**入力レートは `CHART_INPUT_INTERVAL_MS`(100ms) 固定**で、ポーリング回数のストライド（`plotStrideRef`）で落とす。Polling Rate は 100ms 固定なので、両方が同じ 100ms でストライドは常に1（毎回）
     - 保存周期に合わせない理由：30分周期のログで画面が30分に1点しか動かなければ計測を見ていられない
-    - ポーリングに追従させない理由：**チャートの入力レートが固定なら、負荷も軸も間引き計算も1つの前提の上に乗る**。入力 10Hz に対し再描画は `CHART_REDRAW_INTERVAL_MS`(500ms) = **2fps** なので、1回の描画に5点ぶん入る計算で、それ以上の点は個別には見えない — バッファ churn と、速いポーリング時は Modbus 転送の合間に挟まる間引き作業が増えるだけ。入力レートを再描画レートまで落とさないのは、チャートが**間引き前の点列**を持っていることに意味があるため（軸を Raw/Phy/Parameter に切り替えても再取得が要らない）。ポーリングを制御ループのために上げても表示コストが付いてこない、という性質がここで効く
+    - ポーリングに追従させない理由：**チャートの入力レートが固定なら、負荷も軸も間引き計算も1つの前提の上に乗る**。入力 10Hz に対し再描画の最小間隔は通常 200ms（5fps）、制約のある環境で 500ms（2fps）。各描画では複数の入力点をまとめて扱う。入力レートを再描画レートまで落とさないのは、チャートが**間引き前の点列**を持っていることに意味があるため（軸を Raw/Phy/Parameter に切り替えても再取得が要らない）。ポーリングを制御ループのために上げても表示コストが付いてこない、という性質がここで効く
     - **ストライドは締切ではなく単純なカウンタ**。読取り失敗で1回飛んでも 10Hz のトレースの位相が 100ms ずれるだけで、TSV の1行欠落とは重みが違う
   - （履歴）Polling Rate がまだ選択肢だった頃、20ms は実機で保たなかったため候補は 25ms が最速だった（v4.1 の実測）。1 サイクルの下限が「フレーム時間 + `minMessageIntervalMs`(最低 10ms)」で、38400bps・AI 16ch の i16 読みなら 11.7ms + 10ms ≒ 22ms のため。**固定 100ms の現行構成ではこの余裕は問題にならない** — 25/50ms の速い側の選択肢を再び足す場合はこの制約が再び効く
   - **理由は FB 制御**。AO を叩くスクリプトは polling が更新した AI 値を読む。ここを保存周期に縛ると、「ディスクには1分に1点で十分だが制御は速く回したい」という真っ当な要求が「1分に1回しか入力が更新されない制御ループ」になる。ファイルサイズと制御品質は別の関心事
@@ -145,7 +144,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **記録の判定はポーリング回数のカウンタではなく「次に記録すべき時刻」(`nextRecordAtRef`)**。読み取り失敗やファイルピッカー中はポーリング自体が飛ぶため、カウンタ方式だと以降の全行の位相がずれ、失敗した回がたまたま N 回目だと**その行が丸ごと落ちる**。時刻締切なら遅れは最大1ポーリング周期で、位相は自動的に復帰する。判定は締切の半ポーリング周期手前から（締切に一番近いポーリングを選ぶため。1周期未満なので連続2回が同時に due になることはない）
   - 締切を **0 へリセット**（＝「次のポーリングを即記録」）するのは **計測開始時・切断時・保存開始/停止時・Save Rate 変更時**の4系統だけ
     - **`scheduleImmediatePoll` でリセットしてはならない**。これは `visibilitychange` からも呼ばれるため、30分保存中にユーザーが10回タブを切り替えると10行の余計な行が中途半端な位置に入る。締切は絶対時刻なので**凍結明けは放っておけば「期限切れ」として catch-up 節が張り直す** — 手当ては要らない（v4.1 で混入し修正）
-    - **保存開始のリセットは `tsvWriterRef.current = writer` の直前に置く**。他のリセット群と一緒に上へ動かしてはならない — 間に `await dataStorage.clearAllData()` があり、ポーリング周期より長く掛かりうる。その隙間に来たポーリングがリセットを消費して締切を1保存周期ぶん進めてしまい、しかも `enqueueSaveUpdate` はまだ writer が無いので書かない。結果として**このリセットが防ごうとしている遅延（30分周期なら1行目が30分後）がそのまま再発する**（v4.1 で混入し修正）
+    - **保存開始のリセットは `tsvWriterRef.current = writer` の直前に置く**。ファイルピッカーなどの非同期処理より前に移すと、その間のポーリングがリセットを消費して締切を1保存周期ぶん進め、writer が無いため最初の行を落としうる
   - 保存周期がポーリング周期の整数倍でない組み合わせでは、連続行が目標の前後へ1ポーリングぶん交互にずれる。**タイムスタンプは実測値なので嘘は無い**。なお**現行の選択肢では起こらない** — ポーリングは固定 100ms、保存は下限 200ms でどれも全ポーリング周期の整数倍になっている。Save Rate に整数倍でない値を足すときに効いてくる話として残してある
   - 読取りタイムアウト・リトライ可否（`canRetry`）は**ポーリング周期**基準。固定 100ms ではリトライは常に無効になるが、1フレーム落ちの代償は「1回のポーリング」であって「1行の記録」ではないので、締切方式と合わせて実害はない
   - 表示は**フッター右端**の `Polling: 実測ms` = **線上のレート**（未計測は `-`）。公称値を併記しないのは、隣に出しても選択肢を読み上げるだけだから。保存側の進捗はヘッダーの点数カウンタが示す
@@ -154,16 +153,15 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **`pollOnce` は AI 読取りのみをブロック** — AO 書込みは `doAoWriteAsync` で非ブロック実行（起動は変更時の即時、上記参照）
 - AI 読取り / AO 書込みそれぞれ独立のリトライレート制限（60s ウィンドウ）
   - **AI 側の上限はポーリング回数に比例させる**（`INPUT_READ_MAX_FAILURE_RATIO` = 10%、下限 `INPUT_READ_MAX_FAILURES_PER_WINDOW` = 10回）。固定10回はポーリング周期が保存周期に縛られていた時代の設計で、遅い設定なら10回貯まるのに数分かかった。10Hz 固定（現行の Polling Rate = 100ms）になった今では**完全に死んだデバイスで1秒**で発火し、以後ウィンドウから失敗が抜けるまで全読取りをスキップする＝最大1分の空白、200ms 保存なら300行の欠落。**「応答しない」は回数ではなく割合**である。10% / 100ms なら 60回 ＝ 完全断で6秒後にバックオフ、数%のフレーム落ちでは発火しない（v4.1 で顕在化し修正）
-- **IndexedDB 書き込みは fire-and-forget**（非保存時のみ。`flushPendingDataPoints` でバッチ書込み `addDataPoints`）
-- **チャート表示は描画点数を抑制**（全データは TSV に全点記録、これは「画面表示」のみの話）:
-  - 非保存時: 直近 `NON_SAVING_CHART_PREVIEW_POINTS`(768) 点のスライディングプレビュー（間引き無し・全点描画）。チャート入力レートが 100ms 固定なので **768 点 = 約77秒**であり、時間窓と同義。**点数で持つのは時刻窓より素直だから** — 切り捨てが splice 1回で済み、時計も走査も要らない。さらにフィードが止まったとき、時刻窓は勝手に空になって「最後にいくつだったか」すら消えるが、点数窓は次のデータが押し出すまで直近77秒を保持する
-  - 保存時: 保存開始〜現在の全期間を Origami バッファへ取り込む。バッファが `SAVE_BUFFER_MAX_POINTS` に達したら既存点の `[0,2,4,...]` だけを残し、`saveDecimationStrideRef` を2倍にする。以後の受け入れ頻度も1/2になり、バッファ密度を一定に保つ。全点はTSVへ記録する
+- **チャート表示は描画点数を抑制**（保存行は Save Rate に従い TSV へ書き、チャート側の間引きとは独立）:
+  - 非保存時: 直近 `NON_SAVING_CHART_PREVIEW_POINTS`(600) 点のスライディングプレビュー（間引き無し・全点描画）。チャート入力レートが 100ms 固定なので **600 点 = 約60秒**であり、時間窓と同義。**点数で持つのは時刻窓より素直だから** — 切り捨てが splice 1回で済み、時計も走査も要らない。さらにフィードが止まったとき、時刻窓は勝手に空になって「最後にいくつだったか」すら消えるが、点数窓は次のデータが押し出すまで直近60秒を保持する
+  - 保存時: 保存開始〜現在の全期間を Origami バッファへ取り込む。バッファが `SAVE_BUFFER_MAX_POINTS` に達したら既存点の `[0,2,4,...]` だけを残し、`saveDecimationStrideRef` を2倍にする。以後の受け入れ頻度も1/2になり、バッファ密度を一定に保つ。TSV は Save Rate に従って記録する
   - **再間引きで `chartEpoch`（purge + remount）を bump しないこと**。計測中に4枚を作り直すのは v3.1 で廃止した定期パージと同じ悪手で、しきい値を下げた分だけ発生頻度が上がる。purge が必要なのは WebGL コンテキスト蓄積の抑制だけなので、**接続時（チャートが空でタイミングが問題にならない唯一の瞬間）に1回だけ**行う
-  - チャート再描画の最小間隔は保存中・非保存時とも `CHART_REDRAW_INTERVAL_MS`(500ms) の**1本**。以前は保存中だけ 500ms・非保存 200ms に分けていたが、768 点プレビューも1サンプルでは数ピクセルしか動かないので分ける根拠が無く、**2つの数字は考えることが2つ増えるだけ**だった
+  - チャート再描画の最小間隔は保存中・非保存時共通。通常 `CHART_REDRAW_INTERVAL_MS`(200ms)、CPU 描画または論理コア数4以下では `CHART_REDRAW_INTERVAL_CONSTRAINED_MS`(500ms)。計測中の主スレッド負荷を抑えるため、転送中の描画は遅延させる
   - **再描画は「バッファに点が増えたフラッシュ」だけがタイマーを張る**（`bufferChanged`）。間引きストライドは保存が伸びるほど倍々になるので、新しい点は stride 1 なら 100ms 毎だが stride 64 では 6.4 秒毎になる — 一方フラッシュ自体は終始 10 回/秒で回る。無条件に張っていた頃は、計測後半で**1回の変化あたり十数回**、前回と同一のトレースを4枚描き直しており、その無駄は計測時間に比例して増え続けた。しかもそのコストは Modbus 転送の合間の主スレッドに落ちる。上の間隔は**周期ではなく下限**として残す（stride 1 の序盤は実際に 10 点/秒来るため）。結果として再描画レートは「点のレート」と「この下限」の**遅い方**になり、どちらの端でも空打ちが出ない
-  - 共通上限 `CHART_MAX_POINTS`。`MAX_POINTS_IN_MEMORY`(256) は IndexedDB trim 専用
-- ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファ更新と IndexedDB バッチ書込みを実施）
-- **タイムスタンプは AI 読取り完了時刻（`lastAiReadCompletedAtRef`）を1つだけ使い、チャート・IndexedDB・TSV・レート表示すべてに同じ値を渡す**。`updateDataHistory` は Promise チェーンの継続として走るため、**その中で `Date.now()` を読んではならない** — 表示キューが捌けた時刻が記録され、レンダリング遅延が時間軸に混入する（v3.18 以前はチャート/IndexedDB と TSV で同じサンプルの時刻が食い違っていた）
+  - 保存時のバッファ上限は `SAVE_BUFFER_MAX_POINTS`(65536)。描画は `CHART_RENDER_TARGET_POINTS`(1024) を目標に M4 間引きする
+- ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファを更新）
+- **タイムスタンプは AI 読取り完了時刻（`lastAiReadCompletedAtRef`）を1つだけ使い、チャート・TSV・レート表示すべてに同じ値を渡す**。`updateDataHistory` は Promise チェーンの継続として走るため、**その中で `Date.now()` を読んではならない** — 表示キューが捌けた時刻が記録され、レンダリング遅延が時間軸に混入する
 - **表示系の state 更新には予算を設ける**（`READOUT_PUBLISH_INTERVAL_MS` = 実測レートと保存点数）。値そのものは ref で正確に持ち、React へ渡す頻度だけを絞る。1サンプルごとに setState すると **40枚のカードの再レンダリングが Modbus 転送の合間に挟まり、描画コストがそのままポーリングジッタになる**。AI カードは poll 完了時に直接 publish するが、**値が変わったチャネルだけ新オブジェクトにし、全チャネル不変なら `prev` を返して render ごと省く**（カードは primitive props の `memo`）。旧 `CHANNEL_CARD_MIN_INTERVAL_MS` は Polling 100ms 固定で何も絞らなくなったため撤去した — 速いポーリングを戻す場合はカードの絞りも戻すこと。**記録すると決めたサンプルのデータ経路（`updateDataHistory` 以降）は絞らないこと**
 - `pageshow` / `visibilitychange` による復帰時即時ポーリング（`acquiring` 状態を ref で確認）
 - USB 物理抜けの `disconnect` イベント自動検知
@@ -185,7 +183,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 ### UI 拡大率（`utils/uiScale.ts`）
 - **OS のスケーリング倍率はブラウザから取得できない**。唯一の候補である `devicePixelRatio` は「OS のスケーリング」「ブラウザ自身のズーム」「パネルの物理 DPI」の3つを掛けた値であり、1.25 が Windows 125% なのか Chrome 125% なのか 1.25x パネルなのか区別できない。**ここから自動で拡大率を決めてはならない** — ブラウザが既に OS スケーリングを反映している環境（＝ほぼ全て）で二重適用になる。倍率はユーザーが選ぶ（**Menu パネルのヘッダー**の `[-] [100%] [+]`、50〜200% の 11 段）
 - **置き場所は Menu のヘッダー**（v4.1〜。以前は Application Info の中）。テーマトグルと並ぶ。理由は2つ — 「見ながら合わせる」設定なのに、開くとページが隠れるパネルの奥にあっては使えない。もう1つは Menu の行はすべて「パネルを開く」動作なので、その場で値を変える操作は行ではなくヘッダーに置くのが筋。ヘッダーには説明を置く余地が無いが、`[-] [%] [+]` は説明不要で、押せば結果がその場で見える
-- 実装は **`#root` への CSS `zoom`**（`index.css`、値は `<html>` の `--ui-scale`）。`transform: scale()` ではない: `zoom` はレイアウトに参加するので拡大後のサイズで再フローしスクロール範囲も正しくなるが、transform は同じレイアウトを大きく描くだけで右端が画面外に出たまま届かなくなる。対応は Chrome/Edge/Safari 全て・Firefox 126+（Win/mac/Linux/Android で本アプリが動く全ブラウザ）
+- 実装は **`#root` への CSS `zoom`**（`index.css`、値は `<html>` の `--ui-scale`）。`transform: scale()` ではない: `zoom` はレイアウトに参加するので拡大後のサイズで再フローしスクロール範囲も正しくなるが、transform は同じレイアウトを大きく描くだけで右端が画面外に出たまま届かなくなる。アプリの対象環境は README のブラウザ要件を参照
 - **ページ背景と全画面ボックスは `<body>` に置く**（`index.css`）。`#root` の内側で `min-h-screen` を書くと 100vh が**ズーム後の座標系**で解決され、125% では画面より 1/4 高い箱になって空のページにスクロールバーが出る
 - **ズーム内側の座標を扱うコードは補正が要る**。`window.innerWidth/Height` は非ズームの CSS px、`FloatingWindow` のジオメトリはズーム内側の px なので、クランプ側で `getUiScale()` で割る。ドラッグ量も同様にずれるため `Rnd` に `scale` を渡す（Plotly は `_invScaleX/Y` で自前に補正するので不要）
 - 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
@@ -251,7 +249,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **`index.html` だけは非圧縮**。実行時に `stampRuntimeMarker` で書き換えるため。裏を返すと `loadAssets()` がメモリに載せるのはこの1ファイルだけでよく、**残りは `Bun.file()` をそのまま Response のボディに渡す**（起動時に dist 全体 19MB をメモリへ展開していたのをやめた。ScriptRunner を開くとは限らないユーザーにも Pyodide の展開コストを、しかもブラウザ起動より前に払わせていた）
 - gzip を受け付けないクライアントには展開して返す経路を残してある。Edge/Chrome しか相手にしないので実際には通らないが、通らなかった場合に出るのは「バイナリが画面に表示される」であって切り分けが難しい
 - **`launcher/embedded-gz/` は毎回作り直す**。dist のファイル名は毎デプロイでハッシュが変わるので、消さないと古いファイルが埋め込まれ続ける
-- **HTTP サーバーは固定ポート 8376 で bind する**（`PREFERRED_PORT`。8376 = ASCII('S')+ASCII('L') = Simple Logger）。**localStorage / IndexedDB / OPFS は scheme+host+port 単位のオリジンで隔離される**ため、旧実装の `port: 0`（起動ごとにポート変わり＝オリジン変わり）では **Calibration・軸選択・ラベル・スクリプトタブ等の全設定が exe 再起動のたびに消滅していた**（v7.1.8 まで存在したバグ）。8376 は well-known 帯外・Windows エフェメラル範囲(49152+)外・主要ソフトの既定値不在、の3条件で選んだ（8080/8888 は占有ソフト多すぎ）
+- **HTTP サーバーは固定ポート 8376 で bind する**（`PREFERRED_PORT`。8376 = ASCII('S')+ASCII('L') = Simple Logger）。**localStorage / OPFS は scheme+host+port 単位のオリジンで隔離される**ため、旧実装の `port: 0`（起動ごとにポート変わり＝オリジン変わり）では **Calibration・軸選択・ラベル・スクリプトタブ等の全設定が exe 再起動のたびに消滅していた**（v7.1.8 まで存在したバグ）。8376 は well-known 帯外・Windows エフェメラル範囲(49152+)外・主要ソフトの既定値不在、の3条件で選んだ（8080/8888 は占有ソフト多すぎ）
 - bind 失敗時は `port: 0` へフォールバックし、index.html へ `<meta name="msl-origin" content="ephemeral">` をスタンプする（`stampOriginMarker`）。ページ側は `appMode.ts` の `isOriginEphemeral()` で読み、`main.tsx` が起動時に System Log へ WARN を出す（「そのセッションだけ設定が保存されない」ことを告知。アプリ自体は動くので落とさない）
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
@@ -264,11 +262,9 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - Windows 専用。Linux の抑制はセッションのインヒビタ（logind / GNOME / KDE）依存になるため実装しない（exe は Windows 成果物）
 
 ### データ保存
-- **IndexedDB**: セッション中の全データポイントを蓄積（`keepLatestPoints` で自動トリム）
-  - `init()` は冪等（複数回呼び出し安全）
-  - `StoredDataPoint` に `seq` 連番を付与（重複検出・TSV 整合性）
+- **表示バッファ**: `App.tsx` の `dataBufferRef` に `Float32Array` を含む `DataPoint[]` を保持。非保存時は直近600点、保存時は Origami 折り畳みで上限65536点。リロードで消える
 - **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
-  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` は IndexedDB の `StoredDataPoint` 専用）
+  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。`seq` 列は無い
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
   - `ai_phy_*` / `ai_vlt_*` は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` / `ao_raw_*` は常に `toString()` の整数（i16 レジスタ / 整数 mV なので）。**`par_*` だけは `formatFloat32`**（`physicalPrecision` を掛けない。理由は Param Editor の項）
   - `Float32Array` / `number[]` の両方を受け付ける
@@ -389,15 +385,15 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 | `INPUT_READ_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AI 読取り最大失敗回数 |
 | `OUTPUT_HOLDING_RETRY_WINDOW_MS` | 60000 | AO 書込みリトライ制限の評価ウィンドウ |
 | `OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AO 書込み最大失敗回数 |
-| `MAX_POINTS_IN_MEMORY` | 256 | 非保存時の IndexedDB 保持点数（trim 専用） |
-| `CHART_MAX_POINTS` | 1024 | 初期検証時のチャート予算。実機・低スペック機で確認後に2048、4096を段階評価 |
-| `NON_SAVING_CHART_PREVIEW_POINTS` | 768 | 非保存時チャートのプレビュー点数（×100ms ≒ 77秒） |
+| `CHART_RENDER_TARGET_POINTS` | 1024 | M4 描画間引きの目標点数（欠測マーカーを含む） |
+| `SAVE_BUFFER_MAX_POINTS` | 65536 | 保存中の Origami バッファ上限 |
+| `NON_SAVING_CHART_PREVIEW_POINTS` | 600 | 非保存時チャートのプレビュー点数（×100ms ≒ 60秒） |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
 | `BATCH_FLUSH_INTERVAL_MS` | 100 | バッチフラッシュの最大遅延 |
-| `CHART_REDRAW_INTERVAL_MS` | 500 | チャート再描画の最小間隔（保存中・非保存共通。周期ではなく下限） |
+| `CHART_REDRAW_INTERVAL_MS` | 200 | 通常時のチャート再描画最小間隔（周期ではなく下限） |
+| `CHART_REDRAW_INTERVAL_CONSTRAINED_MS` | 500 | CPU 描画・低コア数時の再描画最小間隔 |
 | `TSV_FLUSH_MAX_ROWS` | 500 | TSV フラッシュを起こすバッファ行数 |
 | `TSV_FLUSH_INTERVAL_MS` | 60000 | TSV 定期フラッシュ間隔（低レート時の耐久性フォールバック） |
-| `KEEP_LATEST_TRIM_INTERVAL` | 10 | IndexedDB trim を実行する書込み回数間隔 |
 | `PROMISE_CHAIN_RESET_INTERVAL` | 100 | Promise チェーンをリセットする回数間隔 |
 | `TSV_MAX_BUFFERED_ROWS` | 20000 | writer バッファの上限行数。書込みが成功するまで行を捨てないので、失敗し続けるストリームに対する歯止め。超過分は最古から破棄しデータ損失として報告する |
 | `TSV_MIRROR_FLUSH_INTERVAL_MS` | 1000 | OPFS ミラーの追記間隔（ストリームとは独立。起動直後の空ミラーを避けるため） |
@@ -435,7 +431,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）
-- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` や `dataStorage.ts` で重複定義しないこと。**UI のドロップダウンの中身**（`SAVE_RATE_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
+- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` で重複定義しないこと。**UI のドロップダウンの中身**（`SAVE_RATE_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **AI Raw の表示桁は整数のまま**（i16t の1通りしかないので）
