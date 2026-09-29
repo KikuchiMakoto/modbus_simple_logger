@@ -45,7 +45,7 @@ export const NON_SAVING_CHART_PREVIEW_POINTS = 600;
 //
 // One constant, not one per mode: the saving case used to be slower (500 vs
 // 200 ms) on the argument that a whole-capture view moves less per sample, but
-// the same is true of a 768-point preview, and two numbers only ever meant two
+// the same is true of a 600-point preview, and two numbers only ever meant two
 // things to reason about. Unified at 500 at the time — the slower of the two —
 // and now back at 200: 2 fps made a live trace visibly step rather than move,
 // which is the one thing a preview is for, and 5 fps is still half the 10 Hz

@@ -263,8 +263,9 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 ### データ保存
 - **表示バッファ**: `App.tsx` の `dataBufferRef` に `Float32Array` を含む `DataPoint[]` を保持。非保存時は直近600点、保存時は Origami 折り畳みで上限65536点。リロードで消える
+  - `DataPoint` に `seq` 連番を付与（テスト検証・データ整合性）
 - **TSV**: File System Access API（`showSaveFilePicker`）でストリーミング書き出し。**整形・バッファ・`join()`・`write()` は `tsvWriterWorker.ts`（Web Worker）が担当**し、主スレッドには `showSaveFilePicker()` のユーザージェスチャだけを残す（高サンプリング時のフラッシュヒッチ回避）
-  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。`seq` 列は無い
+  - 列順は `timestamp` / `ai_raw_*` / `ai_phy_*` / `ai_vlt_*` / `ao_raw_*` / `par_*`（AI 系3ブロックが隣接）。**`seq` 列は無い**（`seq` はインメモリの `DataPoint` 専用）
   - フラッシュは `TSV_FLUSH_MAX_ROWS`(500行) と `TSV_FLUSH_INTERVAL_MS`(60s) の**早い方**
   - `ai_phy_*` / `ai_vlt_*` は `parseFloat(v.toFixed(physicalPrecision))` で丸め＋末尾ゼロ除去（ファイルサイズ削減）。`ai_raw_*` / `ao_raw_*` は常に `toString()` の整数（i16 レジスタ / 整数 mV なので）。**`par_*` だけは `formatFloat32`**（`physicalPrecision` を掛けない。理由は Param Editor の項）
   - `Float32Array` / `number[]` の両方を受け付ける
@@ -385,12 +386,12 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 | `INPUT_READ_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AI 読取り最大失敗回数 |
 | `OUTPUT_HOLDING_RETRY_WINDOW_MS` | 60000 | AO 書込みリトライ制限の評価ウィンドウ |
 | `OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AO 書込み最大失敗回数 |
-| `CHART_RENDER_TARGET_POINTS` | 1024 | M4 描画間引きの目標点数（欠測マーカーを含む） |
-| `SAVE_BUFFER_MAX_POINTS` | 65536 | 保存中の Origami バッファ上限 |
+| `CHART_RENDER_TARGET_POINTS` | 1024 | Chart M4 間引きの描画点数目標（時系列/XY 共通、最大1536点） |
+| `SAVE_BUFFER_MAX_POINTS` | 65536 | 保存中キャプチャバッファの最大点数（達すると Origami 折り畳みで 1/2 に縮小） |
 | `NON_SAVING_CHART_PREVIEW_POINTS` | 600 | 非保存時チャートのプレビュー点数（×100ms ≒ 60秒） |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
 | `BATCH_FLUSH_INTERVAL_MS` | 100 | バッチフラッシュの最大遅延 |
-| `CHART_REDRAW_INTERVAL_MS` | 200 | 通常時のチャート再描画最小間隔（周期ではなく下限） |
+| `CHART_REDRAW_INTERVAL_MS` | 200 | チャート再描画の最小間隔（制約時は `CHART_REDRAW_INTERVAL_CONSTRAINED_MS` = 500ms） |
 | `CHART_REDRAW_INTERVAL_CONSTRAINED_MS` | 500 | CPU 描画・低コア数時の再描画最小間隔 |
 | `TSV_FLUSH_MAX_ROWS` | 500 | TSV フラッシュを起こすバッファ行数 |
 | `TSV_FLUSH_INTERVAL_MS` | 60000 | TSV 定期フラッシュ間隔（低レート時の耐久性フォールバック） |
@@ -431,7 +432,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
 - `index.css` は `@import "tailwindcss"` + `@custom-variant dark` 構成（Tailwind CSS 4 記法）
-- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` で重複定義しないこと。**UI のドロップダウンの中身**（`SAVE_RATE_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
+- **挙動を決めるチューニング値**は `src/constants.ts` に一元化し、`App.tsx` 等で重複定義しないこと。**UI のドロップダウンの中身**（`SAVE_RATE_OPTIONS` 等）は例外で `App.tsx` にある — 上の定数表末尾の注記を参照
 - `DataPoint` の `aiRaw`/`aiPhysical`/`aiVoltage` は `Float32Array` — 新規追加時も同様にすること
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **AI Raw の表示桁は整数のまま**（i16t の1通りしかないので）

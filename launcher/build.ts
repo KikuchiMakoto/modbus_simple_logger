@@ -7,10 +7,13 @@ import { existsSync, mkdirSync, openSync, readSync, writeSync, closeSync } from 
 import { resolve } from 'node:path';
 
 const isWindows = process.platform === 'win32';
+// Cross-compile to Windows exe by default when running on non-Windows so the
+// release artifact `launcher/bin/modbus_simple_logger.exe` is always produced.
+const buildWindows = isWindows || process.env.TARGET !== 'linux';
 const entry = resolve(import.meta.dir, 'main.ts');
 const outDir = resolve(import.meta.dir, 'bin');
 mkdirSync(outDir, { recursive: true });
-const outfile = resolve(outDir, isWindows ? 'modbus_simple_logger.exe' : 'modbus_simple_logger');
+const outfile = resolve(outDir, buildWindows ? 'modbus_simple_logger.exe' : 'modbus_simple_logger');
 
 // Force the Windows PE subsystem from Console (3) to GUI (2). Bun's
 // --windows-hide-console only hides the console at runtime and leaves the
@@ -49,7 +52,11 @@ Bun.spawnSync(['bun', 'run', resolve(import.meta.dir, 'generate-icon.ts')], {
   stderr: 'inherit',
 });
 
-const args = ['bun', 'build', '--compile', entry, '--outfile', outfile];
+const args = ['bun', 'build', '--compile'];
+if (buildWindows && !isWindows) {
+  args.push('--target=bun-windows-x64');
+}
+args.push(entry, '--outfile', outfile);
 if (isWindows) {
   // Windowed app: no console window at startup. --windows-hide-console handles
   // the runtime side; setGuiSubsystem() below makes it deterministic.
@@ -65,7 +72,7 @@ if (isWindows) {
 console.log('[launcher:build]', args.join(' '));
 const proc = Bun.spawnSync(args, { stdout: 'inherit', stderr: 'inherit' });
 if (proc.exitCode === 0) {
-  if (isWindows) setGuiSubsystem(outfile);
+  if (buildWindows) setGuiSubsystem(outfile);
   console.log(`[launcher:build] Done -> ${outfile}`);
 }
 process.exit(proc.exitCode ?? 1);
