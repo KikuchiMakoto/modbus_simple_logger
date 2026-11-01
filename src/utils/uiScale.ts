@@ -75,12 +75,9 @@ export function setUiScalePercent(percent: number) {
   applyUiScale();
   for (const listener of listeners) listener();
 
-  // Plotly sizes its canvas from the measured width of the graph div and only
-  // re-measures on a window resize; zoom changes that width without resizing
-  // the window, so the chart would keep the old canvas size until the next
-  // real resize. The event goes out after a frame, once layout has settled at
-  // the new zoom — dispatched synchronously it would measure the old size.
-  requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  // Plotly 4 observes each graph div with ResizeObserver. CSS zoom changes
+  // its layout width, so no synthetic window resize (and no unrelated window
+  // resize handlers) is needed here.
 }
 
 /** Move `delta` steps along UI_SCALE_STEPS, clamped at both ends. */

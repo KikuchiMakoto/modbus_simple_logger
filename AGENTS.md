@@ -186,7 +186,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - 実装は **`#root` への CSS `zoom`**（`index.css`、値は `<html>` の `--ui-scale`）。`transform: scale()` ではない: `zoom` はレイアウトに参加するので拡大後のサイズで再フローしスクロール範囲も正しくなるが、transform は同じレイアウトを大きく描くだけで右端が画面外に出たまま届かなくなる。アプリの対象環境は README のブラウザ要件を参照
 - **ページ背景と全画面ボックスは `<body>` に置く**（`index.css`）。`#root` の内側で `min-h-screen` を書くと 100vh が**ズーム後の座標系**で解決され、125% では画面より 1/4 高い箱になって空のページにスクロールバーが出る
 - **ズーム内側の座標を扱うコードは補正が要る**。`window.innerWidth/Height` は非ズームの CSS px、`FloatingWindow` のジオメトリはズーム内側の px なので、クランプ側で `getUiScale()` で割る。ドラッグ量も同様にずれるため `Rnd` に `scale` を渡す（Plotly は `_invScaleX/Y` で自前に補正するので不要）
-- 拡大率の変更後は **1フレーム置いて `resize` イベントを投げる**（`setUiScalePercent`）。Plotly はグラフ div の実測幅からキャンバス寸法を決め、再測定の契機は window の resize だけなので、これが無いと次に窓を動かすまで古い寸法のまま残る
+- **Plotly 4 の `responsive: true` はグラフ div を `ResizeObserver` で監視する**。拡大率変更によるレイアウト幅の変化も検知するため、`setUiScalePercent` から人工的な `window.resize` を投げない（v7.3.1〜）。旧 Plotly 3 では1フレーム後のイベント発火が必要だったが、現在は無関係な resize ハンドラーまで起動するだけになる。Plotly を差し替える際は、データ更新が止まった状態でも拡大率変更後にキャンバス寸法が追従することを確認する
 - 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
 
 ### ScriptRunner（`pyodideWorker.ts`）

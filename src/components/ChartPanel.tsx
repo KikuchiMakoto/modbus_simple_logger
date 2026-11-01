@@ -201,18 +201,24 @@ function ChartPanelComponent({
 
   const isEmpty = dataPoints.length === 0;
 
-  const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
-    if (isEmpty || isPlotDisabled) return { traces: [], xRange: null, yRange: null };
+  // Keep the O(n) scan independent of presentation changes such as trace color.
+  const decimated = useMemo(() => {
+    if (isEmpty || isPlotDisabled) return null;
 
     // M4 decimation right before Plotly. Output is capped at 1.5x
     // CHART_RENDER_TARGET_POINTS (gap markers included), extents come from the
     // same pass, and no finite segment is drawn across a NaN — see decimate2DM4.
-    const [xData, yData, xMin, xMax, yMin, yMax] = decimate2DM4(
+    return decimate2DM4(
       dataPoints,
       xDesc,
       yDesc,
       CHART_RENDER_TARGET_POINTS,
     );
+  }, [displayRevision, xDesc, yDesc, dataPoints, isEmpty, isPlotDisabled]);
+
+  const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
+    if (!decimated) return { traces: [], xRange: null, yRange: null };
+    const [xData, yData, xMin, xMax, yMin, yMax] = decimated;
 
     return {
       traces: [
@@ -241,7 +247,7 @@ function ChartPanelComponent({
       xRange: paddedRange(xMin, xMax, 0.1),
       yRange: paddedRange(yMin, yMax, 0.05),
     };
-  }, [displayRevision, color, xDesc, yDesc, xAxis, yAxis, dataPoints, isEmpty, isPlotDisabled]);
+  }, [decimated, color, xAxis, yAxis]);
 
   // "Timestamp", not "Time": this axis is absolute local wall-clock — the
   // instant each sample was captured — and "Time" reads just as naturally as

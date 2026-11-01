@@ -6,6 +6,10 @@ v7 以降のバージョン番号は Linux kernel stable version の数字に追
 
 ## 7.x
 
+- **v7.3.1 (2026-11-02)**
+  - React / Plotly / Vite と開発依存を更新し、source-map-js の脆弱性を解消。
+  - Plotly 4 のサイズ監視を利用して拡大率変更時の人工 resize を廃止し、色変更時の M4 再走査を省略。
+  - Pyodide 314.0.7 は維持し、同梱アセットの一致、Stop・再実行と PWA オフライン動作を検証。
 - **v7.2.9 (2026-09-29)**
   - 非保存時の計測データを IndexedDB からメモリ上の TypedArray バッファへ移行。
   - テスト環境の localStorage ガード、型 import、文書を整理。
