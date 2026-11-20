@@ -1215,6 +1215,8 @@ function App() {
   }, [applyCalibrationToChannels]);
 
   const scriptRunner = useScriptRunner(setAo, handleTareCalibration, handleParamFreeLabelChange);
+  // Stable (useCallback with stable deps), unlike the scriptRunner object itself.
+  const { stopScriptRunner } = scriptRunner;
 
   // Mirror AO values into the ScriptRunner share so GetAo() can read them, in
   // volts to match the unit SetAo() takes (AO state is held in millivolts).
@@ -1903,7 +1905,7 @@ function App() {
     if (disconnectInProgressRef.current) return;
     disconnectInProgressRef.current = true;
     console.info('[App] handleDisconnect start');
-    scriptRunner.stopScriptRunner('Stopped');
+    stopScriptRunner('Stopped');
     acquiringRef.current = false;
     setAcquiring(false);
     // Retire this connection's polls before anything is reset. stopPolling()
@@ -1989,7 +1991,10 @@ function App() {
       disconnectInProgressRef.current = false;
       console.info('[App] handleDisconnect complete');
     }
-  }, [releaseWakeLock, stopPolling, scriptRunner, setStatus]);
+  // stopScriptRunner rather than the whole scriptRunner object: that object is
+  // new on every render, which recreated this callback — and re-attached the
+  // serial/USB disconnect listeners that depend on it — up to 10 times a second.
+  }, [releaseWakeLock, stopPolling, stopScriptRunner, setStatus]);
 
   // Two sources, because only one of them exists on any given platform.
   //
