@@ -63,17 +63,20 @@ let initPromise: Promise<void> | null = null;
 // thread sends `init` only once, when it creates the worker.
 let initArgs: Extract<ScriptWorkerRequest, { type: 'init' }> | null = null;
 let running = false;
-// Every `run` message gets the next number; an `interrupt` that arrives while
-// nothing is executing cancels all runs numbered up to then (see 'interrupt').
-let runSeq = 0;
-let cancelledThroughSeq = 0;
+/** Shared with the main thread: the run it currently wants (ACTIVE_RUN_NONE after Stop). */
+let activeRun: Int32Array | null = null;
 let aiRawShare: Float32Array | null = null;
 let aiPhysicalShare: Float32Array | null = null;
 let aoShare: Float32Array | null = null;
 let paramShare: Float32Array | null = null;
 let interruptBuffer: Uint8Array | null = null;
-/** Set when a run starts, so Elapsed() measures the script and not the worker. */
-let runStartedAt = Date.now();
+/**
+ * Set when a run starts, so Elapsed() measures the script and not the worker.
+ * performance.now(), not Date.now(): Elapsed() is documented as monotonic and
+ * scripts time control logic with it, so a clock sync stepping the wall clock
+ * must not make it jump.
+ */
+let runStartedAt = performance.now();
 
 const postWorkerMessage = (message: ScriptWorkerResponse) => {
   self.postMessage(message);
@@ -191,7 +194,7 @@ const initializePyodide = async (rawSab: SharedArrayBuffer, phySab: SharedArrayB
   // Monotonic seconds since this worker started, so it has no midnight
   // discontinuity — the one a multi-day consolidation stage would otherwise
   // walk straight into.
-  registerApi('Elapsed', () => (Date.now() - runStartedAt) / 1000);
+  registerApi('Elapsed', () => (performance.now() - runStartedAt) / 1000);
 
   // Armed last, deliberately. A Stop issued while Pyodide was still loading
   // leaves the interrupt buffer holding 2, and Pyodide checks that buffer inside
@@ -209,6 +212,7 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
 
   if (message.type === 'init') {
     initArgs = message;
+    activeRun = new Int32Array(message.runSab);
     if (!initPromise) {
       initPromise = initializePyodide(message.rawSab, message.phySab, message.aoSab, message.paramSab, message.intSab);
     }
@@ -236,21 +240,18 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       } catch {
         // Ignore: the task may have already finished.
       }
-    } else {
-      // No script executing yet (e.g. Stop pressed while Pyodide is still
-      // initializing): cancel every run queued so far. Done by sequence number
-      // and NOT by re-arming the shared byte: the main thread wrote PENDING
-      // itself when Stop was pressed, and if the user has pressed Run again
-      // since, it has already cleared the byte for that newer run — writing
-      // PENDING here (this message is handled after that) would abort the new
-      // run instead of the old one.
-      cancelledThroughSeq = runSeq;
     }
+    // Nothing executing (e.g. Stop pressed while Pyodide is still booting):
+    // nothing to do here. A queued run is cancelled by the shared active-run
+    // cell, which the main thread cleared before posting this. The interrupt
+    // byte is deliberately NOT re-armed: if the user has pressed Run again since,
+    // the main thread has already cleared it for that newer run, and re-arming
+    // it from here would abort the new run instead of the old one.
     return;
   }
 
   if (message.type === 'run') {
-    const seq = ++runSeq;
+    const { runId } = message;
     // Set once this message has claimed the runner; only then does `finally`
     // own `running` and the interrupt byte.
     let claimed = false;
@@ -259,7 +260,7 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       // retried). Retry here rather than leaving the worker permanently dead:
       // the main thread has no way to re-send `init` short of recreating it.
       if (!initArgs) {
-        postWorkerMessage({ type: 'error', message: 'Worker is not initialized' });
+        postWorkerMessage({ type: 'error', runId, message: 'Worker is not initialized' });
         return;
       }
       initPromise = initializePyodide(
@@ -271,7 +272,7 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       );
     }
     if (running) {
-      postWorkerMessage({ type: 'error', message: 'Script is already running' });
+      postWorkerMessage({ type: 'error', runId, message: 'Script is already running' });
       return;
     }
 
@@ -280,32 +281,30 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       if (!pyodide) {
         throw new Error('Pyodide is not available');
       }
-      // Stopped while Pyodide was booting. Silent: the main thread already
-      // reported this run as stopped when Stop was pressed, and an
-      // 'interrupted' sent now would be taken as the end of whatever run the
-      // user has started since (Run → Stop → Run during boot).
-      if (seq <= cancelledThroughSeq) return;
-      // Two runs queued during boot that were never cancelled cannot both
-      // start: the main thread blocks Run while one is executing, but the
-      // check above the await cannot see a run that is itself still waiting.
+      // Stopped (or superseded) while Pyodide was booting. Silent: the main
+      // thread reported this run as stopped when Stop was pressed.
+      if (activeRun && Atomics.load(activeRun, 0) !== runId) return;
+      // Two runs queued during boot cannot both start: the main thread blocks
+      // Run while one is executing, but the check above the await cannot see a
+      // run that is itself still waiting.
       if (running) {
-        postWorkerMessage({ type: 'error', message: 'Script is already running' });
+        postWorkerMessage({ type: 'error', runId, message: 'Script is already running' });
         return;
       }
       claimed = true;
       if (interruptBuffer && interruptBuffer[0] === INTERRUPT_PENDING) {
         // Stop was pressed while initialization was still in progress: abort
         // instead of clearing the request and starting anyway.
-        postWorkerMessage({ type: 'interrupted', message: 'Stopped' });
+        postWorkerMessage({ type: 'interrupted', runId, message: 'Stopped' });
         return;
       }
 
       running = true;
-      runStartedAt = Date.now();
+      runStartedAt = performance.now();
       postWorkerMessage({ type: 'status', message: 'Running' });
       pyodide.globals.set('__user_code__', message.code);
       await pyodide.runPythonAsync('await _runner_run(__user_code__)');
-      postWorkerMessage({ type: 'done', message: 'Completed' });
+      postWorkerMessage({ type: 'done', runId, message: 'Completed' });
     } catch (err) {
       const error = err as Error;
       const text = error.message ?? String(error);
@@ -315,17 +314,18 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       // KeyboardInterrupt: sync loop stopped. CancelledError: async Task
       // cancelled. Both mean the user pressed Stop.
       if (text.includes('KeyboardInterrupt') || text.includes('CancelledError')) {
-        postWorkerMessage({ type: 'interrupted', message: 'Stopped' });
+        postWorkerMessage({ type: 'interrupted', runId, message: 'Stopped' });
       } else if (text.includes('SystemExit')) {
         // Fallback in case exit()/quit()/sys.exit() ever escapes _runner_run:
         // a clean script end, not an error.
-        postWorkerMessage({ type: 'done', message: 'Completed' });
+        postWorkerMessage({ type: 'done', runId, message: 'Completed' });
       } else {
         // `message` is the one-line summary the status bar shows; `traceback`
         // is the full Python traceback, kept in the run log so the user can see
         // which line failed.
         postWorkerMessage({
           type: 'error',
+          runId,
           message: summarizeError(text),
           traceback: cleanTraceback(text),
         });
