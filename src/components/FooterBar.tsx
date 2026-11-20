@@ -17,6 +17,7 @@ import { useLatestVisibleSystemLog } from '../hooks/useSystemLog';
 import { levelTextClass } from './SystemLogBody';
 import type { ScriptOutcome } from '../hooks/useScriptRunner';
 import type { SystemLogEntry } from '../utils/systemLog';
+import { Badge } from '@/components/ui/badge';
 
 const OUTCOME_BADGE: Record<ScriptOutcome, { label: string; dot: string }> = {
   idle: { label: 'Idle', dot: 'bg-slate-400' },
@@ -169,9 +170,7 @@ export function FooterBar({
                 user typed, and case is part of it. Still dropped below `md`,
                 where the bar is 24px tall — the message is what the bar is for,
                 and a name is the widest thing here. */}
-            <span className="hidden max-w-[10rem] truncate rounded bg-slate-200 px-1 py-0.5 text-[0.6rem] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300 md:inline">
-              {runner.scriptName}
-            </span>
+            <Badge className="hidden max-w-[10rem] truncate leading-normal md:inline">{runner.scriptName}</Badge>
             <span className="text-slate-500 dark:text-slate-400">{badge.label}</span>
           </div>
         )}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { checkForAppUpdate, isUpdateCheckSupported, type UpdateCheckResult } from '../utils/swUpdate';
 import { exportFullConfig, importFullConfig, printFullConfigReport } from '../utils/fullConfigExport';
+import { Button } from '@/components/ui/button';
 
 // Installed version of every dependency, injected at build time from
 // node_modules (see vite.config.ts). Keeping the versions out of this file is
@@ -19,6 +20,15 @@ const LIBRARIES = [
   { name: 'react-plotly.js', pkg: 'react-plotly.js', license: 'MIT' },
   { name: 'react-rnd', pkg: 'react-rnd', license: 'MIT' },
   { name: 'Tailwind CSS', pkg: 'tailwindcss', license: 'MIT' },
+  // shadcn/ui itself is copied-in source (src/components/ui/), not a package;
+  // these are the runtime packages its components are built on.
+  { name: 'Radix UI Checkbox', pkg: '@radix-ui/react-checkbox', license: 'MIT' },
+  { name: 'Radix UI Slot', pkg: '@radix-ui/react-slot', license: 'MIT' },
+  { name: 'Radix UI Switch', pkg: '@radix-ui/react-switch', license: 'MIT' },
+  { name: 'Radix UI Toggle Group', pkg: '@radix-ui/react-toggle-group', license: 'MIT' },
+  { name: 'class-variance-authority', pkg: 'class-variance-authority', license: 'Apache-2.0' },
+  { name: 'clsx', pkg: 'clsx', license: 'MIT' },
+  { name: 'tailwind-merge', pkg: 'tailwind-merge', license: 'MIT' },
   { name: 'Vite', pkg: 'vite', license: 'MIT' },
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
@@ -63,6 +73,10 @@ export function AppInfoPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const blockPrintAndImport = isSaving || scriptRunning;
+  // Import ends by reloading the page, which drops a live link without a
+  // disconnect (and leaves the AO outputs wherever they were) — the same reason
+  // update checks are suspended while connected. Printing does not reload.
+  const blockImport = blockPrintAndImport || connected;
 
   // Same code path as the startup check (utils/swUpdate.ts): a ready new
   // version raises the identical consent prompt, declining leaves it waiting.
@@ -128,15 +142,14 @@ export function AppInfoPanel({
 
           {isUpdateCheckSupported() && (
             <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700">
-              <button
-                type="button"
+              <Button
                 onClick={() => void handleCheckForUpdates()}
                 disabled={checking || connected}
                 title={connected ? 'Disconnect the device first — applying an update reloads the app' : undefined}
-                className="w-full rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full px-3"
               >
                 {checking ? 'Checking…' : 'Check for Updates'}
-              </button>
+              </Button>
               {(connected || updateStatus) && (
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   {connected ? UPDATE_STATUS.suspended : updateStatus}
@@ -158,27 +171,29 @@ export function AppInfoPanel({
               Export, import, or print all application settings (calibrations, channel labels, ranges, chart axes, UI preferences, scripts, and device memo).
             </p>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
+              <Button
                 onClick={() => exportFullConfig(APP_VERSION)}
-                className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-950 shadow hover:bg-emerald-400"
+                size="sm" className="py-1.5"
               >
                 Export JSON
-              </button>
+              </Button>
 
-              <button
-                type="button"
+              <Button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={blockPrintAndImport}
+                disabled={blockImport}
                 title={
                   blockPrintAndImport
                     ? 'Import is disabled while saving or script is running'
-                    : 'Import configuration JSON file'
+                    : connected
+                      ? 'Disconnect the device first — importing reloads the app'
+                      : 'Import configuration JSON file'
                 }
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                variant="outline"
+                size="sm"
+                className="py-1.5 text-foreground dark:border-slate-600"
               >
                 Import JSON
-              </button>
+              </Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -193,8 +208,7 @@ export function AppInfoPanel({
                 }}
               />
 
-              <button
-                type="button"
+              <Button
                 onClick={() => printFullConfigReport(APP_VERSION)}
                 disabled={blockPrintAndImport}
                 title={
@@ -202,15 +216,23 @@ export function AppInfoPanel({
                     ? 'Print/PDF is disabled while saving or script is running to prevent blocking control loops'
                     : 'Print or export configuration to PDF'
                 }
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                variant="outline"
+                size="sm"
+                className="py-1.5 text-foreground dark:border-slate-600"
               >
                 Print / PDF
-              </button>
+              </Button>
             </div>
-            {blockPrintAndImport && (
+            {blockPrintAndImport ? (
               <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
                 Print/PDF and Import are disabled while saving or script is running.
               </p>
+            ) : (
+              connected && (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Import is disabled while a device is connected: it reloads the app.
+                </p>
+              )
             )}
           </div>
         </div>
@@ -229,6 +251,10 @@ export function AppInfoPanel({
             <li className="flex items-center justify-between rounded px-2 py-1">
               <span className="font-medium">Ying CUI</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">Feature Proposal</span>
+            </li>
+            <li className="flex items-center justify-between rounded px-2 py-1">
+              <span className="font-medium">Masataka SHIGA</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">Resource Sponsor</span>
             </li>
           </ul>
         </div>

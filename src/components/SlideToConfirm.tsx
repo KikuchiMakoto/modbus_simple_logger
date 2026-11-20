@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { getUiScale } from '../utils/uiScale';
 
 /**
  * Drag-across control for an action that must not happen by accident.
@@ -31,7 +32,7 @@ export type SlideTone = 'warn' | 'neutral';
  *
  *   pill  a track with fully round ends. The default, and what this control
  *         looks like on its own: unmistakably something you drag.
- *   boxy  the same corner radius as an ordinary .button-* — for the one slot
+ *   boxy  the same corner radius as an ordinary Button (rounded-lg) — for the one slot
  *         where this control SWAPS with a plain button (header Connect →
  *         Disconnect) and the swap should not restyle the header.
  */
@@ -39,7 +40,7 @@ export type SlideShape = 'pill' | 'boxy';
 
 const SHAPE = {
   pill: { track: 'rounded-full', knob: 'rounded-full' },
-  // Track matches .button-primary's rounded-lg exactly. The knob is a step
+  // Track matches the Button's rounded-lg exactly. The knob is a step
   // tighter, as a nested corner has to be, and stays square-ish so it still
   // reads as the grabbable part rather than as part of the track.
   boxy: { track: 'rounded-lg', knob: 'rounded-md' },
@@ -113,13 +114,17 @@ export function SlideToConfirm({
     if (disabled) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragOriginRef.current = e.clientX - knobX;
+    // Pointer deltas are screen px; knobX is in #root's zoomed px (the UI scale
+    // is a CSS zoom on #root). Without the conversion the knob ran ahead of the
+    // finger above 100% and the slide committed on a shorter swipe — the same
+    // correction FloatingWindow gets by passing `scale` to react-rnd.
+    dragOriginRef.current = e.clientX - knobX * getUiScale();
     setDragging(true);
   };
 
   const move = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
-    setKnobX(Math.max(0, Math.min(maxTravel(), e.clientX - dragOriginRef.current)));
+    setKnobX(Math.max(0, Math.min(maxTravel(), (e.clientX - dragOriginRef.current) / getUiScale())));
   };
 
   const end = () => {

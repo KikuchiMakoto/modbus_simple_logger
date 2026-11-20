@@ -17,6 +17,7 @@ import {
   type ScriptTab,
 } from '../utils/scriptTabs';
 import {
+  ACTIVE_RUN_NONE,
   INTERRUPT_NONE,
   INTERRUPT_PENDING,
   type ScriptWorkerRequest,
@@ -115,6 +116,8 @@ export function useScriptRunner(
   /** Which language's worker is executing, so Stop reaches the right one. */
   const runningLanguageRef = useRef<ScriptLanguageId | null>(null);
   const interruptBufferRef = useRef<Uint8Array | null>(null);
+  /** Shared with the worker: the run that should be executing (see ACTIVE_RUN_NONE). */
+  const activeRunRef = useRef<Int32Array | null>(null);
   const aiRawShareRef = useRef<Float32Array | null>(null);
   const aiPhysicalShareRef = useRef<Float32Array | null>(null);
   const aoShareRef = useRef<Float32Array | null>(null);
@@ -201,6 +204,7 @@ export function useScriptRunner(
       new SharedArrayBuffer(PARAM_CHANNELS * Float32Array.BYTES_PER_ELEMENT),
     );
     interruptBufferRef.current = new Uint8Array(new SharedArrayBuffer(1));
+    activeRunRef.current = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
     return true;
   }, [scriptRunnerSupported]);
 
@@ -222,11 +226,19 @@ export function useScriptRunner(
     const aoSab = aoShareRef.current!.buffer as SharedArrayBuffer;
     const paramSab = paramShareRef.current!.buffer as SharedArrayBuffer;
     const intSab = interruptBufferRef.current!.buffer as SharedArrayBuffer;
+    const runSab = activeRunRef.current!.buffer as SharedArrayBuffer;
 
     // Static `new URL(...)` literal: this is how the bundler finds a worker
     // entry point and emits it, so the path cannot come from the table in
     // scriptLanguages.ts.
     const worker = new Worker(new URL('../pyodideWorker.ts', import.meta.url), { type: 'module' });
+    // A terminal reply ends the run it names, and only while that run is still
+    // the one executing. A reply for an earlier run (Run -> Stop -> Run: the
+    // first run's late 'interrupted') or for a run already settled by Stop is
+    // ignored — taking it as the end of the current run marked a run finished
+    // that was still driving the outputs, with no Stop left to press.
+    const endsCurrentRun = (runId: number | undefined) =>
+      runId !== undefined && runId === scriptRunRef.current.runId && scriptExecutingRef.current;
     worker.onmessage = (event: MessageEvent<ScriptWorkerResponse>) => {
       const message = event.data;
       if (message.type === 'set_ao') {
@@ -240,27 +252,26 @@ export function useScriptRunner(
       } else if (message.type === 'output') {
         appendLog(message.stream, message.text);
       } else if (message.type === 'done') {
+        if (!endsCurrentRun(message.runId)) return;
         markRunFinished();
         setScriptRunnerStatus(message.message ?? 'Completed');
         appendLog('system', message.message ?? 'Completed');
         settleRun('completed');
       } else if (message.type === 'interrupted') {
-        // This is the worker CONFIRMING a Stop that stopScriptRunner already
-        // reported the moment it was requested — so the end of the run has
-        // normally been recorded once already, and recording it again wrote
-        // "Stopped" into the log twice for one press.
-        //
-        // Still guarded on the flag rather than dropped outright: a worker that
-        // stops on its own, with no local Stop ahead of it, is the case this
-        // branch has to keep reporting.
-        const wasRunning = scriptExecutingRef.current;
+        // Normally the worker CONFIRMING a Stop that stopScriptRunner already
+        // reported the moment it was requested — the run is no longer
+        // executing, so endsCurrentRun is false and nothing is written twice.
+        // Still handled: a worker that stops on its own, with no local Stop
+        // ahead of it, is the case this branch has to keep reporting.
+        if (!endsCurrentRun(message.runId)) return;
         markRunFinished();
         setScriptRunnerStatus(message.message ?? 'Stopped');
-        if (wasRunning) {
-          appendLog('system', message.message ?? 'Stopped');
-          settleRun('stopped');
-        }
+        appendLog('system', message.message ?? 'Stopped');
+        settleRun('stopped');
       } else if (message.type === 'error') {
+        // An error outside any run (worker init) is repeated by the run that
+        // was waiting on that init, with its id — so only run errors count.
+        if (!endsCurrentRun(message.runId)) return;
         markRunFinished();
         setScriptRunnerStatus(`Error: ${message.message}`);
         appendLog('stderr', message.traceback ?? message.message);
@@ -268,6 +279,13 @@ export function useScriptRunner(
       }
     };
     worker.onerror = (event) => {
+      // Mostly the module failing to load (chunk fetch failed, e.g. offline
+      // before the precache finished): such a worker never answers anything.
+      // Drop it so the next Run creates a fresh one instead of posting into a
+      // dead worker forever — and terminate it, so a worker that is in fact
+      // still running cannot keep a script going after this reports it ended.
+      worker.terminate();
+      if (workersRef.current.get(language) === worker) workersRef.current.delete(language);
       markRunFinished();
       setScriptRunnerStatus(`Error: ${event.message}`);
       appendLog('stderr', event.message);
@@ -281,6 +299,7 @@ export function useScriptRunner(
       aoSab,
       paramSab,
       intSab,
+      runSab,
     };
     worker.postMessage(init);
 
@@ -289,6 +308,9 @@ export function useScriptRunner(
   }, [ensureShares, setAo, onAiCalibTare, setParamLabel, appendLog, settleRun, markRunFinished]);
 
   const stopScriptRunner = useCallback((nextStatus = 'Stopped') => {
+    // Before the message: a run still queued behind Pyodide's boot reads this
+    // cell, not the message queue, to learn it was cancelled.
+    if (activeRunRef.current) Atomics.store(activeRunRef.current, 0, ACTIVE_RUN_NONE);
     if (interruptBufferRef.current) {
       interruptBufferRef.current[0] = INTERRUPT_PENDING;
       // Only the worker that is actually executing. Every runtime reads the
@@ -328,6 +350,7 @@ export function useScriptRunner(
     try {
       const worker = ensureWorkerReady(language);
       if (interruptBufferRef.current) interruptBufferRef.current[0] = INTERRUPT_NONE;
+      if (activeRunRef.current) Atomics.store(activeRunRef.current, 0, info.runId);
       scriptExecutingRef.current = true;
       runningLanguageRef.current = language;
       runningTabIdRef.current = tab.id;
@@ -339,7 +362,7 @@ export function useScriptRunner(
       // destroying — so this line is what separates one run's output from the
       // last one's.
       appendLog('system', `Run started (${SCRIPT_LANGUAGES[language].label})`);
-      const run: ScriptWorkerRequest = { type: 'run', code: codeOverride ?? tab.code };
+      const run: ScriptWorkerRequest = { type: 'run', code: codeOverride ?? tab.code, runId: info.runId };
       worker.postMessage(run);
       return info;
     } catch (err) {

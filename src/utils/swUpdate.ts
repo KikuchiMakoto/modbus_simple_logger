@@ -28,8 +28,8 @@ export type UpdateCheckResult =
 // Launcher (desktop exe) mode comes from the marker the launcher injects into
 // the index.html it serves (see utils/appMode.ts). Regular deployments carry no
 // marker, so Pages and PWA behaviour is unchanged — and, unlike the hostname
-// test this replaced, a launcher page opened from another PC over the network is
-// still correctly recognised as launcher mode.
+// test this replaced, it does not depend on which address the page was reached
+// through.
 const swAvailable = !isLauncherServed && 'serviceWorker' in navigator;
 
 /** Whether an update check can run at all (false in launcher mode / no SW support). */
@@ -73,6 +73,9 @@ const queryWorkerVersion = (worker: ServiceWorker): Promise<string | null> =>
 // launch or on the next press of the App Info "Check for Updates" button.
 const promptAndActivate = async (worker: ServiceWorker) => {
   const newVersion = await queryWorkerVersion(worker);
+  // Re-checked after the (up to 500 ms) version query: a Connect made while it
+  // was in flight must not get a blocking confirm() as its first event.
+  if (checksSuspended) return;
   const versionInfo = newVersion && currentVersion ? ` (v${currentVersion} → v${newVersion})` : '';
   const shouldActivate = window.confirm(
     `A new version of the app is available${versionInfo}. Update and reload now?\n\n` +
@@ -88,7 +91,11 @@ const promptAndActivate = async (worker: ServiceWorker) => {
 // the flag, so a later explicit check asks again about the same worker.
 let promptInFlight = false;
 const promptOnce = (worker: ServiceWorker) => {
-  if (promptInFlight) return;
+  // A download adopted by a check made before Connect can finish installing
+  // mid-session. A confirm() then would freeze the main thread (and with it
+  // polling) and offer a reload that ends the run. Leave the worker waiting:
+  // the next explicit check offers it through the `registration.waiting` path.
+  if (promptInFlight || checksSuspended) return;
   promptInFlight = true;
   void promptAndActivate(worker).finally(() => {
     promptInFlight = false;

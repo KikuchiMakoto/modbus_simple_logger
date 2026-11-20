@@ -140,6 +140,9 @@ export default defineConfig(({ command, isPreview }) => ({
     // than being externalized as a Node builtin by the browser build.
     alias: {
       buffer: 'buffer/',
+      // shadcn/ui convention (components.json): `@/components/ui/button`,
+      // `@/lib/utils`. Mirrored by `paths` in tsconfig.json.
+      '@': resolve(rootDir, 'src'),
     },
   },
   define: {

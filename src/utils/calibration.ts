@@ -6,7 +6,7 @@ import {
   VOLTAGE_MODES,
 } from '../types';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
-import { readJsonCookie, writeJsonCookie } from './cookies';
+import { readJsonCookie, writeJsonCookie, type JsonValue } from './cookies';
 
 const AI_COOKIE_KEY = 'ai_calibration_v1';
 const VOLTAGE_CONFIG_COOKIE_KEY = 'voltage_config_v1';
@@ -19,13 +19,28 @@ export const DEFAULT_AI_CALIBRATION: AiCalibration = Object.freeze({ a: 0, b: 1,
 
 const defaultAiCalibration = (): AiCalibration => DEFAULT_AI_CALIBRATION;
 
-export const loadAiCalibration = (channels: number): AiCalibration[] => {
-  const raw = readJsonCookie<AiCalibration[]>(AI_COOKIE_KEY);
-  if (!Array.isArray(raw)) {
-    return Array.from({ length: channels }, () => defaultAiCalibration());
-  }
-  return Array.from({ length: channels }, (_, idx) => raw[idx] ?? defaultAiCalibration());
+/**
+ * Every stored or imported calibration goes through here. Each coefficient
+ * must be a finite number; anything else (a string from a hand-edited or
+ * hostile config file, or the `null` that JSON turns ±Infinity into) falls
+ * back to that coefficient's default rather than making Phy NaN — or, in the
+ * print report, being written into the page as markup.
+ */
+export const sanitizeAiCalibration = (raw: unknown, channels: number): AiCalibration[] => {
+  const list = Array.isArray(raw) ? raw : [];
+  const fallback = defaultAiCalibration();
+  const field = (value: unknown, def: number) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : def;
+  return Array.from({ length: channels }, (_, idx) => {
+    const entry: unknown = list[idx];
+    if (!entry || typeof entry !== 'object') return fallback;
+    const { a, b, c } = entry as Record<string, unknown>;
+    return { a: field(a, fallback.a), b: field(b, fallback.b), c: field(c, fallback.c) };
+  });
 };
+
+export const loadAiCalibration = (channels: number): AiCalibration[] =>
+  sanitizeAiCalibration(readJsonCookie<JsonValue>(AI_COOKIE_KEY), channels);
 
 export const saveAiCalibration = (values: AiCalibration[]) => writeJsonCookie(AI_COOKIE_KEY, values);
 
@@ -33,7 +48,7 @@ const VALID_VOLTAGE_MODES = new Set<string>(VOLTAGE_MODES.map((m) => m.value));
 
 // Every voltage config that comes from outside this build goes through here:
 // localStorage written by an older version can carry a mode this build no
-// longer has (the retired 'unknown', say), and rawToDisplayValue has no case
+// longer has (the retired 'unknown', say), and rawToVoltageValue has no case
 // for one — it would return undefined and take the whole channel grid down on
 // the next frame.
 export const sanitizeVoltageConfig = (raw: unknown): VoltageMode[] => {
@@ -86,9 +101,6 @@ export const hx711RawToMvPerV = (raw: number): number =>
 export const hx711RawToMicroStrain = (raw: number): number =>
   hx711RawToMvPerV(raw) * 2e3;
 
-export const ads1115RawToVolt = (raw: number): number =>
-  raw / 32768.0 * 6.144;
-
 /**
  * Returns raw-to-voltage conversion value directly as a primitive number,
  * avoiding object allocations in high-frequency polling/export loops.
@@ -112,11 +124,6 @@ export const VOLTAGE_UNITS: Record<VoltageMode, string> = {
   ads1115_6144mv: 'V',
   ads1115_12288mv: 'V',
 };
-
-export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: number; unit: string } => ({
-  value: rawToVoltageValue(raw, mode),
-  unit: VOLTAGE_UNITS[mode],
-});
 
 // --- HX711 Calibration window helpers ---------------------------------------
 

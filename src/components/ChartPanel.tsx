@@ -10,9 +10,12 @@ import {
 import { type Config, type Data, type Layout } from 'plotly.js';
 import { CHART_RENDER_TARGET_POINTS } from '../constants';
 import { Plot } from '../plotly';
+import { Card } from '@/components/ui/card';
+import { NativeSelect } from '@/components/ui/native-select';
 import type { DataPoint } from '../types';
 import { type AxisDescriptor, decimate2DM4 } from '../utils/m4Decimation';
 import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
+import { Badge } from '@/components/ui/badge';
 
 interface AxisOption {
   key: string;
@@ -334,16 +337,16 @@ function ChartPanelComponent({
   );
 
   return (
-    <section className="card card-tight space-y-0.5">
+    <Card className="space-y-0.5 p-1">
       {/* The axis pickers are chrome above a fixed-height plot, so they are kept
           to the smallest row that stays clickable — every pixel spent here is a
           pixel the chart itself does not get, four times over on this page. */}
       <div className="flex items-center gap-1.5">
         <label className="text-[0.7rem] leading-none text-slate-400">X:</label>
-        <select
+        <NativeSelect
           value={xAxis}
           onChange={(e) => onXAxisChange(e.target.value)}
-          className="rounded border border-slate-300 bg-white px-1.5 py-0 text-xs leading-tight text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          className="px-1.5 py-0 leading-tight"
           aria-label="X axis"
         >
           {axisOptions.map((opt) => (
@@ -351,12 +354,12 @@ function ChartPanelComponent({
               {opt.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         <label className="text-[0.7rem] leading-none text-slate-400">Y:</label>
-        <select
+        <NativeSelect
           value={yAxis}
           onChange={(e) => onYAxisChange(e.target.value)}
-          className="rounded border border-slate-300 bg-white px-1.5 py-0 text-xs leading-tight text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          className="px-1.5 py-0 leading-tight"
           aria-label="Y axis"
         >
           {yAxisOptions.map((opt) => (
@@ -364,7 +367,7 @@ function ChartPanelComponent({
               {opt.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         {/* Back in the chart header, as it was before v3.2 — the row it shares
             has since been slimmed, so it now costs no height of its own. App
             Info keeps the full renderer string; this is the at-a-glance version,
@@ -378,24 +381,21 @@ function ChartPanelComponent({
           // for the OS tooltip that used to carry it. Anchored right — the badge
           // sits at the end of its row.
           <div className="group/backend relative ml-auto shrink-0">
-            <span
+            <Badge
               translate="no"
               tabIndex={0}
               aria-describedby={backendNoteId}
-              className={`block cursor-help rounded px-1 py-0.5 text-[0.6rem] font-semibold leading-none ${
-                backend.accel === 'GPU'
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                  : backend.accel === 'CPU'
-                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-              }`}
+              variant={backend.accel === 'GPU' ? 'success' : backend.accel === 'CPU' ? 'warning' : 'neutral'}
+              // The neutral case is a step lighter here than the Badge default:
+              // it sits on the chart card, not on the footer bar.
+              className={`block cursor-help ${backend.accel === 'GPU' || backend.accel === 'CPU' ? '' : 'bg-slate-100 dark:bg-slate-800'}`}
             >
               {/* GPU / CPU is the only part worth a badge; the API name is in
                   the hover note below. `||` not `??`: accel is '' (not null)
                   on the SVG/Canvas2D path, where the API name is all there
                   is to show. */}
               {backend.accel || backend.api}
-            </span>
+            </Badge>
             <div
               id={backendNoteId}
               role="tooltip"
@@ -437,7 +437,7 @@ function ChartPanelComponent({
           />
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 

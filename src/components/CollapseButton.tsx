@@ -11,6 +11,8 @@
 // 24x24 grid as the hamburger and the theme switch, so the app reads as one
 // icon set. Inlined rather than pulled from an icon package because everything
 // this app ships has to be precached for offline use, and this is one path.
+
+import { Button } from '@/components/ui/button';
 export function CollapseButton({
   collapsed,
   onToggle,
@@ -22,12 +24,13 @@ export function CollapseButton({
   label: string;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="icon"
       onClick={onToggle}
       aria-expanded={!collapsed}
       title={collapsed ? `Expand ${label}` : `Minimize ${label}`}
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+      className="h-6 w-6 border border-border bg-background p-0 enabled:hover:bg-muted enabled:hover:text-slate-700 dark:border-slate-700 dark:enabled:hover:bg-slate-700 dark:enabled:hover:text-slate-200"
     >
       <svg
         viewBox="0 0 20 20"
@@ -40,6 +43,6 @@ export function CollapseButton({
       >
         <polyline points="5 8 10 13 15 8" />
       </svg>
-    </button>
+    </Button>
   );
 }

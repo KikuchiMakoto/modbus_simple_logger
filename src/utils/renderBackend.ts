@@ -36,23 +36,6 @@ export function detectRenderBackend(graphDiv: HTMLElement): RenderBackend {
   return describe(ctx.gl, ctx.api);
 }
 
-/**
- * Backend the browser would give a scattergl chart, measured on a throwaway
- * canvas. Used when App Info is opened before any chart has rendered (no data
- * yet). The context is dropped immediately: the per-page WebGL context budget
- * is ~8-16 and the live charts need all of it.
- */
-export function probeRenderBackend(): RenderBackend {
-  const canvas = document.createElement('canvas');
-  const ctx = contextOf(canvas);
-  if (!ctx) return { api: 'Canvas2D', accel: 'CPU', detail: 'no WebGL context' };
-  try {
-    return describe(ctx.gl, ctx.api);
-  } finally {
-    ctx.gl.getExtension('WEBGL_lose_context')?.loseContext();
-  }
-}
-
 // Module-level store instead of React state: the charts detect the backend but
 // App Info displays it, and they are unrelated subtrees. Passing it up through
 // App would add a prop path for a value nothing else consumes.

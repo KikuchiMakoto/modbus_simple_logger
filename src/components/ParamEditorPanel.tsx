@@ -3,6 +3,10 @@ import { FloatingWindow } from './FloatingWindow';
 import { SlideToConfirm } from './SlideToConfirm';
 import { PARAM_CHANNELS } from '../constants';
 import { formatFloat32 } from '../utils/floatFormat';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Alert } from '@/components/ui/alert';
 
 type ParamValueCellProps = {
   value: number;
@@ -64,8 +68,7 @@ const ParamValueCell = memo(function ParamValueCell({
 
   return (
     <>
-      <input
-        type="text"
+      <Input
         inputMode="decimal"
         value={draft}
         disabled={disabled}
@@ -79,16 +82,20 @@ const ParamValueCell = memo(function ParamValueCell({
           if (e.key === 'Escape') revert();
         }}
         title={pending ? 'Not applied yet — press Set or Enter (Escape to discard)' : undefined}
-        className={`w-20 shrink-0 rounded border px-1 py-0 text-right text-xs font-semibold text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:text-slate-100 dark:disabled:bg-slate-800 dark:disabled:text-slate-500 ${
+        className={`w-20 shrink-0 px-1 py-0 text-right text-xs font-semibold dark:disabled:bg-slate-800 ${
           pending && !valid
-            ? 'border-rose-400 bg-rose-50 dark:border-rose-500 dark:bg-rose-950/40'
+            ? // The state colour must survive focus: the cell is always focused
+              // while it is being edited, which is exactly when it is pending or
+              // invalid — the Input's emerald focus frame would say "fine".
+              'border-rose-400 bg-rose-50 focus-visible:border-rose-400 focus-visible:ring-rose-400/50 dark:border-rose-500 dark:bg-rose-950/40 dark:focus-visible:border-rose-500'
             : pending
-              ? 'border-amber-400 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/40'
+              ? 'border-amber-400 bg-amber-50 focus-visible:border-amber-400 focus-visible:ring-amber-400/50 dark:border-amber-500 dark:bg-amber-950/40 dark:focus-visible:border-amber-500'
               : 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-700'
         }`}
       />
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="2xs"
         onClick={apply}
         disabled={!canApply}
         aria-label={`Apply ${ariaLabel}`}
@@ -99,10 +106,10 @@ const ParamValueCell = memo(function ParamValueCell({
               ? 'Write this value to the channel'
               : 'Nothing to apply'
         }
-        className="shrink-0 rounded border border-slate-300 px-1.5 py-0 text-[0.65rem] font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400 dark:disabled:border-slate-700 dark:disabled:text-slate-600"
+        className="text-[0.65rem] dark:border-slate-600"
       >
         Set
-      </button>
+      </Button>
     </>
   );
 });
@@ -171,11 +178,12 @@ export function ParamEditorPanel({
       headerActions={
         locked && (
           <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium text-amber-600 dark:text-amber-400">
-            <input
-              type="checkbox"
+            {/* Amber, not the default emerald: ticking this is accepting a
+                warning, not a "go". */}
+            <Checkbox
               checked={acceptRisk}
-              onChange={(e) => setAcceptRisk(e.target.checked)}
-              className="h-3 w-3 accent-amber-500"
+              onCheckedChange={(checked) => setAcceptRisk(checked === true)}
+              className="size-3 border-amber-500 data-[state=checked]:border-amber-500 data-[state=checked]:bg-amber-500 data-[state=checked]:text-white"
             />
             Accept Risk
           </label>
@@ -184,14 +192,14 @@ export function ParamEditorPanel({
     >
       <div className="flex-1 overflow-y-auto p-2">
         {locked && !acceptRisk && (
-          <div className="mb-1.5 rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[0.7rem] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <Alert className="mb-1.5 text-[0.7rem]">
             Script running: editing is locked. Check "Accept Risk" above to edit values anyway — a manual edit can race the script's own writes to that channel. Labels are shown here only; rename a channel from the Parameter grid.
-          </div>
+          </Alert>
         )}
         {locked && acceptRisk && (
-          <div className="mb-1.5 rounded border border-amber-400 bg-amber-50 px-2 py-1 text-[0.7rem] font-medium text-amber-700 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300">
+          <Alert variant="warning" className="mb-1.5 text-[0.7rem]">
             Editing values while the script is running — your edits can race the script's own writes to that channel.
-          </div>
+          </Alert>
         )}
         <div className="space-y-0.5">
           {CHANNEL_LABELS.map((label, idx) => {

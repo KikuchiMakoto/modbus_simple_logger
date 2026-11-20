@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Rnd } from 'react-rnd';
 import { getUiScale, useUiScalePercent } from '../utils/uiScale';
+import { Button } from '@/components/ui/button';
 
 type WindowGeometry = { x: number; y: number; width: number; height: number };
 
@@ -174,17 +175,12 @@ export function FloatingWindow({
             </div>
             <div className="flex shrink-0 items-center gap-1 pl-2">
               {headerActions}
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded border border-slate-300 p-1 text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
-                aria-label={`Close ${title}`}
-              >
+              <Button variant="outline" size="icon" onClick={onClose} aria-label={`Close ${title}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-              </button>
+              </Button>
             </div>
           </div>
 

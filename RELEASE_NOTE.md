@@ -6,6 +6,13 @@ v7 以降のバージョン番号は Linux kernel stable version の数字に追
 
 ## 7.x
 
+- **v7.3.5 (2026-11-20)**
+  - UI を shadcn/ui（Button / Card / Input / NativeSelect / Checkbox / Switch / SegmentedControl / Alert / Badge）へ移行。配色トークンはパレット変数参照、ポータル系コンポーネントは UI 拡大率と両立しないため不採用。
+  - Tutorial / Connector Manual を 6 言語化（English / 日本語 / 简体中文 / 繁體中文 / Español / 한국어）。言語は両窓で共有し保存。
+  - Script Runner: Run → Stop → Run で前回 run の応答が現在の run を終了させる問題を runId と共有メモリで修正。Elapsed() を単調時計に。
+  - Modbus: 既に死んだストリームへの書込みを停止、無応答リンクでの読取り待ちのメモリ増加を解消、WebUSB の close() がハングした OUT 転送で止まる問題を修正。
+  - 保存開始/停止・接続中の更新確認・設定インポートの競合や検証漏れ（印刷レポートの軸表示・XSS、Infinity の校正値）を修正。スライド確定を UI 拡大率に追従。
+  - Bun 1.4.5 と依存パッケージを最新化（Plotly 4.3 / Pyodide 314.0.8 / Vite 8.3.8 ほか）。
 - **v7.3.1 (2026-11-02)**
   - React / Plotly / Vite と開発依存を更新し、source-map-js の脆弱性を解消。
   - Plotly 4 のサイズ監視を利用して拡大率変更時の人工 resize を廃止し、色変更時の M4 再走査を省略。

@@ -59,9 +59,28 @@ class AsyncMutex {
  * promise would surface as an unhandled rejection. Capturing the error keeps
  * the parked promise inert until the next reader picks it up.
  */
+/** Thrown instead of writing when the stream is already known to be dead. */
+const LINK_DOWN_MESSAGE = 'Link down; reopen pending';
+
 type ReadOutcome =
   | { ok: true; result: ReadableStreamReadResult<Uint8Array> }
   | { ok: false; error: unknown };
+
+/**
+ * The parked read, subscribed to exactly once. Whoever is waiting on it right
+ * now registers as `waiter`; if it settles with nobody waiting, the outcome is
+ * kept in `settled` for the next caller.
+ *
+ * Not a bare promise raced against each caller's timer: every
+ * `Promise.race([pending, timer])` attaches another reaction to `pending`, and
+ * those are only released when it settles. On a silent link (slave off, wrong
+ * ID, RS-485 open) the read never settles, so each timed-out poll left one
+ * behind — a few MB an hour for as long as the device stayed quiet.
+ */
+type PendingReadSlot = {
+  settled: ReadOutcome | null;
+  waiter: ((outcome: ReadOutcome) => void) | null;
+};
 
 /**
  * Backoff between automatic port-reopen attempts, in ms, one per consecutive
@@ -352,7 +371,7 @@ export class WebSerialModbusClient {
    * cancelled) so a transfer that gives up waiting does not destroy the
    * stream — see readChunk() for why cancelling is fatal on mobile.
    */
-  private pendingRead: Promise<ReadOutcome> | null = null;
+  private pendingRead: PendingReadSlot | null = null;
   /**
    * How late the last read deadline fired, in ms past the requested delay.
    * Non-zero only when readChunk() gave up, and read by transfer() to tell a
@@ -946,23 +965,38 @@ export class WebSerialModbusClient {
     }
     if (!this.pendingRead) {
       this.pendingReadIssuedAt = Date.now();
-      this.pendingRead = reader.read().then(
-        (result): ReadOutcome => ({ ok: true, result }),
-        (error): ReadOutcome => ({ ok: false, error }),
-      );
+      const slot: PendingReadSlot = { settled: null, waiter: null };
+      reader
+        .read()
+        .then(
+          (result): ReadOutcome => ({ ok: true, result }),
+          (error): ReadOutcome => ({ ok: false, error }),
+        )
+        .then((outcome) => {
+          slot.settled = outcome;
+          const waiter = slot.waiter;
+          slot.waiter = null;
+          waiter?.(outcome);
+        });
+      this.pendingRead = slot;
     }
-    const pending = this.pendingRead;
+    const slot = this.pendingRead;
     const parkedForMs = Date.now() - this.pendingReadIssuedAt;
 
     const requestedMs = Math.max(0, timeoutMs);
     const armedAt = Date.now();
     let timeoutId: number | undefined;
-    const outcome = await Promise.race<ReadOutcome | null>([
-      pending,
-      new Promise<null>((resolve) => {
-        timeoutId = setBackgroundTimeout(() => resolve(null), requestedMs);
-      }),
-    ]);
+    const outcome: ReadOutcome | null =
+      slot.settled ??
+      (await new Promise<ReadOutcome | null>((resolve) => {
+        slot.waiter = resolve;
+        timeoutId = setBackgroundTimeout(() => {
+          // Unsubscribe before giving up, so the slot holds no reference to
+          // this call once it has returned.
+          if (slot.waiter === resolve) slot.waiter = null;
+          resolve(null);
+        }, requestedMs);
+      }));
     if (timeoutId !== undefined) {
       clearBackgroundTimer(timeoutId);
     }
@@ -1198,6 +1232,13 @@ export class WebSerialModbusClient {
       // A reopen in there may have revived the stream, so what counts as "died
       // during this transfer" is measured from here, not from before the wait.
       streamWasDead = this.streamDead;
+      // Still dead after that (the reopen was throttled by the backoff): do not
+      // write. The errored reader and writer are still assigned, so the frame
+      // would go out and the device act on it — an FC16 would move the outputs —
+      // while its response could never be read, and the caller would record a
+      // failure and retry a write that already happened. Fixed wording so the
+      // log's (×N) collapsing holds while the backoff runs.
+      if (this.streamDead) throw new Error(LINK_DOWN_MESSAGE);
       const writer = this.writer!;
 
       // Stale-RX fence, deliberately placed before the write rather than after
@@ -1242,6 +1283,10 @@ export class WebSerialModbusClient {
         } catch (flushErr) {
           console.warn(`${this.debugPrefix} pre-write stale flush failed`, flushErr);
         }
+        // The drain itself can be what discovers the read side is gone
+        // (flushReceiveBuffer swallows the error and marks the stream dead).
+        // Same reason as above not to write into it.
+        if (this.streamDead) throw new Error(LINK_DOWN_MESSAGE);
       }
 
       // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)

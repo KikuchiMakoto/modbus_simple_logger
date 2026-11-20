@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-- **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4** で構成された Modbus RTU ロガー SPA
+- **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4 + shadcn/ui** で構成された Modbus RTU ロガー SPA
 - 通信は **Web Serial API**（非対応環境では自前の WebUSB CDC-ACM 実装 `src/modbus/webusbSerial.ts` でフォールバック）
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測中のプレビューはメモリ上の TypedArray バッファ、保存データは TSV（File System Access API ストリーミング）で扱う
@@ -60,7 +60,9 @@ src/
 │   ├── ScriptRunnerPanel.tsx        # ScriptRunner のエディタ（タブ切替）／実行・停止・Import/Export・API 一覧（UI 名: Script Runner。言語は Python 固定でセレクタ無し）
 │   ├── ParamEditorPanel.tsx         # Param Editor: ラベル(表示のみ) + 値 + Set の 16ch 行 ＋ 最下部の値全消去スライダ。UI 名: Param Editor。`scriptRunner.scriptRunning` 中はロック
 │   ├── CodeEditor.tsx               # ScriptRunnerPanel のエディタ本体。react-simple-code-editor＋Prism（行番号ガター・言語別ハイライト・Tab インデント）
-│   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）
+│   ├── ManualPanel.tsx              # コネクタ配線マニュアル（UI 名: Connector Manual）。6言語
+│   ├── TutorialPanel.tsx            # 使い方の手順（UI 名: Tutorial）。6言語
+│   ├── DocLanguageSelect.tsx        # Tutorial / Connector Manual 共通の言語プルダウン
 │   ├── AppInfoPanel.tsx             # バージョン・依存ライブラリ・描画バックエンド表示＋更新確認ボタン（UI 名: Application Info）
 │   ├── ThemeToggle.tsx              # ライト/ダーク切替スイッチ。置き場所は Menu パネルのヘッダー
 │   ├── UiScaleControl.tsx           # UI 拡大率の [-] [100%] [+]。Menu パネルのヘッダー
@@ -71,7 +73,10 @@ src/
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
 │   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Setter の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
-│   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
+│   ├── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
+│   └── ui/                          # shadcn/ui コンポーネント（button / card / input / textarea / native-select / checkbox / switch / toggle-group / alert / badge）。下記「UI コンポーネント（shadcn/ui）」参照
+├── lib/
+│   └── utils.ts                     # shadcn/ui の `cn()`（clsx + tailwind-merge）
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── calibrationExport.ts         # キャリブレーションの JSON 入出力
@@ -87,6 +92,7 @@ src/
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
     ├── cookies.ts                   # 設定の永続化（localStorage 本体・Cookie は旧値の読込移行とフォールバックのみ）
     ├── uiScale.ts                   # UI 拡大率（#root の CSS zoom）。localStorage 永続・共有ストア。UiScaleControl が操作し FloatingWindow が座標補正に使う
+    ├── docLanguage.ts               # Tutorial / Connector Manual の表示言語（en / ja / zh-CN / zh-TW / es / ko）。両窓で共有・localStorage 永続の共有ストア
     ├── floatFormat.ts               # float32 を「読み戻して同じ値になる最短の10進文字列」で表示する（Param Editor のセル）
     └── crc16.ts                     # 純粋 CRC16 実装（Modbus RTU 用）
 public/
@@ -98,6 +104,15 @@ scripts/
 ```
 
 ## アーキテクチャ上の重要点
+
+### UI コンポーネント（shadcn/ui）
+- **shadcn/ui の流儀で導入**（`components.json`・`@/` エイリアス＝`tsconfig.json` の `paths` と `vite.config.ts` の `resolve.alias`・`src/lib/utils.ts` の `cn()`・`src/components/ui/`）。コンポーネントはリポジトリが所有するコードであり、npm パッケージではない。追加は `bunx shadcn@latest add <name>` でも手書きでもよいが、**下記の制約に合わせて書き換えてから**入れること
+- **配色はトークン経由**（`index.css` の `:root` / `.dark` → `@theme inline`）。値は shadcn 既定のニュートラルではなく**アプリの配色ルール（emerald / slate）そのもの**。`--primary` = emerald-500、`--primary-hover` = emerald-400、`--primary-text` = emerald-600/400、`--input` = slate-300/700 等。トークンは**パレット変数への参照**（`var(--color-emerald-500)` 等）で持つ。Tailwind は CSS から `var()` で参照されたテーマ変数を出力するので、ユーティリティで使っていない色でも解決する。値をコピーしないので Tailwind のパレット更新とずれない
+- **Button のバリアントは「見た目」ではなく「意味」**: `default`（その場の「進む」操作）/ `outline`（通常）/ `destructive`（作業を消す・ローズ枠）/ `recording`（計測中の停止ボタン・赤パルス）/ `accent`（緑枠・Grab）/ `ghost`。サイズは `default` / `touch`（ヘッダーの Connect・Start Save）/ `sm` / `xs` / `2xs` / `icon` / `icon-lg`。**disabled でも pointer-events を殺さない**（上流 shadcn と違う）— 「なぜ無効か」を `title` で出しているボタンがあるため。代わりに**ホバー系はすべて `enabled:hover:` で書く**（disabled のボタンはどのテーマでもホバーに反応しない）。呼び出し側でホバー色を変えるときも `enabled:hover:` / `dark:enabled:hover:` を使うこと — 素の `hover:` だと tailwind-merge が別グループと見なしてバリアント側の規則が残り、詳細度で負ける。`disabled:hover:` で色を戻す書き方は、ダークモード側を戻し忘れて点灯する事故を実際に起こしたので使わない
+- **ポータルを使う Radix 系（Select / Dialog / Popover / Tooltip / DropdownMenu 等）は導入しないこと**。ポータルは `<body>` 直下へ描画され、`#root` の CSS `zoom`（UI 拡大率）の外に出る — トリガーだけ拡大されてポップアップが等倍のまま、位置も別座標系で計算されてずれる。選択肢は **`NativeSelect`**（ブラウザ描画のネイティブポップアップなので問題が無い）、ツールチップは既存の `group-hover` の absolute ボックスで書く。Checkbox（Radix）はポータルを持たないので可
+- アイコンは lucide-react を入れず**インライン SVG**（Checkbox のチェックも同様）。プリキャッシュされ exe に焼かれるバンドルに、1〜2個のグリフのためにアイコンパッケージを載せない
+- 対応表: 切替スイッチ = `Switch`（`ThemeToggle`）、二択〜数択のモード切替 = `SegmentedControl`（`ui/toggle-group.tsx`。選択解除できない単一選択。`InputCalibratorPanel` の Measured/Spec 等）、パネル内の常設注記 = `Alert`（`neutral` = ロック・未接続などの状態、`warning` = 損をしうる注意。**起きたエラーは System Log へ**出すので赤の Alert は無い）、小さなラベル = `Badge`（`neutral` / `success` / `warning`）
+- 意図的に shadcn 化していないもの: `SlideToConfirm` / `HoldToConfirm`（ジェスチャ自体が仕様）、`ScriptRunnerPanel` のエディタタブ（改名・閉じる・実行中表示を持つ独自のタブ列）、`HamburgerMenu` の行、`SlidePanel` / `FloatingWindow`（shadcn の Sheet / Dialog はポータル系）、`main.tsx` の Error Boundary のフォールバック（壊れたときの画面は依存を最小にする）。`HoldToConfirm` に見た目を合わせるときは `buttonVariants({ variant, size })` の文字列を `className` に渡す
 
 ### Modbus 通信（`webserialClient.ts`）
 - `AsyncMutex` で転送の排他制御
@@ -203,12 +218,14 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **Import / Export はヘッダーの左端、`@md`（≒窓幅 470px）未満で消える**。タブのコードはこのアプリの中にしか無い（ファイルの裏付けは無く、`localStorage` だけが持っている）ので、Export はそこからの唯一の出口 — **1タブ1ファイル**（`scriptFileName` でタブ名を安全なファイル名にし、拡張子は `scriptLanguages` の `fileExtension`）。Import は**必ず新しいタブ**を作る（開いているスクリプトを黙って上書きするのは、このパネルで唯一ジェスチャ無しの破壊操作になってしまう）。ファイル名は `tabNameFromFileName` で拡張子を落として 24 文字へ切り、衝突したら `uniqueTabName` が `-2` を付けて改名する（拒否ではなく改名 — 同じファイルを編集して入れ直すのは普通の使い方）。上限 `SCRIPT_IMPORT_MAX_BYTES`(256KB) はストレージ制限ではなく**エディタが打鍵ごとに全文をハイライトし直す**ため
   - **どちらも実行中は不許可**（Export も含む）。読むだけの Export は無害だが、この2つは「スクリプトをディスクとやり取りする」1つの機能であり、実行中のコードと食い違うファイルが出ていくのは実行中タブを読み取り専用にしているのと同じ理由で避ける
   - ヘッダーが幅で落とせるのは **`FloatingWindow` のヘッダーが `@container` だから**。窓は 280px までリサイズでき、そのサイズを記憶する。**タイトルと Run/Stop は消さないこと** — 消えてよいのはこの2つだけ
-  - ピッカーは**隠し `<input type="file">`**。`showOpenFilePicker()` にしないのは、launcher が LAN の他マシンへ平文 HTTP で配信するため（File System Access API が無い）。同じファイルを連続で選ぶと change が飛ばないので、`onChange` で `value` を空にしてから読む
+  - ピッカーは**隠し `<input type="file">`**。`showOpenFilePicker()` にしないのは、非セキュアコンテキスト（他の端末から平文 HTTP で開いた dev サーバー等）でも動かすため（そこには File System Access API が無い）。launcher 自体は 127.0.0.1 のみで、セキュアコンテキストである。同じファイルを連続で選ぶと change が飛ばないので、`onChange` で `value` を空にしてから読む
 - **`apiDocs` の `desc` は「パネル用の1行」、`promptDesc` は「プロンプト用の長い方」**。パネルの API Reference は左端の呼び出し名を縦に舐めて探すものなので、説明が折り返すと次の名前が画面外へ押し出され、表ではなく散文に見える。幅720の既定サイズで名前チップの右に1行で収まる長さに揃えること（長短が混ざると、長い方が重要に見えてしまう＝長さが測っていないものを測ってしまう）。float32 の丸めなど「試せば分かる人」には要らないが「一度読むだけの相手」には要る注意は `promptDesc` へ逃がす。**`await asyncio.sleep(s)` はリスト先頭**（他は対象物順だが、これだけは全スクリプトに必ず要り、抜けるとブラウザが固まる）
 - **「Copy AI Prompt」のプロンプトは3段構成**（`buildAiPrompt`）。`promptRules` は**破ると壊れる、または壊れているのに気づけないもの**（フリーズ・起動失敗・NameError に加え、極性を確認せずに書いたコードやラベル/キャリブレーション未確認のチャンネルが実機を誤った方向へ動かす類）、`RUNNER_GUIDELINES` は**後で効いてくるもの**（Stop→Start の再開性・Param 濫用の抑制・ログ量・出力の後始末、モータ／EP は `SetMotorSpeed(mm_per_min)` `SetEpKpa(kpa)` のような命名済みヘルパ経由でしか動かさない＝チャンネル番号・極性・校正係数・クランプの置き場を1箇所に決める）。混ぜて1つの箇条書きにしないこと — 助言側は平坦なリストを渡されると「守らなかったルール」と「省いた推奨」を同じ重さで扱う。またガイドライン側は**言語ではなくランナーの制約**なので、言語が増えても各言語エントリで共有する。3段目の `CALIBRATION_PREREQUISITES` は**スクリプトではなく実機の話**で、言語エントリを経由せず `buildAiPrompt` が直接持つ — 唯一「頼まれたスクリプトをまだ書くな（先に校正スクリプトを出せ）」が正解になりうる節。冒頭で**プランモードでの実行を強く推奨**し、チャンネル・センサ・単位・極性・対象・安全限界を根掘り葉掘り聞き切るまで実装に入るなと要求する（間違いがまだテキストで済む唯一の段階だから）。続いてアクチュエータ（モータ／空圧・油圧）× 制御量（速度・力／圧力・変位）の組み合わせごとに前提を並べ、**校正が前提にしているハードウェア設定は固定・変更したら再校正**（モータ側はギア比とドライバ設定、空圧・油圧側は元圧とバルブ設定）を両系統に持たせ、加えて**校正値を紙に残せ**（Input Calib Value の a/b/c、PID/MPC ゲイン、V→mm/min・kPa・N、固定したハードウェア設定）を毎回押す。係数がこの PC のブラウザストレージにしか無く、消えたときに過去データの前提を復元できないため。**結果の戻り経路は System Log の Copy ボタン**であることも明記してある — 校正スクリプトを書く→ユーザーが走らせる→数値が返る、というループはこれが無いと閉じない。**Copy は画面のレベル閾値に関係なく全レベルを全文コピーする**という点まで書くこと（フィルタされると思い込んだ助言側は「先にレベルを下げてください」と余計な手順を要求するか、生き残ると踏んだレベルで print してしまう）。**チャンネルラベルはコピー時点のスナップショット**なので、ラベル付け・校正などでユーザーをアプリへ戻したら「戻ったら Copy AI Prompt を押し直して貼れ」と言わせる — 会話の中からは古さを検知できず、直す手段がボタン再押下しか無い（ラベルの JSON ブロック自体にも同じ断り書きを付けてある）。**制御方式の選び方も同節**：既定は PID（利用者が自分で再調整できる）、精度・超低速・プロファイル追従を求める相手には MPC を提案（校正定数がモデルなので、それが揃ってから）、LQR 等の最適制御は提案はしてよいがユーザー判断、**バンバン制御は禁止**（ループが約 5Hz ＝ 0.2s なので全開指令が 200ms 無補正で残る）。ただし **AO を DO 代わりに使う場合（Enable / DIR / 開閉弁）は可** — 中間を持たない離散2値の電圧出力で、その2値が何 V かは機器側の都合（0/5V も 0/10V もある）なので決め打ちせずユーザーに聞かせる
+- **多言語なのは Tutorial と Connector Manual の2窓だけ**（`utils/docLanguage.ts`。en / ja / zh-CN / zh-TW / es / ko）。他の UI は英語のまま（ブラウザのページ翻訳に任せてよい）だが、この2窓は配線・安全手順を含む長文で、機械翻訳された配線手順は便利さではなく危険なので、レビュー済みの訳文を持つ。言語は**両窓で1つを共有し localStorage に保存**する（片方を中文にした人がもう片方で英語に出会わないように）。**`<UiRef>` の中身は訳さない**（英語 UI の画面上の名前と一致していることが目的）。チップ名・信号略号・API 名・単位も訳さない。文面を足すときは全言語の `TEXT` に入れること — `Record<DocLang, …>` なので欠けると型エラーになる
 - **データを表示する要素には `translate="no"` を付ける**。UI 全体は英語のままで、Chrome のページ翻訳に**かけてよい**（むしろ日本語話者には利益）。ただし翻訳されると壊れるものが混ざっている: **数値**（`1.5` → `1,5` にされた欄をアプリが数値としてパースし直す＝校正値の静かな書き換え）、**スクリプト本文**（識別子も文字列リテラルも書き換わり、走らないスクリプトが「あなたが書いたもの」として表示される）、**System Log / フッターのログ行**（print 出力と Python のトレースバック。翻訳されたトレースバックは存在しない行を指す。しかもユーザーはこれを助言側に貼り戻す）、**ユーザー自身のラベル・タブ名・Device Memo**、**バージョン/ライセンス/パッケージ名/ファイル名**。属性は**継承する**ので、原則カード・行・コンテナ単位で1つ付ければ中身は全部守れる（葉ノードに撒かない）。**Plotly はラッパー div に付ける** — 軸タイトル・目盛り・凡例は Plotly が書く SVG `<text>`＝翻訳対象の DOM テキストで、軸タイトルの中身はユーザーのチャンネルラベルそのもの。継承するので再描画のたびに付け直す必要は無い。逆に**散文（説明文・エラーの案内文・空状態のメッセージ）には付けないこと**、そこは翻訳されて困らない
 - **Device Memo（Menu → Device Memo, `utils/deviceMemo.ts` + `components/DeviceMemoPanel.tsx`）は「ただのメモ帳」であることが仕様**。項目もバリデーションもスキーマも持たせないこと — 機械が何か、どのシリンダが付いているか、モータがどちら向きか、いつ誰が校正したかは**アプリがモデル化も推論もできない事実**で、構造化した瞬間に「欄に無いこと」が書けなくなる。存在理由は `buildAiPrompt` の末尾に**そのまま**入ること（ラベルは1チャンネル1行しか無く、助言側が聞きたいことの大半はそこに入らない）。プロンプト側では**Memo が上位**と明言してある（人間が自分の機械について書いたものなので）。**run 中もロックしない** — 他の編集パネルのロックは「実行中のスクリプトが読む値が変わるから」であって、この文字列はランナーから見えない。むしろメモを書きたくなる瞬間は実機で妙なことが起きた瞬間＝run 中。永続化は `readJsonStorage`/`writeJsonStorage`（Cookie 経由ではない。新キーで移行対象が無く、メモは cookie の ~4KB を普通に超える）。**AO の校正値はアプリのどこにも保存されない**ので、V→mm/min・kPa・N はここが唯一の置き場。**「どの言語でもよい」を、プレースホルダとサブタイトルの2箇所で明示している**。文言は `Any language — 日本語 / 中文 / English / …` の形を保つこと: **規則は「any language」のほうで、後ろの表記は「本当にそうだ」という証拠にすぎない**。特定言語を名指しして終わると、それは「入るべきリスト」になり、自分の言語が載っていない読者は規則ではなくリストを読む。一方で英語だけの一文では、結局「英語で書け」と言っている箱にしかならないので、**英語だけにも見えない**必要がある。UI 全体は英語のままでよいが、ここだけは中身がユーザー自身の言葉なので例外（第二言語の丁寧なメモより第一言語の雑なメモ、さらに言えば「メモ無し」よりは遥かにマシ）。プロンプト側にも「貼る行はユーザーが使っている言語で渡せ、翻訳や清書を要求するな」と入れてある。Export/Import は**素の UTF-8 .txt**（機械の隣の PC で Notepad で開けて、印刷して試験データと一緒に綴じられることが要件。パースが要る形式ではその用途が死ぬ）。ファイル名は校正 TSV と同じ先頭タイムスタンプで、同じフォルダで並ぶようにしてある
 - **`promptRules` は「素の Python を素直に書け」も含む**。`await asyncio.sleep(s)` を持つ普通のループ1本が並行性の全てで、`create_task` / `gather` / `TaskGroup` / `Queue` / threading / `run_in_executor` 等は禁止（既にイベントループ内で走っており、本流の外に出たものは Stop 後も生き残るか、Stop が頼っているループを覆い隠す）。**明示要求が無い限り `while True:` に break 無しも禁止** — Stop はいつでも効くが、Stop でしか終われないループは「完走したのか中断されたのか」を言えない。**`defaultScript` もこの規則に従わせること**（規則の文面より、コピーされる実例のほうが強い規範）
+- **Run と応答は runId で対応付ける**（`scriptWorkerProtocol.ts`）。`run` メッセージが `runId` を持ち、`done` / `interrupted` / `error` がそれを返す。`useScriptRunner` は**現在実行中の run の id と一致する応答だけ**で run を終わらせる（Run → Stop → Run で前の run の遅れた `interrupted` が今の run を「停止」扱いにし、出力を動かしている run から Stop ボタンを奪っていた）。Pyodide 起動待ちの run の取消は**メッセージではなく共有メモリの active-run セル**（`runSab`、`Atomics`）で伝える — `interrupt` メッセージは起動処理の後ろに積まれたまま、起動完了直後のマイクロタスクで run が先に走りうるため。**Worker 側で割込みバイトを再度 PENDING にしないこと**（メインスレッドが次の Run のために NONE へ戻した後に書くことになり、新しい run の方を止める）
 - **Worker は生成後、保持し続ける**。Pyodide は起動に数秒かかるので、都度破棄すると次に開いたときに壊れて見える
 - **Python のグローバル名前空間は run をまたいで残る**（`eval_code_async(code, globals=globals())` ＋ Worker 保持）。前回実行の変数が生きているため、初期化漏れのスクリプトが「動いてしまい」リロード後に壊れる。プロンプト側で「読む変数は冒頭で必ず代入」「状態は Param に置く」を要求しているのはこのため
 - **Stop は「いつでも効く」ことが要件**。出口の無いループの中でもスクリプト側の配慮なしに止まること
@@ -217,7 +234,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 **Python（`pyodideWorker.ts`）
 - Pyodide v314（Python 3.14）を**セルフホスト**でロード（Web Worker 内・CDN 非依存）
   - `vite.config.ts` の `pyodide-assets` プラグインが npm パッケージから必要ファイル（`PYODIDE_FILES`）を `dist/pyodide/` へコピー。`precache-manifest` より前（`writeBundle`）に走るためプリキャッシュへ自動的に含まれ、**完全オフライン動作**する。dev では同プラグインの middleware が `/pyodide/` を node_modules から直接配信
-  - バージョンは **`package.json` の `pyodide` 依存（現在 `^314.0.3`）が一次情報源**。アセットは `node_modules` の実インストール版からコピーされるためバージョンずれは構造的に起きない。URL 直書き・他ファイルへのバージョン直書きは禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
+  - バージョンは **`package.json` の `pyodide` 依存（現在 `^314.0.8`）が一次情報源**。アセットは `node_modules` の実インストール版からコピーされるためバージョンずれは構造的に起きない。URL 直書き・他ファイルへのバージョン直書きは禁止。`AppInfoPanel.tsx` の表示は `VITE_PYODIDE_VERSION`（vite.config.ts の define で注入）経由で自動同期。更新時は README のみ手動同期
   - v314.0 以降は **module worker 必須**（classic worker 非対応）。本 Worker は `{ type: 'module' }` で生成済み
 - `SharedArrayBuffer` 経由で AI データを Worker と共有（**Float32Array**）
 - **SAB は Worker 生成と切り離して mount 時に先行確保する**（`useScriptRunner` の `ensureShares()`）。SAB は Worker 専用のデータ経路ではなく、ポーリングループが毎周期書き込み、Worker が同じメモリを読み書きするため。Worker（重い方）の遅延生成は維持
@@ -239,7 +256,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **表示は `formatFloat32`（`utils/floatFormat.ts`）＝ 読み戻して同じ float32 になる最短の10進文字列**。Parameter は `Float32Array`（SAB）なので `0.3` は `0.30000001192092896` として出てくる。**`toFixed(3)` で丸めて隠さないこと** — 桁を固定すると 2.5e-5 も 120000.5 も嘘の値で表示され、「書き戻すのと違う値を見せるエディタ」になる。最短往復表記なら `0.3` は `0.3`、本当に9桁要る値は9桁出る（JS が double に対してやっているのと同じ規則を1段下で適用しているだけ）
   - **Parameter の値が出る場所は全部このルール**（v6.9〜）: Param Editor のセル・**メインページの Parameter カード**（`App.tsx`）・**TSV の `par_*` 列**（`tsvFormat.ts`）。以前カードと TSV だけ `toFixed(3)` だったため、**同じ ch が窓では `0.000025`、カードと保存ファイルでは `0`** という状態になっていた。AI 側の `toFixed(physicalPrecision)` を Parameter に流用しないこと — あちらは分解能の宣言された物理量、こちらはスクリプトが勝手にスケールを決める無単位の値で、3桁に根拠が無い
   - カードは幅が固定なので `truncate` + `title` で溢れを処理する（**カードを広げない**。16枚が横一列に並ぶレイアウトが崩れる）。全桁を見る場所は Param Editor
-- **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中はメインページのラベル入力が編集不可（Param Editor 側はそもそも表示専用）。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE` / `LABEL_LOCKED_CLASS`）
+- **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中はメインページのラベル入力が編集不可（Param Editor 側はそもそも表示専用）。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE`。見た目は `ui/input.tsx` の disabled スタイル）
 - **ヘッダーの `Accept Risk` チェックボックスは値だけの実行中ロック解除**。既定では ScriptRunner 実行中はラベルも値も編集不可（`locked`）だが、チェックを入れると `valuesLocked = locked && !acceptRisk` で**値だけ**を解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
 - **最下部の全消去は `SlideToConfirm`**（16ch の値を 0 に。**ラベルには触らない** — 表示しかしていないパネルが名前を消すのはおかしい）。**スクロール領域の外**に置くこと — 中に入れると「一番下までスクロールしたときだけ現れる操作」になり、スクロールの延長で手が届いてしまう。実行中（`locked`）は Accept Risk に関係なく無効（全消去は狙ったセルへの編集ではない）
 
@@ -250,6 +267,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - gzip を受け付けないクライアントには展開して返す経路を残してある。Edge/Chrome しか相手にしないので実際には通らないが、通らなかった場合に出るのは「バイナリが画面に表示される」であって切り分けが難しい
 - **`launcher/embedded-gz/` は毎回作り直す**。dist のファイル名は毎デプロイでハッシュが変わるので、消さないと古いファイルが埋め込まれ続ける
 - **HTTP サーバーは固定ポート 8376 で bind する**（`PREFERRED_PORT`。8376 = ASCII('S')+ASCII('L') = Simple Logger）。**localStorage / OPFS は scheme+host+port 単位のオリジンで隔離される**ため、旧実装の `port: 0`（起動ごとにポート変わり＝オリジン変わり）では **Calibration・軸選択・ラベル・スクリプトタブ等の全設定が exe 再起動のたびに消滅していた**（v7.1.8 まで存在したバグ）。8376 は well-known 帯外・Windows エフェメラル範囲(49152+)外・主要ソフトの既定値不在、の3条件で選んだ（8080/8888 は占有ソフト多すぎ）
+- **bind するのは 127.0.0.1 のみ。LAN への公開（0.0.0.0 / 192.168.x.x）は検討して見送った**（v7.3.5）。他の PC から `http://<IP>:8376` で開いたページは平文 HTTP＝非セキュアコンテキストなので、Web Serial / WebUSB・SharedArrayBuffer（Script Runner）・File System Access（TSV 保存）・Service Worker がすべて使えず、しかも計測データはホスト側ブラウザの中にあって見えない＝得るものがほぼ無い。公開するなら最低限、(1) ホスト側の窓は今まで通り `127.0.0.1:8376` で開く（特定 IP だけに bind するとオリジンが変わり設定が消える）、(2) `__feed`（スリープ抑制 WebSocket）をループバック以外から拒否する（LAN の誰かが先に繋ぐと「先着1名」で乗っ取られる）、の2点が要る。ホストの計測を他端末で見たいなら、それは bind 設定ではなくライブデータを中継する別機能になる
 - bind 失敗時は `port: 0` へフォールバックし、index.html へ `<meta name="msl-origin" content="ephemeral">` をスタンプする（`stampOriginMarker`）。ページ側は `appMode.ts` の `isOriginEphemeral()` で読み、`main.tsx` が起動時に System Log へ WARN を出す（「そのセッションだけ設定が保存されない」ことを告知。アプリ自体は動くので落とさない）
 
 ### 多重起動抑制・スリープ抑制（`launcher/singleInstance.ts` + `launcher/keepAwake.ts`）
@@ -279,7 +297,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
   - **ダウンロード完了は観測できない**（`<a download>` は完了イベントを持たない）。したがって削除確認は「送信しました」と断定せず、**ユーザーがファイルを確認してから OK** を押す文言にすること。click() 直後はまだ OPFS から読み出し中であり、そこで `removeEntry()` すると救出中のファイル自身を切り落とす
 - **復旧ファイル名は `<stem>_recovered<ext>`**（`recoveredDownloadName()`、v4.1〜）。元の名前のまま返してはならない — 復旧ファイルは「その run が本来出すはずだったファイル」ではなく**クラッシュが残した残骸**であり、ページが死んだ時点でバッファに載っていた行を欠いている可能性がある。元の名前でダウンロードフォルダに置くと正常な保存と見分けが付かず、**そもそも run が失敗したこと自体に気付けない**。OPFS 側のエントリ名は `buildRecoveryName()` のまま（あちらはパースされる名前、こちらは人間だけが読む名前）
 - **2つの `confirm()` で Cancel の意味は逆**（v4.1〜）。1つ目（提示）の Cancel は**ミラーを削除する** — 名前・開始時刻・サイズを見た上で「要らない」と答えたのだから、起動の度に同じ死んだ run を出し続けるのはデータ保護ではなく催促である。2つ目（削除確認）の Cancel は**保持する** — こちらの Cancel は「ダウンロードが届いていない」の意であり、消せば救出対象そのものを壊す。**この非対称を「一貫性」を理由に揃えてはならない**。どちらもダイアログ本文に Cancel の挙動を明記すること
-- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`scriptRunnerCode`（Python。旧 `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage` / `notificationsEnabled` / `param_startup_values_v1` は BASIC/Lua・通知機能・Param Editor の Default 列の撤去で書込みが無くなった死んだキーとして残置）・`scriptRunnerTabs`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`
+- **設定永続化**: **localStorage** に JSON 保存。`utils/cookies.ts` の `readJsonStorage` / `writeJsonStorage` / `writeLocalPreference` が唯一の出入口。キー一覧は `theme_preference_v1`・`ui_scale_v1`・`chart_axes_v1`・キャリブレーション・`voltage_config_v1`・`ai_free_labels_v1` / `ao_free_labels_v1` / `param_free_labels_v1`・`scriptRunnerCode`（Python。旧 `scriptRunnerCodeBasic` / `scriptRunnerCodeLua` / `scriptRunnerLanguage` / `notificationsEnabled` / `param_startup_values_v1` は BASIC/Lua・通知機能・Param Editor の Default 列の撤去で書込みが無くなった死んだキーとして残置）・`scriptRunnerTabs`・`ai_collapsed` / `ao_collapsed` / `param_collapsed`・`doc_language_v1`
   - **Cookie は書き込みのフォールバック兼旧値の移行元**。`localStorage.setItem` が投げる環境（オリジンのサイトデータをブロックした Chrome、Safari プライベートのクォータ超過）では**素のキー**の Cookie へ退避する。したがって**読み側も必ず Cookie を見ること** — `readJsonStorage` が localStorage しか読んでいなかった頃は、この退避が書き込み専用になり、フォールバックが存在する理由そのものの状況で UI 拡大率・スクリプトのコード・折りたたみ状態が毎回消えていた（v4.5 で修正）
   - Cookie からの自動移行機能付き（読込時に localStorage へ移行し Cookie を削除）。**削除は移行が成功したときだけ**行うこと — localStorage 不通時は Cookie 自身がフォールバック先なので、無条件に消すと設定が消える
   - Cookie は**書込み不能時のフォールバック**でもある（localStorage が throw した場合のみ・3.5KB 未満のみ）。常時ミラーはしない: launcher の HTTP サーバーへ毎リクエスト送出されることになるため
@@ -428,7 +446,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - `RELEASE_NOTE.md` はタグ間のコミットを要約する。各版にタグ作成日（`YYYY-MM-DD`、軽量タグのみ対象コミットの日付）を記し、最低1行、目標5行、最大20行とする。変更量の少ない版は短く、重要な変更が多い版は項目を分けて記す。タグのない中間版は次のタグに含める
 - **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
-- **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
+- **旧 `.card` / `.button-*` / `.input-*` の未レイヤー CSS クラスは撤去済み**（shadcn/ui 移行）。カード・ボタン・入力は `@/components/ui/*` を使い、サイズや余白の上書きは `className` で渡す（`cn()` の tailwind-merge が同種ユーティリティを置き換える。例: `<Card className="p-1">`）。**`index.css` に未レイヤーのコンポーネントクラスを新設しないこと** — Tailwind のユーティリティ（`@layer utilities`）に必ず勝ってしまい、`className` での上書きが効かなくなる。既存の意図的な例外は `.stop-save-pulse`（`recording` バリアントのアニメーション。キーフレームが背景色を持つので未レイヤー）、FooterBar のログ行ロール `.script-log-roll-in/out`、CodeEditor の Prism `.token.*` 配色のみ。いずれも未レイヤーなので `className` のユーティリティでは上書きできない
 - **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe バイナリは**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
@@ -438,7 +456,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **AI Raw の表示桁は整数のまま**（i16t の1通りしかないので）
 - **配色ルール（重要）**: 基調は **緑（emerald）とグレー（slate）**。状態を伝える必要が無い新規 UI 要素は、この2色だけで組む。
-  - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
+  - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（Button の `default` バリアント＝トークン `--primary` / `--primary-hover` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
   - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）
   - **状態色は許可されている**（v4.5 で明文化）。禁止されているのは「装飾として色を増やすこと」であって、状態を色で伝えること自体ではない:
     - **警告 = 黄／橙**（`amber` / `yellow`）。「このままだと困ったことになる」「取り戻せないデータがある」の類。文字/枠 = `text-amber-600 dark:text-amber-400`、塗り = `bg-amber-500`
@@ -452,7 +470,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `SetAiTare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **Input Calibrator の2方式**（`InputCalibratorPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) を**1ウィンドウ**で扱う。チャネル選択は CH00-15 の単一ドロップダウンで、どちらのフロントエンドかは ch 番号（AI マップの前半/後半）から決まる。チップ種別を先に選ばせるタブは置かない（ch の属性であって、ユーザーが選ぶモードではないため）。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
-  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`App.tsx` で `rawToVoltageValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。TSV エクスポートはウィンドウ名がチップを示さなくなったため、`Sensor` キーで HX711/ADS1115 を別途記録する。
 - **Output Setter**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。UI 名: Output Setter。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と ScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
 

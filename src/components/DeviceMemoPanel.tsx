@@ -12,6 +12,8 @@
 import { useRef } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { DEVICE_MEMO_MAX, deviceMemoFileName } from '../utils/deviceMemo';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 export function DeviceMemoPanel({
   open,
@@ -92,28 +94,30 @@ export function DeviceMemoPanel({
               if (file) void importMemo(file);
             }}
           />
-          <button
-            type="button"
-            className="button-secondary py-0.5 text-[0.7rem]"
+          <Button
+            variant="outline"
+            size="xs"
+            className="text-[0.7rem]"
             onClick={() => fileInputRef.current?.click()}
             title="Replace the memo with a .txt file (UTF-8)"
           >
             Import
-          </button>
-          <button
-            type="button"
-            className="button-secondary py-0.5 text-[0.7rem]"
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            className="text-[0.7rem]"
             onClick={exportMemo}
             disabled={memo === ''}
             title="Download the memo as a UTF-8 .txt file"
           >
             Export
-          </button>
+          </Button>
         </>
       }
     >
       <div className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
-        <textarea
+        <Textarea
           // Never translated. The whole point of this box is that it holds the
           // user's own words, in their own language, and gets copied verbatim
           // into the AI prompt — a translation layer rewriting it would change
@@ -135,7 +139,7 @@ export function DeviceMemoPanel({
           // a first language beat careful notes in a second — or, far more
           // likely, no notes at all.
           placeholder="What this machine is, what is on each channel, which way is positive, what the limits are, what was calibrated and when.&#10;&#10;Any language — 日本語 / 中文 / English / … Rough notes beat none."
-          className="min-h-0 w-full flex-1 resize-none rounded-lg border border-slate-300 bg-white p-2 font-mono text-xs leading-relaxed text-slate-800 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          className="min-h-0 flex-1 resize-none rounded-lg p-2 font-mono text-xs leading-relaxed dark:bg-slate-900"
         />
         {/* The counter appears only once it is close enough to matter: sitting
             under an empty box it is a limit announcing itself to someone who

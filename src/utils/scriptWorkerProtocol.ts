@@ -26,8 +26,11 @@ export type ScriptWorkerRequest =
       aoSab: SharedArrayBuffer;
       paramSab: SharedArrayBuffer;
       intSab: SharedArrayBuffer;
+      /** Int32Array(1): the run the main thread currently wants executing (0 = none). See ACTIVE_RUN_NONE. */
+      runSab: SharedArrayBuffer;
     }
-  | { type: 'run'; code: string }
+  /** `runId` is echoed on this run's done / interrupted / error. */
+  | { type: 'run'; code: string; runId: number }
   /**
    * Stop request. The main thread also writes 2 into the interrupt buffer
    * before sending this: a runtime busy in a tight loop never reaches its
@@ -39,10 +42,16 @@ export type ScriptWorkerResponse =
   /** One-line runtime state for the status bar ("Initializing...", "Ready"). */
   | { type: 'status'; message: string }
   | { type: 'output'; stream: 'stdout' | 'stderr'; text: string }
-  | { type: 'done'; message?: string }
-  | { type: 'interrupted'; message?: string }
-  /** `message` is the one-line summary; `traceback` the full detail, if any. */
-  | { type: 'error'; message: string; traceback?: string }
+  // Terminal replies name the run they end. The main thread ignores one whose
+  // run is no longer the current one: after Run -> Stop -> Run, the first run's
+  // late 'interrupted' must not be taken as the end of the second.
+  | { type: 'done'; runId: number; message?: string }
+  | { type: 'interrupted'; runId: number; message?: string }
+  /**
+   * `message` is the one-line summary; `traceback` the full detail, if any.
+   * `runId` is absent only for a failure outside any run (worker init).
+   */
+  | { type: 'error'; runId?: number; message: string; traceback?: string }
   /** Volts. Routed through the main thread's AO write path, never direct. */
   | { type: 'set_ao'; ch: number; data: number }
   | { type: 'set_ai_tare'; ch: number }
@@ -58,3 +67,14 @@ export type ScriptWorkerResponse =
  */
 export const INTERRUPT_NONE = 0;
 export const INTERRUPT_PENDING = 2;
+
+/**
+ * Value of the shared active-run cell (init's `runSab`) when no run is wanted.
+ *
+ * The main thread writes the new run's id on Run and this on Stop, with
+ * Atomics, before posting the message. A run queued behind Pyodide's boot
+ * claims the runner only if the cell still holds its own id when boot ends —
+ * shared memory, so the answer does not depend on whether the 'interrupt'
+ * message has been dispatched yet (it can still be queued behind the boot).
+ */
+export const ACTIVE_RUN_NONE = 0;

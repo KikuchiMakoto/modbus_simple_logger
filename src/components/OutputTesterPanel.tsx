@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { FloatingWindow } from './FloatingWindow';
 import { SlideToConfirm } from './SlideToConfirm';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
+import { Alert } from '@/components/ui/alert';
 
 /**
  * Manual AO exerciser: pick a channel, click a voltage, watch the wire.
@@ -98,12 +102,12 @@ export function OutputTesterPanel({
         {/* Channel + live commanded value */}
         <div className="flex items-center gap-1.5">
           <span className="shrink-0 text-xs font-semibold text-slate-700 dark:text-slate-200">Channel</span>
-          <select
+          <NativeSelect
             // Channel numbers plus the user's own labels.
             translate="no"
             value={channel}
             onChange={(e) => setChannel(Number(e.target.value))}
-            className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+            className="min-w-0 flex-1 px-1.5 dark:border-slate-600 dark:bg-slate-700"
           >
             {Array.from({ length: channelCount }, (_, ch) => (
               <option key={ch} value={ch}>
@@ -111,7 +115,7 @@ export function OutputTesterPanel({
                 {labels[ch] ? ` — ${labels[ch]}` : ''}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         <div
@@ -139,20 +143,21 @@ export function OutputTesterPanel({
             {PRESETS.map((v) => {
               const whole = Number.isInteger(v);
               return (
-                <button
+                <Button
                   key={v}
-                  type="button"
+                  variant="outline"
+                  size="xs"
                   disabled={disabled}
                   onClick={() => send(v)}
                   translate="no"
-                  className={`rounded border px-1 py-1 text-xs font-semibold tabular-nums disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-transparent disabled:text-slate-300 disabled:hover:bg-transparent dark:disabled:border-slate-700 dark:disabled:text-slate-600 ${
+                  className={`px-1 py-1 tabular-nums disabled:border-slate-200 disabled:bg-transparent disabled:text-slate-300 disabled:opacity-100 dark:disabled:border-slate-700 dark:disabled:text-slate-600 ${
                     whole
-                      ? 'border-sky-400 bg-sky-50 text-sky-700 hover:bg-sky-100 active:bg-sky-200 dark:border-sky-400/60 dark:bg-sky-400/10 dark:text-sky-300 dark:hover:bg-sky-400/20'
-                      : 'border-sky-200 text-sky-600 hover:bg-sky-50 active:bg-sky-100 dark:border-sky-400/30 dark:text-sky-400/90 dark:hover:bg-sky-400/10'
+                      ? 'border-sky-400 bg-sky-50 text-sky-700 enabled:hover:border-sky-400 enabled:hover:bg-sky-100 enabled:hover:text-sky-700 enabled:active:bg-sky-200 dark:border-sky-400/60 dark:bg-sky-400/10 dark:text-sky-300 dark:enabled:hover:border-sky-400/60 dark:enabled:hover:bg-sky-400/20 dark:enabled:hover:text-sky-300'
+                      : 'border-sky-200 text-sky-600 enabled:hover:border-sky-200 enabled:hover:bg-sky-50 enabled:hover:text-sky-600 enabled:active:bg-sky-100 dark:border-sky-400/30 dark:text-sky-400/90 dark:enabled:hover:border-sky-400/30 dark:enabled:hover:bg-sky-400/10 dark:enabled:hover:text-sky-400/90'
                   }`}
                 >
                   {v.toFixed(1)} V
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -160,8 +165,7 @@ export function OutputTesterPanel({
 
         {/* Manual entry */}
         <div className="flex items-center gap-1.5">
-          <input
-            type="text"
+          <Input
             inputMode="decimal"
             value={manual}
             onChange={(e) => setManual(e.target.value)}
@@ -169,17 +173,19 @@ export function OutputTesterPanel({
               if (e.key === 'Enter') applyManual();
             }}
             placeholder="0.000"
-            className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-1 text-right text-sm tabular-nums text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+            className="flex-1 px-1.5 py-1 text-right tabular-nums dark:border-slate-600 dark:bg-slate-700"
           />
           <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">V</span>
-          <button
-            type="button"
+          {/* Sky, not the emerald default: in this app sky is "AO voltage"
+              (the AO cards, the Now readout above), and Apply sends one. */}
+          <Button
+            size="sm"
             disabled={disabled || !manualValid}
             onClick={applyManual}
-            className="shrink-0 rounded bg-sky-500 px-3 py-1 text-xs font-semibold text-sky-950 shadow hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded bg-sky-500 text-sky-950 enabled:hover:bg-sky-400"
           >
             Apply
-          </button>
+          </Button>
         </div>
 
         {/* Warning-coloured and gesture-gated because it acts on every
@@ -196,13 +202,9 @@ export function OutputTesterPanel({
         {/* One status line, in priority order: why output is blocked first,
             what was last sent second. */}
         {!connected ? (
-          <p className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            Not connected — connect the device to output.
-          </p>
+          <Alert className="text-[11px]">Not connected — connect the device to output.</Alert>
         ) : locked ? (
-          <p className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            A script is running and is driving AO. Stop it to output from here.
-          </p>
+          <Alert className="text-[11px]">A script is running and is driving AO. Stop it to output from here.</Alert>
         ) : sent ? (
           <p className="rounded border border-sky-300 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300">
             {sent}

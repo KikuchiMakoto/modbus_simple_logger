@@ -426,7 +426,14 @@ export class WebUsbSerialPort {
     if (this.writable_ && !this.writable_.locked) {
       promises.push(this.writable_.abort().catch(() => {}));
     }
-    await Promise.all(promises);
+    // Started, but NOT awaited before device.close(). abort() on a writable
+    // with a write in flight resolves only once that write settles, and the
+    // write this has to survive is exactly a USB OUT transfer the host never
+    // completes (see WRITE_TIMEOUT_FLOOR_MS in webserialClient). Waiting here
+    // meant device.close() — the one call that aborts that transfer — was never
+    // reached, and reopenPort then "opened" a device that had never closed,
+    // stacking a new bulk-IN pipeline on the old one's outstanding transfers.
+    const streamsSettled = Promise.all(promises);
     this.readable_ = null;
     this.writable_ = null;
 
@@ -438,6 +445,8 @@ export class WebUsbSerialPort {
       }
       await this.device.close();
     }
+    // Settles now: device.close() has aborted whatever transfer was in flight.
+    await streamsSettled;
   }
 
   async forget(): Promise<void> {

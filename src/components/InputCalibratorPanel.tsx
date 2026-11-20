@@ -3,6 +3,11 @@ import type { AiCalibration } from '../types';
 import { specToCalibration, fitCalibration, type CalibrationFitPoint } from '../utils/calibration';
 import { downloadCalibrationTsv } from '../utils/calibrationExport';
 import { FloatingWindow } from './FloatingWindow';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
+import { Alert } from '@/components/ui/alert';
+import { SegmentedControl } from '@/components/ui/toggle-group';
 
 // Tap = instantaneous raw; hold ≥ LONG_PRESS_MS = mean of samples collected
 // (at SAMPLE_INTERVAL_MS) until release.
@@ -11,6 +16,16 @@ const SAMPLE_INTERVAL_MS = 50;
 
 type CalibMethod = 'measure' | 'spec';
 type SpecMode = 'pair' | 'sensitivity';
+
+// Measured first: a spec sheet is often not to hand (see AGENTS.md).
+const METHOD_OPTIONS = [
+  ['measure', 'Measured'],
+  ['spec', 'Spec'],
+] as const satisfies ReadonlyArray<readonly [CalibMethod, string]>;
+const SPEC_MODE_OPTIONS = [
+  ['pair', 'Rated pair'],
+  ['sensitivity', 'Sensitivity'],
+] as const satisfies ReadonlyArray<readonly [SpecMode, string]>;
 
 type MeasureRow = { phy: string; raw: string };
 
@@ -122,17 +137,17 @@ function CaptureButton({ getRaw, onCapture, disabled = false }: CaptureButtonPro
   };
 
   return (
-    <button
-      type="button"
+    <Button
+      variant="accent"
+      size="2xs"
       disabled={disabled}
       onPointerDown={begin}
       onPointerUp={end}
       onPointerCancel={cancel}
       title="Tap = instant · Hold (≥0.8s) = average until release"
-      className="shrink-0 rounded border border-emerald-400 px-1.5 py-0 text-[11px] font-semibold text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 disabled:hover:bg-transparent dark:border-emerald-400/60 dark:text-emerald-400 dark:hover:bg-emerald-400/10 dark:disabled:border-slate-700 dark:disabled:text-slate-600"
     >
       Grab
-    </button>
+    </Button>
   );
 }
 
@@ -350,7 +365,7 @@ export function InputCalibratorPanel({
   };
 
   const inputClass =
-    'w-full rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100';
+    'w-full px-1.5 text-xs dark:border-slate-600 dark:bg-slate-700';
 
   return (
     <FloatingWindow
@@ -368,14 +383,14 @@ export function InputCalibratorPanel({
           {/* Channel selector */}
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">Channel</span>
-            <select
+            <NativeSelect
               value={channel}
               onChange={(e) => {
                 setChannel(Number(e.target.value));
                 setApplied(null);
                 setDownloaded(null);
               }}
-              className="flex-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+              className="flex-1 px-1.5 dark:border-slate-600 dark:bg-slate-700"
             >
               {/* The chip is named in the option rather than being chosen
                   first: which front-end a channel is on is a fact about the
@@ -385,7 +400,7 @@ export function InputCalibratorPanel({
                   CH {ch.toString().padStart(2, '0')} — {getChannelInfo(ch).tag}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
             <span translate="no" className="tabular-nums text-[11px] text-slate-500 dark:text-slate-400">
               Raw: {Math.round(getAiRaw(channel))}
             </span>
@@ -393,28 +408,15 @@ export function InputCalibratorPanel({
 
           {/* Method tabs — measured (multi-point) first, since a spec sheet is
               often unavailable. */}
-          <div className="flex rounded border border-slate-200 p-0.5 dark:border-slate-700">
-            {([
-              ['measure', 'Measured'],
-              ['spec', 'Spec'],
-            ] as [CalibMethod, string][]).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => {
-                  setMethod(value);
-                  setDownloaded(null);
-                }}
-                className={`flex-1 rounded-sm px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                  method === value
-                    ? 'bg-emerald-500 text-emerald-950'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl<CalibMethod>
+            aria-label="Calibration method"
+            value={method}
+            onValueChange={(next) => {
+              setMethod(next);
+              setDownloaded(null);
+            }}
+            options={METHOD_OPTIONS}
+          />
 
           {method === 'measure' && (
             <>
@@ -423,13 +425,14 @@ export function InputCalibratorPanel({
                 <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                   Points ({validPoints.length} valid / {draft.points.length} rows)
                 </span>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="2xs"
                   onClick={() => patch({ points: [...draft.points, { phy: '', raw: '' }] })}
-                  className="rounded border border-slate-300 px-1.5 py-0 text-[11px] font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
+                  className="dark:border-slate-600"
                 >
                   + Add row
-                </button>
+                </Button>
               </div>
               <div className="flex items-center gap-1 px-1 text-[10px] text-slate-400 dark:text-slate-500">
                 <span className="w-4 shrink-0">#</span>
@@ -451,8 +454,7 @@ export function InputCalibratorPanel({
                   <span className="w-4 shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
                     {idx + 1}
                   </span>
-                  <input
-                    type="text"
+                  <Input
                     inputMode="decimal"
                     value={row.phy}
                     onChange={(e) => {
@@ -461,10 +463,9 @@ export function InputCalibratorPanel({
                       patch({ points });
                     }}
                     placeholder="Physical"
-                    className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1 py-0.5 text-right text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                    className="flex-1 px-1 text-right text-xs dark:border-slate-600 dark:bg-slate-700"
                   />
-                  <input
-                    type="text"
+                  <Input
                     inputMode="decimal"
                     value={row.raw}
                     onChange={(e) => {
@@ -473,7 +474,7 @@ export function InputCalibratorPanel({
                       patch({ points });
                     }}
                     placeholder="Raw"
-                    className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1 py-0.5 text-right text-xs tabular-nums text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                    className="flex-1 px-1 text-right text-xs tabular-nums dark:border-slate-600 dark:bg-slate-700"
                   />
                   <CaptureButton
                     getRaw={() => getAiRaw(channel)}
@@ -483,14 +484,17 @@ export function InputCalibratorPanel({
                       patch({ points });
                     }}
                   />
-                  <button
-                    type="button"
+                  {/* Slate hover, not the outline variant's emerald: removing a
+                      point is not a "go" action. */}
+                  <Button
+                    variant="outline"
+                    size="2xs"
                     onClick={() => patch({ points: draft.points.filter((_, i) => i !== idx) })}
                     title="Remove row"
-                    className="shrink-0 rounded border border-slate-300 px-1 py-0 text-[11px] font-semibold text-slate-500 hover:border-slate-400 hover:text-slate-700 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-400 dark:hover:text-slate-200"
+                    className="px-1 text-slate-500 enabled:hover:border-slate-400 enabled:hover:text-slate-700 dark:border-slate-600 dark:text-slate-400 dark:enabled:hover:border-slate-400 dark:enabled:hover:text-slate-200"
                   >
                     ✕
-                  </button>
+                  </Button>
                 </div>
               ))}
               <p className="text-[10px] text-slate-400 dark:text-slate-500">
@@ -504,7 +508,7 @@ export function InputCalibratorPanel({
                 <label className="mb-0.5 block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                   {info.referenceLabel} — sets slope b
                 </label>
-                <select
+                <NativeSelect
                   value={selectedDenom?.value ?? ''}
                   onChange={(e) => patch({ denomUnit: e.target.value })}
                   className={inputClass}
@@ -518,7 +522,7 @@ export function InputCalibratorPanel({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 {denomOptions.length === 0 && (
                   <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
                     Set this channel's range in the main app's Input Config first, then come back.
@@ -527,32 +531,21 @@ export function InputCalibratorPanel({
               </div>
 
               {/* Spec input mode */}
-              <div className="flex rounded border border-slate-200 p-0.5 dark:border-slate-700">
-                {([
-                  ['pair', 'Rated pair'],
-                  ['sensitivity', 'Sensitivity'],
-                ] as [SpecMode, string][]).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => patch({ specMode: value })}
-                    className={`flex-1 rounded-sm px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                      draft.specMode === value
-                        ? 'bg-slate-600 text-white dark:bg-slate-500'
-                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {/* Slate, not emerald, when selected: a sub-choice inside the Spec
+                  method, kept visually below the method switch above it. */}
+              <SegmentedControl<SpecMode>
+                aria-label="Spec input mode"
+                value={draft.specMode}
+                onValueChange={(next) => patch({ specMode: next })}
+                options={SPEC_MODE_OPTIONS}
+                itemClassName="data-[state=on]:bg-slate-600 data-[state=on]:text-white data-[state=on]:enabled:hover:bg-slate-600 dark:data-[state=on]:bg-slate-500 dark:data-[state=on]:enabled:hover:bg-slate-500"
+              />
 
               {draft.specMode === 'pair' ? (
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className="w-20 shrink-0 text-[11px] text-slate-500 dark:text-slate-400">Rated output</span>
-                    <input
-                      type="text"
+                    <Input
                       inputMode="decimal"
                       value={draft.ratedOutput}
                       onChange={(e) => patch({ ratedOutput: e.target.value })}
@@ -563,8 +556,7 @@ export function InputCalibratorPanel({
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-20 shrink-0 text-[11px] text-slate-500 dark:text-slate-400">Physical</span>
-                    <input
-                      type="text"
+                    <Input
                       inputMode="decimal"
                       value={draft.physQty}
                       onChange={(e) => patch({ physQty: e.target.value })}
@@ -580,8 +572,7 @@ export function InputCalibratorPanel({
               ) : (
                 <div className="flex items-center gap-1.5">
                   <span className="w-20 shrink-0 text-[11px] text-slate-500 dark:text-slate-400">Sensitivity</span>
-                  <input
-                    type="text"
+                  <Input
                     inputMode="decimal"
                     value={draft.sensitivity}
                     onChange={(e) => patch({ sensitivity: e.target.value })}
@@ -624,9 +615,9 @@ export function InputCalibratorPanel({
           </div>
 
           {locked && (
-            <div className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            <Alert className="text-[11px]">
               Apply is disabled while a script is running (preview still works).
-            </div>
+            </Alert>
           )}
 
           {applied && !locked && (
@@ -641,26 +632,22 @@ export function InputCalibratorPanel({
             </div>
           )}
 
-          <button
-            type="button"
-            disabled={!result || locked}
-            onClick={handleApply}
-            className="w-full rounded bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-950 shadow hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <Button size="sm" className="w-full rounded py-1.5" disabled={!result || locked} onClick={handleApply}>
             Apply (overwrite a,b,c)
-          </button>
+          </Button>
 
           {/* Measured only: the Spec tab has no points to write out. */}
           {method === 'measure' && (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full rounded py-1.5 dark:border-slate-600"
               disabled={!canDownload}
               onClick={handleDownload}
               title="Save the points and coefficients as a TSV file"
-              className="w-full rounded border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-300 disabled:hover:text-slate-600 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400 dark:disabled:hover:border-slate-600 dark:disabled:hover:text-slate-300"
             >
               Download TSV
-            </button>
+            </Button>
           )}
         </div>
       </div>

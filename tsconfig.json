@@ -20,7 +20,11 @@
     "types": ["vite/client", "w3c-web-serial", "w3c-web-usb", "wicg-file-system-access"],
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    // shadcn/ui import alias (components.json). Mirrored in vite.config.ts.
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   // launcher/ is checked by its own tsconfig (it targets Bun, not the DOM).
   "include": ["src"],
