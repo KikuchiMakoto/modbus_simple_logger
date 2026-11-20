@@ -37,7 +37,10 @@ const CalibCell = memo(function CalibCell({ value, onChange, disabled = false }:
         const trimmed = localValue.trim();
         if (trimmed !== '') {
           const parsed = Number(trimmed);
-          if (!isNaN(parsed)) {
+          // Finite only: 'Infinity' / '1e999' parse to ±Infinity, which made the
+          // channel's Phy non-finite and was stored as null (JSON) — a silent 0
+          // after the next reload. Every other numeric editor already does this.
+          if (Number.isFinite(parsed)) {
             onChange(parsed);
             setLocalValue(String(parsed));
             return;
