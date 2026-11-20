@@ -97,4 +97,35 @@ describe('WebUsbSerialPort', () => {
     expect(got.done).toBe(false);
     expect(port.readable).toBe(second);
   });
+
+  test('close() reaches device.close() even with an OUT transfer that never completes', async () => {
+    let rejectOut: ((e: Error) => void) | null = null;
+    let deviceClosed = false;
+    const dev = {
+      ...device([standard]),
+      opened: true,
+      // The host controller never completes this transfer; only closing the
+      // device aborts it (which is what real WebUSB does).
+      transferOut: () => new Promise<USBOutTransferResult>((_, rej) => { rejectOut = rej; }),
+      controlTransferOut: async () => ({ status: 'ok', bytesWritten: 0 }) as USBOutTransferResult,
+      close: async () => {
+        deviceClosed = true;
+        (dev as unknown as { opened: boolean }).opened = false;
+        rejectOut?.(new Error('transfer aborted'));
+      },
+    } as unknown as USBDevice;
+    const port = new WebUsbSerialPort(dev);
+    const writer = port.writable!.getWriter();
+    const hung = writer.write(Uint8Array.of(1, 2, 3));
+    hung.catch(() => {});
+    await Promise.resolve();
+    // The client gives up on the write and lets go of the stream.
+    writer.releaseLock();
+    const outcome = await Promise.race([
+      port.close().then(() => 'closed'),
+      new Promise((res) => setTimeout(() => res('hung'), 500)),
+    ]);
+    expect(outcome).toBe('closed');
+    expect(deviceClosed).toBe(true);
+  });
 });
