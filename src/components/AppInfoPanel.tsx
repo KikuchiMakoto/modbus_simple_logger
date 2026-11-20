@@ -254,7 +254,7 @@ export function AppInfoPanel({
             </li>
             <li className="flex items-center justify-between rounded px-2 py-1">
               <span className="font-medium">Masataka SHIGA</span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">Resource Provider</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">Resource Sponsor</span>
             </li>
           </ul>
         </div>
