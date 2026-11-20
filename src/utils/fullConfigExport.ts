@@ -7,6 +7,11 @@
 import { readJsonStorage, writeJsonStorage, writeLocalPreference, type JsonValue } from './cookies';
 import { logSystem, SOURCE } from './systemLog';
 import type { AiCalibration, VoltageMode } from '../types';
+import { sanitizeAiCalibration } from './calibration';
+import { AI_CHANNELS } from '../constants';
+
+/** Label arrays are rendered and printed as text, so only strings get in. */
+const sanitizeLabels = (raw: unknown[]): string[] => raw.map((v) => (typeof v === 'string' ? v : ''));
 
 export const FULL_CONFIG_FORMAT_ID = 'modbus_simple_logger_full_config';
 export const FULL_CONFIG_SCHEMA_VERSION = 1;
@@ -148,19 +153,19 @@ export async function importFullConfig(file: File, currentVersion: string): Prom
   }
 
   if (Array.isArray(s.aiCalibration)) {
-    writeJsonStorage(AI_CALIBRATION_KEY, s.aiCalibration);
+    writeJsonStorage(AI_CALIBRATION_KEY, sanitizeAiCalibration(s.aiCalibration, AI_CHANNELS));
   }
   if (Array.isArray(s.voltageConfig)) {
     writeJsonStorage(VOLTAGE_CONFIG_KEY, s.voltageConfig);
   }
   if (Array.isArray(s.aiFreeLabels)) {
-    writeJsonStorage(AI_LABELS_KEY, s.aiFreeLabels);
+    writeJsonStorage(AI_LABELS_KEY, sanitizeLabels(s.aiFreeLabels));
   }
   if (Array.isArray(s.aoFreeLabels)) {
-    writeJsonStorage(AO_LABELS_KEY, s.aoFreeLabels);
+    writeJsonStorage(AO_LABELS_KEY, sanitizeLabels(s.aoFreeLabels));
   }
   if (Array.isArray(s.paramFreeLabels)) {
-    writeJsonStorage(PARAM_LABELS_KEY, s.paramFreeLabels);
+    writeJsonStorage(PARAM_LABELS_KEY, sanitizeLabels(s.paramFreeLabels));
   }
   if (s.chartAxes !== undefined && s.chartAxes !== null) {
     writeJsonStorage(CHART_AXES_KEY, s.chartAxes);
@@ -213,12 +218,17 @@ function escapeHtml(str: string): string {
 export function printFullConfigReport(appVersion: string): void {
   const ts = formatTimestamp(new Date());
 
-  const aiCalibration = readJsonStorage<AiCalibration[]>(AI_CALIBRATION_KEY) ?? [];
+  // Sanitized on read too, not only on import: whatever is already stored is
+  // written into this same-origin page, so nothing reaches it unchecked.
+  const aiCalibration = sanitizeAiCalibration(readJsonStorage<JsonValue>(AI_CALIBRATION_KEY), AI_CHANNELS);
   const voltageConfig = readJsonStorage<VoltageMode[]>(VOLTAGE_CONFIG_KEY) ?? [];
   const aiLabels = readJsonStorage<string[]>(AI_LABELS_KEY) ?? [];
   const aoLabels = readJsonStorage<string[]>(AO_LABELS_KEY) ?? [];
   const paramLabels = readJsonStorage<string[]>(PARAM_LABELS_KEY) ?? [];
-  const chartAxes = readJsonStorage<Record<string, { x: string; y: string }>>(CHART_AXES_KEY) ?? {};
+  // Same shape useChartAxes persists: { chart1: {x, y}, …, chart4: {x, y} }.
+  const chartAxes = (readJsonStorage<JsonValue>(CHART_AXES_KEY) ?? {}) as Partial<
+    Record<string, { x?: unknown; y?: unknown }>
+  >;
   const deviceMemo = readJsonStorage<string>(DEVICE_MEMO_KEY) ?? '';
   const theme = readJsonStorage<string>(THEME_KEY) ?? 'system';
   const uiScale = readJsonStorage<number>(UI_SCALE_KEY) ?? 100;
@@ -230,24 +240,24 @@ export function printFullConfigReport(appVersion: string): void {
     const isHx711 = ch < 8;
     const typeLabel = isHx711 ? 'HX711' : 'ADS1115';
     const mode = voltageConfig[ch] || (isHx711 ? 'hx711_mv_per_v' : 'ads1115_6144mv');
-    const label = aiLabels[ch] || '';
-    const cal = aiCalibration[ch] || { a: 0, b: 1, c: 0 };
+    const label = String(aiLabels[ch] ?? '');
+    const cal = aiCalibration[ch];
     aiRowsHtml += `
       <tr>
         <td class="center font-mono">CH${String(ch).padStart(2, '0')}</td>
         <td class="center font-mono">${typeLabel}</td>
         <td class="font-mono text-xs">${escapeHtml(mode)}</td>
         <td class="font-mono">${escapeHtml(label)}</td>
-        <td class="right font-mono">${cal.a}</td>
-        <td class="right font-mono">${cal.b}</td>
-        <td class="right font-mono">${cal.c}</td>
+        <td class="right font-mono">${escapeHtml(String(cal.a))}</td>
+        <td class="right font-mono">${escapeHtml(String(cal.b))}</td>
+        <td class="right font-mono">${escapeHtml(String(cal.c))}</td>
       </tr>
     `;
   }
 
   let aoRowsHtml = '';
   for (let ch = 0; ch < 8; ch++) {
-    const label = aoLabels[ch] || '';
+    const label = String(aoLabels[ch] ?? '');
     aoRowsHtml += `
       <tr>
         <td class="center font-mono">AO${String(ch).padStart(2, '0')}</td>
@@ -258,7 +268,7 @@ export function printFullConfigReport(appVersion: string): void {
 
   let paramRowsHtml = '';
   for (let ch = 0; ch < 16; ch++) {
-    const label = paramLabels[ch] || '';
+    const label = String(paramLabels[ch] ?? '');
     paramRowsHtml += `
       <tr>
         <td class="center font-mono">P${String(ch).padStart(2, '0')}</td>
@@ -269,7 +279,14 @@ export function printFullConfigReport(appVersion: string): void {
 
   let chartAxesHtml = '';
   for (let c = 0; c < 4; c++) {
-    const sel = chartAxes[String(c)] ?? { x: 'time', y: `phy_${c}` };
+    // The keys are chart1..chart4 (this used to read '0'..'3', which never
+    // exist, so every printed row showed a made-up default). Fallback matches
+    // useChartAxes' DEFAULT_CHART_AXES.
+    const stored = chartAxes[`chart${c + 1}`];
+    const sel = {
+      x: typeof stored?.x === 'string' ? stored.x : 'time',
+      y: typeof stored?.y === 'string' ? stored.y : `raw_${String(c).padStart(2, '0')}`,
+    };
     chartAxesHtml += `
       <tr>
         <td class="center font-mono">Chart ${c + 1}</td>

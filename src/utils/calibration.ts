@@ -6,7 +6,7 @@ import {
   VOLTAGE_MODES,
 } from '../types';
 import { AI_CHANNELS, AO_CHANNELS, PARAM_CHANNELS } from '../constants';
-import { readJsonCookie, writeJsonCookie } from './cookies';
+import { readJsonCookie, writeJsonCookie, type JsonValue } from './cookies';
 
 const AI_COOKIE_KEY = 'ai_calibration_v1';
 const VOLTAGE_CONFIG_COOKIE_KEY = 'voltage_config_v1';
@@ -19,13 +19,28 @@ export const DEFAULT_AI_CALIBRATION: AiCalibration = Object.freeze({ a: 0, b: 1,
 
 const defaultAiCalibration = (): AiCalibration => DEFAULT_AI_CALIBRATION;
 
-export const loadAiCalibration = (channels: number): AiCalibration[] => {
-  const raw = readJsonCookie<AiCalibration[]>(AI_COOKIE_KEY);
-  if (!Array.isArray(raw)) {
-    return Array.from({ length: channels }, () => defaultAiCalibration());
-  }
-  return Array.from({ length: channels }, (_, idx) => raw[idx] ?? defaultAiCalibration());
+/**
+ * Every stored or imported calibration goes through here. Each coefficient
+ * must be a finite number; anything else (a string from a hand-edited or
+ * hostile config file, or the `null` that JSON turns ±Infinity into) falls
+ * back to that coefficient's default rather than making Phy NaN — or, in the
+ * print report, being written into the page as markup.
+ */
+export const sanitizeAiCalibration = (raw: unknown, channels: number): AiCalibration[] => {
+  const list = Array.isArray(raw) ? raw : [];
+  const fallback = defaultAiCalibration();
+  const field = (value: unknown, def: number) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : def;
+  return Array.from({ length: channels }, (_, idx) => {
+    const entry: unknown = list[idx];
+    if (!entry || typeof entry !== 'object') return fallback;
+    const { a, b, c } = entry as Record<string, unknown>;
+    return { a: field(a, fallback.a), b: field(b, fallback.b), c: field(c, fallback.c) };
+  });
 };
+
+export const loadAiCalibration = (channels: number): AiCalibration[] =>
+  sanitizeAiCalibration(readJsonCookie<JsonValue>(AI_COOKIE_KEY), channels);
 
 export const saveAiCalibration = (values: AiCalibration[]) => writeJsonCookie(AI_COOKIE_KEY, values);
 
