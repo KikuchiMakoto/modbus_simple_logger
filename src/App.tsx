@@ -2236,6 +2236,15 @@ function App() {
           idealScheduleRef.current = 0;
         },
       );
+      // The device can go away while the picker is open (cable pulled →
+      // handleDisconnect, which found no writer to close). Starting the save
+      // now would leave a recording armed on a disconnected app, and the next
+      // connection's rows would land in this file.
+      if (!clientRef.current) {
+        writer.close().catch(() => {});
+        logSystem('WARN', SOURCE.save, 'Save not started: the device disconnected while the file was being chosen');
+        return;
+      }
       try {
         const startedAt = Date.now();
 
