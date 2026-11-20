@@ -59,6 +59,9 @@ class AsyncMutex {
  * promise would surface as an unhandled rejection. Capturing the error keeps
  * the parked promise inert until the next reader picks it up.
  */
+/** Thrown instead of writing when the stream is already known to be dead. */
+const LINK_DOWN_MESSAGE = 'Link down; reopen pending';
+
 type ReadOutcome =
   | { ok: true; result: ReadableStreamReadResult<Uint8Array> }
   | { ok: false; error: unknown };
@@ -1229,6 +1232,13 @@ export class WebSerialModbusClient {
       // A reopen in there may have revived the stream, so what counts as "died
       // during this transfer" is measured from here, not from before the wait.
       streamWasDead = this.streamDead;
+      // Still dead after that (the reopen was throttled by the backoff): do not
+      // write. The errored reader and writer are still assigned, so the frame
+      // would go out and the device act on it — an FC16 would move the outputs —
+      // while its response could never be read, and the caller would record a
+      // failure and retry a write that already happened. Fixed wording so the
+      // log's (×N) collapsing holds while the backoff runs.
+      if (this.streamDead) throw new Error(LINK_DOWN_MESSAGE);
       const writer = this.writer!;
 
       // Stale-RX fence, deliberately placed before the write rather than after
@@ -1273,6 +1283,10 @@ export class WebSerialModbusClient {
         } catch (flushErr) {
           console.warn(`${this.debugPrefix} pre-write stale flush failed`, flushErr);
         }
+        // The drain itself can be what discovers the read side is gone
+        // (flushReceiveBuffer swallows the error and marks the stream dead).
+        // Same reason as above not to write into it.
+        if (this.streamDead) throw new Error(LINK_DOWN_MESSAGE);
       }
 
       // Ensure minimum interval between messages (based on Modbus RTU spec and precision mode)
