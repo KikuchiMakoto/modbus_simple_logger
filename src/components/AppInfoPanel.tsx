@@ -238,6 +238,10 @@ export function AppInfoPanel({
               <span className="font-medium">Ying CUI</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">Feature Proposal</span>
             </li>
+            <li className="flex items-center justify-between rounded px-2 py-1">
+              <span className="font-medium">Masataka SHIGA</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">Resource Provider</span>
+            </li>
           </ul>
         </div>
 
