@@ -28,8 +28,8 @@ export type UpdateCheckResult =
 // Launcher (desktop exe) mode comes from the marker the launcher injects into
 // the index.html it serves (see utils/appMode.ts). Regular deployments carry no
 // marker, so Pages and PWA behaviour is unchanged — and, unlike the hostname
-// test this replaced, a launcher page opened from another PC over the network is
-// still correctly recognised as launcher mode.
+// test this replaced, it does not depend on which address the page was reached
+// through.
 const swAvailable = !isLauncherServed && 'serviceWorker' in navigator;
 
 /** Whether an update check can run at all (false in launcher mode / no SW support). */

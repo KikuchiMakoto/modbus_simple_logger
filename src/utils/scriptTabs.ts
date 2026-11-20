@@ -60,8 +60,8 @@ let idCounter = 0;
 
 /**
  * Unique enough to key a React list and to name a tab. Not crypto.randomUUID():
- * that is unavailable outside secure contexts, and the launcher serves this app
- * over plain HTTP to other machines on the LAN.
+ * that is unavailable outside secure contexts (e.g. a dev server opened over
+ * plain HTTP from another device), and a tab id is no reason to fail there.
  */
 export const newTabId = (): string => {
   idCounter += 1;

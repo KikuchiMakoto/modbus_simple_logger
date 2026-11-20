@@ -44,8 +44,10 @@ export function ScriptRunnerPanel({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   // The import picker. A hidden <input type="file"> rather than
-  // showOpenFilePicker(): the launcher serves this app over plain HTTP to other
-  // machines on the LAN, where the File System Access API is not available.
+  // showOpenFilePicker(): it works in every context, including a non-secure one
+  // (e.g. a dev server opened over plain HTTP from another device) where the
+  // File System Access API does not exist. The launcher itself binds 127.0.0.1
+  // only, which is a secure context.
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // `tabs` is the selected language's strip only; `runningTab` comes from the
   // hook because the script executing may belong to a strip that is not on
