@@ -71,6 +71,10 @@ export function AppInfoPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const blockPrintAndImport = isSaving || scriptRunning;
+  // Import ends by reloading the page, which drops a live link without a
+  // disconnect (and leaves the AO outputs wherever they were) — the same reason
+  // update checks are suspended while connected. Printing does not reload.
+  const blockImport = blockPrintAndImport || connected;
 
   // Same code path as the startup check (utils/swUpdate.ts): a ready new
   // version raises the identical consent prompt, declining leaves it waiting.
@@ -174,11 +178,13 @@ export function AppInfoPanel({
 
               <Button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={blockPrintAndImport}
+                disabled={blockImport}
                 title={
                   blockPrintAndImport
                     ? 'Import is disabled while saving or script is running'
-                    : 'Import configuration JSON file'
+                    : connected
+                      ? 'Disconnect the device first — importing reloads the app'
+                      : 'Import configuration JSON file'
                 }
                 variant="outline"
                 size="sm"
@@ -215,10 +221,16 @@ export function AppInfoPanel({
                 Print / PDF
               </Button>
             </div>
-            {blockPrintAndImport && (
+            {blockPrintAndImport ? (
               <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
                 Print/PDF and Import are disabled while saving or script is running.
               </p>
+            ) : (
+              connected && (
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Import is disabled while a device is connected: it reloads the app.
+                </p>
+              )
             )}
           </div>
         </div>
