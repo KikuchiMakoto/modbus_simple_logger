@@ -25,21 +25,27 @@ import { cn } from '@/lib/utils';
  * Disabled keeps pointer events (no `pointer-events-none`, unlike upstream):
  * several disabled buttons carry a `title` explaining *why* they are disabled
  * (e.g. locked while a script runs), and that tooltip needs the hover.
+ *
+ * Every hover style is written `enabled:hover:`, so a disabled button never
+ * reacts to the pointer in either theme — no per-colour `disabled:hover:`
+ * resets to keep in sync with the resting colours. Callers that recolour a
+ * button's hover must use the same `enabled:hover:` prefix (and
+ * `dark:enabled:hover:` for dark), so tailwind-merge replaces the variant's
+ * rule instead of keeping both.
  */
 const buttonVariants = cva(
   'inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow hover:bg-primary-hover disabled:hover:bg-primary',
-        outline:
-          'border border-input text-muted-foreground hover:border-primary-hover hover:text-primary-text disabled:hover:border-input disabled:hover:text-muted-foreground',
+        default: 'bg-primary text-primary-foreground shadow enabled:hover:bg-primary-hover',
+        outline: 'border border-input text-muted-foreground enabled:hover:border-primary-hover enabled:hover:text-primary-text',
         destructive:
-          'border border-rose-300 text-rose-700 hover:border-rose-500 hover:bg-rose-50 disabled:hover:border-rose-300 disabled:hover:bg-transparent dark:border-rose-500/60 dark:text-rose-300 dark:hover:border-rose-400 dark:hover:bg-rose-950/40',
+          'border border-rose-300 text-rose-700 enabled:hover:border-rose-500 enabled:hover:bg-rose-50 dark:border-rose-500/60 dark:text-rose-300 dark:enabled:hover:border-rose-400 dark:enabled:hover:bg-rose-950/40',
         recording: 'stop-save-pulse text-destructive-foreground shadow',
         accent:
-          'border border-primary-hover text-primary-text hover:bg-emerald-50 active:bg-emerald-100 disabled:hover:bg-transparent dark:border-emerald-400/60 dark:hover:bg-emerald-400/10',
-        ghost: 'text-slate-500 hover:bg-accent hover:text-accent-foreground dark:text-slate-400',
+          'border border-primary-hover text-primary-text enabled:hover:bg-emerald-50 enabled:active:bg-emerald-100 dark:border-emerald-400/60 dark:enabled:hover:bg-emerald-400/10',
+        ghost: 'text-slate-500 enabled:hover:bg-accent enabled:hover:text-accent-foreground dark:text-slate-400',
       },
       size: {
         default: 'rounded-lg px-4 py-1.5 text-sm',

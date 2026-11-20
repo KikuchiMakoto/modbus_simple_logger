@@ -492,7 +492,7 @@ export function InputCalibratorPanel({
                     size="2xs"
                     onClick={() => patch({ points: draft.points.filter((_, i) => i !== idx) })}
                     title="Remove row"
-                    className="px-1 text-slate-500 hover:border-slate-400 hover:text-slate-700 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-400 dark:hover:text-slate-200"
+                    className="px-1 text-slate-500 enabled:hover:border-slate-400 enabled:hover:text-slate-700 dark:border-slate-600 dark:text-slate-400 dark:enabled:hover:border-slate-400 dark:enabled:hover:text-slate-200"
                   >
                     ✕
                   </Button>

@@ -149,10 +149,10 @@ export function OutputTesterPanel({
                   disabled={disabled}
                   onClick={() => send(v)}
                   translate="no"
-                  className={`px-1 py-1 tabular-nums disabled:opacity-100 disabled:border-slate-200 disabled:bg-transparent disabled:text-slate-300 disabled:hover:border-slate-200 disabled:hover:bg-transparent disabled:hover:text-slate-300 dark:disabled:border-slate-700 dark:disabled:text-slate-600 ${
+                  className={`px-1 py-1 tabular-nums disabled:border-slate-200 disabled:bg-transparent disabled:text-slate-300 disabled:opacity-100 dark:disabled:border-slate-700 dark:disabled:text-slate-600 ${
                     whole
-                      ? 'border-sky-400 bg-sky-50 text-sky-700 hover:border-sky-400 hover:bg-sky-100 hover:text-sky-700 active:bg-sky-200 dark:border-sky-400/60 dark:bg-sky-400/10 dark:text-sky-300 dark:hover:bg-sky-400/20 dark:hover:text-sky-300'
-                      : 'border-sky-200 text-sky-600 hover:border-sky-200 hover:bg-sky-50 hover:text-sky-600 active:bg-sky-100 dark:border-sky-400/30 dark:text-sky-400/90 dark:hover:bg-sky-400/10 dark:hover:text-sky-400/90'
+                      ? 'border-sky-400 bg-sky-50 text-sky-700 enabled:hover:border-sky-400 enabled:hover:bg-sky-100 enabled:hover:text-sky-700 enabled:active:bg-sky-200 dark:border-sky-400/60 dark:bg-sky-400/10 dark:text-sky-300 dark:enabled:hover:border-sky-400/60 dark:enabled:hover:bg-sky-400/20 dark:enabled:hover:text-sky-300'
+                      : 'border-sky-200 text-sky-600 enabled:hover:border-sky-200 enabled:hover:bg-sky-50 enabled:hover:text-sky-600 enabled:active:bg-sky-100 dark:border-sky-400/30 dark:text-sky-400/90 dark:enabled:hover:border-sky-400/30 dark:enabled:hover:bg-sky-400/10 dark:enabled:hover:text-sky-400/90'
                   }`}
                 >
                   {v.toFixed(1)} V
@@ -181,7 +181,7 @@ export function OutputTesterPanel({
             size="sm"
             disabled={disabled || !manualValid}
             onClick={applyManual}
-            className="rounded bg-sky-500 text-sky-950 hover:bg-sky-400 disabled:hover:bg-sky-500"
+            className="rounded bg-sky-500 text-sky-950 enabled:hover:bg-sky-400"
           >
             Apply
           </Button>

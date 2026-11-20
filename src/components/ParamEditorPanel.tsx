@@ -83,9 +83,12 @@ const ParamValueCell = memo(function ParamValueCell({
         title={pending ? 'Not applied yet — press Set or Enter (Escape to discard)' : undefined}
         className={`w-20 shrink-0 px-1 py-0 text-right text-xs font-semibold dark:disabled:bg-slate-800 ${
           pending && !valid
-            ? 'border-rose-400 bg-rose-50 dark:border-rose-500 dark:bg-rose-950/40'
+            ? // The state colour must survive focus: the cell is always focused
+              // while it is being edited, which is exactly when it is pending or
+              // invalid — the Input's emerald focus frame would say "fine".
+              'border-rose-400 bg-rose-50 focus-visible:border-rose-400 focus-visible:ring-rose-400/50 dark:border-rose-500 dark:bg-rose-950/40 dark:focus-visible:border-rose-500'
             : pending
-              ? 'border-amber-400 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/40'
+              ? 'border-amber-400 bg-amber-50 focus-visible:border-amber-400 focus-visible:ring-amber-400/50 dark:border-amber-500 dark:bg-amber-950/40 dark:focus-visible:border-amber-500'
               : 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-700'
         }`}
       />

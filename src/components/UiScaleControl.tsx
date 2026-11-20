@@ -41,7 +41,7 @@ export function UiScaleControl() {
         title={uiScalePercent === DEFAULT_UI_SCALE ? 'Interface scale' : `Reset to ${DEFAULT_UI_SCALE}%`}
         // At 100% it is disabled only because there is nothing to reset, not
         // because it is unavailable — so it keeps full contrast.
-        className="w-12 rounded px-0.5 py-1 font-mono text-xs tabular-nums text-slate-800 disabled:cursor-default disabled:opacity-100 disabled:hover:text-slate-800 dark:border-slate-600 dark:text-slate-100 dark:disabled:hover:border-slate-600 dark:disabled:hover:text-slate-100"
+        className="w-12 rounded px-0.5 py-1 font-mono text-xs tabular-nums text-slate-800 disabled:cursor-default disabled:opacity-100 dark:border-slate-600 dark:text-slate-100"
       >
         {uiScalePercent}%
       </Button>

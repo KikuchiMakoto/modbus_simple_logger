@@ -30,7 +30,7 @@ export function CollapseButton({
       onClick={onToggle}
       aria-expanded={!collapsed}
       title={collapsed ? `Expand ${label}` : `Minimize ${label}`}
-      className="h-6 w-6 border border-border bg-background p-0 hover:bg-muted hover:text-slate-700 dark:border-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+      className="h-6 w-6 border border-border bg-background p-0 enabled:hover:bg-muted enabled:hover:text-slate-700 dark:border-slate-700 dark:enabled:hover:bg-slate-700 dark:enabled:hover:text-slate-200"
     >
       <svg
         viewBox="0 0 20 20"
