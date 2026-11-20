@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { FloatingWindow } from './FloatingWindow';
+import { Alert } from '@/components/ui/alert';
 
 type TutorialLang = 'en' | 'ja';
 
@@ -555,9 +556,9 @@ function StepRow({
         <SeverityBadge severity={step.severity} label={severityLabel[step.severity]} />
       </div>
       {step.warning && (
-        <p className="mt-2 rounded border border-amber-400 bg-amber-50 p-2 text-xs leading-snug text-amber-800 dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-amber-200">
+        <Alert variant="warning" className="mt-2 p-2 text-xs font-normal text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
           ⚠️ {step.warning}
-        </p>
+        </Alert>
       )}
     </div>
   );

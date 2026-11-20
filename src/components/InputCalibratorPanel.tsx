@@ -6,6 +6,8 @@ import { FloatingWindow } from './FloatingWindow';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Alert } from '@/components/ui/alert';
+import { SegmentedControl } from '@/components/ui/toggle-group';
 
 // Tap = instantaneous raw; hold ≥ LONG_PRESS_MS = mean of samples collected
 // (at SAMPLE_INTERVAL_MS) until release.
@@ -14,6 +16,16 @@ const SAMPLE_INTERVAL_MS = 50;
 
 type CalibMethod = 'measure' | 'spec';
 type SpecMode = 'pair' | 'sensitivity';
+
+// Measured first: a spec sheet is often not to hand (see AGENTS.md).
+const METHOD_OPTIONS = [
+  ['measure', 'Measured'],
+  ['spec', 'Spec'],
+] as const satisfies ReadonlyArray<readonly [CalibMethod, string]>;
+const SPEC_MODE_OPTIONS = [
+  ['pair', 'Rated pair'],
+  ['sensitivity', 'Sensitivity'],
+] as const satisfies ReadonlyArray<readonly [SpecMode, string]>;
 
 type MeasureRow = { phy: string; raw: string };
 
@@ -396,28 +408,15 @@ export function InputCalibratorPanel({
 
           {/* Method tabs — measured (multi-point) first, since a spec sheet is
               often unavailable. */}
-          <div className="flex rounded border border-slate-200 p-0.5 dark:border-slate-700">
-            {([
-              ['measure', 'Measured'],
-              ['spec', 'Spec'],
-            ] as [CalibMethod, string][]).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => {
-                  setMethod(value);
-                  setDownloaded(null);
-                }}
-                className={`flex-1 rounded-sm px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                  method === value
-                    ? 'bg-emerald-500 text-emerald-950'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl<CalibMethod>
+            aria-label="Calibration method"
+            value={method}
+            onValueChange={(next) => {
+              setMethod(next);
+              setDownloaded(null);
+            }}
+            options={METHOD_OPTIONS}
+          />
 
           {method === 'measure' && (
             <>
@@ -532,25 +531,15 @@ export function InputCalibratorPanel({
               </div>
 
               {/* Spec input mode */}
-              <div className="flex rounded border border-slate-200 p-0.5 dark:border-slate-700">
-                {([
-                  ['pair', 'Rated pair'],
-                  ['sensitivity', 'Sensitivity'],
-                ] as [SpecMode, string][]).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => patch({ specMode: value })}
-                    className={`flex-1 rounded-sm px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                      draft.specMode === value
-                        ? 'bg-slate-600 text-white dark:bg-slate-500'
-                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {/* Slate, not emerald, when selected: a sub-choice inside the Spec
+                  method, kept visually below the method switch above it. */}
+              <SegmentedControl<SpecMode>
+                aria-label="Spec input mode"
+                value={draft.specMode}
+                onValueChange={(next) => patch({ specMode: next })}
+                options={SPEC_MODE_OPTIONS}
+                itemClassName="data-[state=on]:bg-slate-600 data-[state=on]:text-white data-[state=on]:enabled:hover:bg-slate-600 dark:data-[state=on]:bg-slate-500 dark:data-[state=on]:enabled:hover:bg-slate-500"
+              />
 
               {draft.specMode === 'pair' ? (
                 <div className="space-y-1.5">
@@ -626,9 +615,9 @@ export function InputCalibratorPanel({
           </div>
 
           {locked && (
-            <div className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            <Alert className="text-[11px]">
               Apply is disabled while a script is running (preview still works).
-            </div>
+            </Alert>
           )}
 
           {applied && !locked && (

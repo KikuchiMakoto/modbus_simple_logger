@@ -24,6 +24,8 @@ const LIBRARIES = [
   // these are the runtime packages its components are built on.
   { name: 'Radix UI Checkbox', pkg: '@radix-ui/react-checkbox', license: 'MIT' },
   { name: 'Radix UI Slot', pkg: '@radix-ui/react-slot', license: 'MIT' },
+  { name: 'Radix UI Switch', pkg: '@radix-ui/react-switch', license: 'MIT' },
+  { name: 'Radix UI Toggle Group', pkg: '@radix-ui/react-toggle-group', license: 'MIT' },
   { name: 'class-variance-authority', pkg: 'class-variance-authority', license: 'Apache-2.0' },
   { name: 'clsx', pkg: 'clsx', license: 'MIT' },
   { name: 'tailwind-merge', pkg: 'tailwind-merge', license: 'MIT' },

@@ -4,6 +4,7 @@ import { SlideToConfirm } from './SlideToConfirm';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Alert } from '@/components/ui/alert';
 
 /**
  * Manual AO exerciser: pick a channel, click a voltage, watch the wire.
@@ -201,13 +202,9 @@ export function OutputTesterPanel({
         {/* One status line, in priority order: why output is blocked first,
             what was last sent second. */}
         {!connected ? (
-          <p className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            Not connected — connect the device to output.
-          </p>
+          <Alert className="text-[11px]">Not connected — connect the device to output.</Alert>
         ) : locked ? (
-          <p className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            A script is running and is driving AO. Stop it to output from here.
-          </p>
+          <Alert className="text-[11px]">A script is running and is driving AO. Stop it to output from here.</Alert>
         ) : sent ? (
           <p className="rounded border border-sky-300 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300">
             {sent}

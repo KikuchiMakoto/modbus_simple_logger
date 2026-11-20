@@ -1,3 +1,5 @@
+import { Switch } from '@/components/ui/switch';
+
 // Not a Unicode glyph (☀ / ☾): those render from whatever font the platform
 // picks — colour emoji on some, a thin outline on others — and would be the one
 // element in the UI not drawn from the bundled Iosevka stack.
@@ -43,29 +45,24 @@ function MoonIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
  */
 export function ThemeToggle({ isDarkMode, onToggle }: { isDarkMode: boolean; onToggle: () => void }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isDarkMode}
+    // shadcn Switch (Radix): role="switch", aria-checked and keyboard handling
+    // come from the primitive instead of being restated by hand.
+    <Switch
+      checked={isDarkMode}
+      onCheckedChange={() => onToggle()}
       aria-label="Toggle dark mode"
-      onClick={onToggle}
-      className="relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border border-slate-300 bg-white px-1 shadow-inner transition-colors duration-300 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800"
+      className="h-7 w-14 px-1 duration-300"
+      // The thumb carries the current mode's icon, so the track icons below
+      // read as "the other mode" rather than duplicating it.
+      thumbClassName="size-5 data-[state=checked]:translate-x-[26px]"
+      thumbContent={isDarkMode ? <MoonIcon className="h-3.5 w-3.5" /> : <SunIcon className="h-3.5 w-3.5" />}
     >
-      <span className="sr-only">Toggle theme</span>
       <span className="absolute left-1 text-slate-400 dark:text-slate-500" aria-hidden>
         <SunIcon className="h-3.5 w-3.5" />
       </span>
       <span className="absolute right-1 text-slate-400 dark:text-slate-500" aria-hidden>
         <MoonIcon className="h-3.5 w-3.5" />
       </span>
-      {/* The knob covers whichever side icon is active, so the pair below reads
-          as "current mode" rather than duplicating it. */}
-      <span
-        className={`flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-emerald-950 shadow transition-transform duration-300 ${isDarkMode ? 'translate-x-[26px]' : 'translate-x-0'}`}
-        aria-hidden
-      >
-        {isDarkMode ? <MoonIcon className="h-3.5 w-3.5" /> : <SunIcon className="h-3.5 w-3.5" />}
-      </span>
-    </button>
+    </Switch>
   );
 }

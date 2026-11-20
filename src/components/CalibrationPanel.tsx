@@ -3,6 +3,7 @@ import type { AiCalibration } from '../types';
 import { FloatingWindow } from './FloatingWindow';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Alert } from '@/components/ui/alert';
 
 type CalibCellProps = {
   value: number;
@@ -109,9 +110,9 @@ export function CalibrationPanel({
     >
       <div className="flex-1 overflow-y-auto p-2">
         {locked && (
-          <div className="mb-1.5 rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[0.7rem] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <Alert className="mb-1.5 text-[0.7rem]">
             Script running: scale coefficients a and b, and Load, are locked. Only offset c and Tare can be adjusted.
-          </div>
+          </Alert>
         )}
         {/* Never translated: channel numbers and coefficients. A locale-aware
             pass that turns "1.5" into "1,5" in a field the app parses back as a

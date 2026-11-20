@@ -15,6 +15,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import type { DataPoint } from '../types';
 import { type AxisDescriptor, decimate2DM4 } from '../utils/m4Decimation';
 import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
+import { Badge } from '@/components/ui/badge';
 
 interface AxisOption {
   key: string;
@@ -380,24 +381,21 @@ function ChartPanelComponent({
           // for the OS tooltip that used to carry it. Anchored right — the badge
           // sits at the end of its row.
           <div className="group/backend relative ml-auto shrink-0">
-            <span
+            <Badge
               translate="no"
               tabIndex={0}
               aria-describedby={backendNoteId}
-              className={`block cursor-help rounded px-1 py-0.5 text-[0.6rem] font-semibold leading-none ${
-                backend.accel === 'GPU'
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                  : backend.accel === 'CPU'
-                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-              }`}
+              variant={backend.accel === 'GPU' ? 'success' : backend.accel === 'CPU' ? 'warning' : 'neutral'}
+              // The neutral case is a step lighter here than the Badge default:
+              // it sits on the chart card, not on the footer bar.
+              className={`block cursor-help ${backend.accel === 'GPU' || backend.accel === 'CPU' ? '' : 'bg-slate-100 dark:bg-slate-800'}`}
             >
               {/* GPU / CPU is the only part worth a badge; the API name is in
                   the hover note below. `||` not `??`: accel is '' (not null)
                   on the SVG/Canvas2D path, where the API name is all there
                   is to show. */}
               {backend.accel || backend.api}
-            </span>
+            </Badge>
             <div
               id={backendNoteId}
               role="tooltip"

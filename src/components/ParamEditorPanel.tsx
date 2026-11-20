@@ -6,6 +6,7 @@ import { formatFloat32 } from '../utils/floatFormat';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Alert } from '@/components/ui/alert';
 
 type ParamValueCellProps = {
   value: number;
@@ -191,14 +192,14 @@ export function ParamEditorPanel({
     >
       <div className="flex-1 overflow-y-auto p-2">
         {locked && !acceptRisk && (
-          <div className="mb-1.5 rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[0.7rem] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <Alert className="mb-1.5 text-[0.7rem]">
             Script running: editing is locked. Check "Accept Risk" above to edit values anyway — a manual edit can race the script's own writes to that channel. Labels are shown here only; rename a channel from the Parameter grid.
-          </div>
+          </Alert>
         )}
         {locked && acceptRisk && (
-          <div className="mb-1.5 rounded border border-amber-400 bg-amber-50 px-2 py-1 text-[0.7rem] font-medium text-amber-700 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-300">
+          <Alert variant="warning" className="mb-1.5 text-[0.7rem]">
             Editing values while the script is running — your edits can race the script's own writes to that channel.
-          </div>
+          </Alert>
         )}
         <div className="space-y-0.5">
           {CHANNEL_LABELS.map((label, idx) => {

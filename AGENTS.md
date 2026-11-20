@@ -72,7 +72,7 @@ src/
 │   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Setter の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
 │   ├── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
-│   └── ui/                          # shadcn/ui コンポーネント（button / card / input / textarea / native-select / checkbox）。下記「UI コンポーネント（shadcn/ui）」参照
+│   └── ui/                          # shadcn/ui コンポーネント（button / card / input / textarea / native-select / checkbox / switch / toggle-group / alert / badge）。下記「UI コンポーネント（shadcn/ui）」参照
 ├── lib/
 │   └── utils.ts                     # shadcn/ui の `cn()`（clsx + tailwind-merge）
 └── utils/
@@ -108,7 +108,8 @@ scripts/
 - **Button のバリアントは「見た目」ではなく「意味」**: `default`（その場の「進む」操作）/ `outline`（通常）/ `destructive`（作業を消す・ローズ枠）/ `recording`（計測中の停止ボタン・赤パルス）/ `accent`（緑枠・Grab）/ `ghost`。サイズは `default` / `touch`（ヘッダーの Connect・Start Save）/ `sm` / `xs` / `2xs` / `icon` / `icon-lg`。**disabled でも pointer-events を殺さない**（上流 shadcn と違う）— 「なぜ無効か」を `title` で出しているボタンがあるため。代わりに**ホバー系はすべて `enabled:hover:` で書く**（disabled のボタンはどのテーマでもホバーに反応しない）。呼び出し側でホバー色を変えるときも `enabled:hover:` / `dark:enabled:hover:` を使うこと — 素の `hover:` だと tailwind-merge が別グループと見なしてバリアント側の規則が残り、詳細度で負ける。`disabled:hover:` で色を戻す書き方は、ダークモード側を戻し忘れて点灯する事故を実際に起こしたので使わない
 - **ポータルを使う Radix 系（Select / Dialog / Popover / Tooltip / DropdownMenu 等）は導入しないこと**。ポータルは `<body>` 直下へ描画され、`#root` の CSS `zoom`（UI 拡大率）の外に出る — トリガーだけ拡大されてポップアップが等倍のまま、位置も別座標系で計算されてずれる。選択肢は **`NativeSelect`**（ブラウザ描画のネイティブポップアップなので問題が無い）、ツールチップは既存の `group-hover` の absolute ボックスで書く。Checkbox（Radix）はポータルを持たないので可
 - アイコンは lucide-react を入れず**インライン SVG**（Checkbox のチェックも同様）。プリキャッシュされ exe に焼かれるバンドルに、1〜2個のグリフのためにアイコンパッケージを載せない
-- 意図的に shadcn 化していないもの: `SlideToConfirm` / `HoldToConfirm`（ジェスチャ自体が仕様）、`ThemeToggle`、タブ/セグメント切替（`ManualPanel` / `TutorialPanel` / `InputCalibratorPanel` / `ScriptRunnerPanel`）、`HamburgerMenu` の行、`main.tsx` の Error Boundary のフォールバック（壊れたときの画面は依存を最小にする）。`HoldToConfirm` に見た目を合わせるときは `buttonVariants({ variant, size })` の文字列を `className` に渡す
+- 対応表: 切替スイッチ = `Switch`（`ThemeToggle`）、二択〜数択のモード切替 = `SegmentedControl`（`ui/toggle-group.tsx`。選択解除できない単一選択。`InputCalibratorPanel` の Measured/Spec 等）、パネル内の常設注記 = `Alert`（`neutral` = ロック・未接続などの状態、`warning` = 損をしうる注意。**起きたエラーは System Log へ**出すので赤の Alert は無い）、小さなラベル = `Badge`（`neutral` / `success` / `warning`）
+- 意図的に shadcn 化していないもの: `SlideToConfirm` / `HoldToConfirm`（ジェスチャ自体が仕様）、`ScriptRunnerPanel` のエディタタブ（改名・閉じる・実行中表示を持つ独自のタブ列）、`HamburgerMenu` の行、`SlidePanel` / `FloatingWindow`（shadcn の Sheet / Dialog はポータル系）、`main.tsx` の Error Boundary のフォールバック（壊れたときの画面は依存を最小にする）。`HoldToConfirm` に見た目を合わせるときは `buttonVariants({ variant, size })` の文字列を `className` に渡す
 
 ### Modbus 通信（`webserialClient.ts`）
 - `AsyncMutex` で転送の排他制御
