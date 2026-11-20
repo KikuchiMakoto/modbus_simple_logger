@@ -21,9 +21,9 @@
     "buffer": "^6.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "plotly.js": "^4.2.0",
+    "plotly.js": "^4.3.0",
     "prismjs": "^1.30.0",
-    "pyodide": "^314.0.7",
+    "pyodide": "^314.0.8",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-plotly.js": "^4.1.0",
@@ -32,8 +32,8 @@
     "tailwind-merge": "^3.7.1"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.3",
-    "@types/bun": "^1.4.4",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/bun": "^1.4.5",
     "@types/plotly.js": "^3.0.15",
     "@types/prismjs": "^1.26.6",
     "@types/react": "^19.3.0",
@@ -41,11 +41,11 @@
     "@types/w3c-web-serial": "^1.0.9",
     "@types/w3c-web-usb": "^1.0.14",
     "@types/wicg-file-system-access": "^2023.10.7",
-    "@vitejs/plugin-react": "^6.1.2",
-    "autoprefixer": "^10.6.2",
-    "postcss": "^8.5.32",
-    "tailwindcss": "^4.3.3",
+    "@vitejs/plugin-react": "^6.3.0",
+    "autoprefixer": "^10.7.0",
+    "postcss": "^8.5.33",
+    "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.8"
   }
 }
