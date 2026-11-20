@@ -88,7 +88,11 @@ const promptAndActivate = async (worker: ServiceWorker) => {
 // the flag, so a later explicit check asks again about the same worker.
 let promptInFlight = false;
 const promptOnce = (worker: ServiceWorker) => {
-  if (promptInFlight) return;
+  // A download adopted by a check made before Connect can finish installing
+  // mid-session. A confirm() then would freeze the main thread (and with it
+  // polling) and offer a reload that ends the run. Leave the worker waiting:
+  // the next explicit check offers it through the `registration.waiting` path.
+  if (promptInFlight || checksSuspended) return;
   promptInFlight = true;
   void promptAndActivate(worker).finally(() => {
     promptInFlight = false;
