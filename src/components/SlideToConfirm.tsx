@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { getUiScale } from '../utils/uiScale';
 
 /**
  * Drag-across control for an action that must not happen by accident.
@@ -113,13 +114,17 @@ export function SlideToConfirm({
     if (disabled) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragOriginRef.current = e.clientX - knobX;
+    // Pointer deltas are screen px; knobX is in #root's zoomed px (the UI scale
+    // is a CSS zoom on #root). Without the conversion the knob ran ahead of the
+    // finger above 100% and the slide committed on a shorter swipe — the same
+    // correction FloatingWindow gets by passing `scale` to react-rnd.
+    dragOriginRef.current = e.clientX - knobX * getUiScale();
     setDragging(true);
   };
 
   const move = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
-    setKnobX(Math.max(0, Math.min(maxTravel(), e.clientX - dragOriginRef.current)));
+    setKnobX(Math.max(0, Math.min(maxTravel(), (e.clientX - dragOriginRef.current) / getUiScale())));
   };
 
   const end = () => {
