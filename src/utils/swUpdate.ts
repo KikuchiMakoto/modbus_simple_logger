@@ -73,6 +73,9 @@ const queryWorkerVersion = (worker: ServiceWorker): Promise<string | null> =>
 // launch or on the next press of the App Info "Check for Updates" button.
 const promptAndActivate = async (worker: ServiceWorker) => {
   const newVersion = await queryWorkerVersion(worker);
+  // Re-checked after the (up to 500 ms) version query: a Connect made while it
+  // was in flight must not get a blocking confirm() as its first event.
+  if (checksSuspended) return;
   const versionInfo = newVersion && currentVersion ? ` (v${currentVersion} → v${newVersion})` : '';
   const shouldActivate = window.confirm(
     `A new version of the app is available${versionInfo}. Update and reload now?\n\n` +

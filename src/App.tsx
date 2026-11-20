@@ -1811,6 +1811,12 @@ function App() {
   const handleConnect = async () => {
     if (connectInProgressRef.current || disconnectInProgressRef.current) return;
     connectInProgressRef.current = true;
+    // Suspend update prompts for the connect itself, not only once `connected`
+    // commits: an update that finishes installing while the port picker and the
+    // AO sync are in flight would otherwise pop a blocking confirm() the moment
+    // the session starts. The [connected] effect takes over after success; the
+    // finally below lifts it if the connect did not happen.
+    setUpdateChecksSuspended(true);
     console.info('[App] handleConnect start', {
       slaveId,
       serialSettings,
@@ -1899,6 +1905,7 @@ function App() {
       reportError('link', err, 'Connect failed');
     } finally {
       connectInProgressRef.current = false;
+      if (!clientRef.current) setUpdateChecksSuspended(false);
     }
   };
 
