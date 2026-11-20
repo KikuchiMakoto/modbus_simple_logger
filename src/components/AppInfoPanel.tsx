@@ -19,6 +19,13 @@ const LIBRARIES = [
   { name: 'react-plotly.js', pkg: 'react-plotly.js', license: 'MIT' },
   { name: 'react-rnd', pkg: 'react-rnd', license: 'MIT' },
   { name: 'Tailwind CSS', pkg: 'tailwindcss', license: 'MIT' },
+  // shadcn/ui itself is copied-in source (src/components/ui/), not a package;
+  // these are the runtime packages its components are built on.
+  { name: 'Radix UI Checkbox', pkg: '@radix-ui/react-checkbox', license: 'MIT' },
+  { name: 'Radix UI Slot', pkg: '@radix-ui/react-slot', license: 'MIT' },
+  { name: 'class-variance-authority', pkg: 'class-variance-authority', license: 'Apache-2.0' },
+  { name: 'clsx', pkg: 'clsx', license: 'MIT' },
+  { name: 'tailwind-merge', pkg: 'tailwind-merge', license: 'MIT' },
   { name: 'Vite', pkg: 'vite', license: 'MIT' },
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },

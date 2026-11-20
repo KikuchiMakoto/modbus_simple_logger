@@ -9,6 +9,72 @@
   --font-mono: 'Iosevka', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono CJK JP', 'Courier New', monospace;
 }
 
+/* shadcn/ui design tokens (components/ui/*). The values are the app's own
+   palette, not shadcn's neutral defaults: emerald = primary / "go", slate =
+   everything structural, rose/red = destructive (see AGENTS.md 配色ルール).
+   Literal oklch values rather than var(--color-emerald-500): Tailwind only
+   emits the theme variables a build actually uses, so a reference from here
+   would not reliably have a definition to resolve to. */
+:root {
+  --background: oklch(1 0 0); /* white */
+  --foreground: oklch(0.208 0.042 265.755); /* slate-900 */
+  --card: oklch(1 0 0); /* white */
+  --card-foreground: oklch(0.208 0.042 265.755); /* slate-900 */
+  --muted: oklch(0.968 0.007 247.896); /* slate-100 */
+  --muted-foreground: oklch(0.446 0.043 257.281); /* slate-600 */
+  --accent: oklch(0.968 0.007 247.896); /* slate-100 */
+  --accent-foreground: oklch(0.208 0.042 265.755); /* slate-900 */
+  --border: oklch(0.929 0.013 255.508); /* slate-200 */
+  --input: oklch(0.869 0.022 252.894); /* slate-300 */
+  --ring: oklch(0.765 0.177 163.223); /* emerald-400 */
+  --primary: oklch(0.696 0.17 162.48); /* emerald-500 */
+  --primary-hover: oklch(0.765 0.177 163.223); /* emerald-400 */
+  --primary-foreground: oklch(0.262 0.051 172.552); /* emerald-950 */
+  --primary-text: oklch(0.596 0.145 163.225); /* emerald-600: text/outline on light */
+  --destructive: oklch(0.637 0.237 25.331); /* red-500 */
+  --destructive-foreground: oklch(0.971 0.013 17.38); /* red-50 */
+}
+
+.dark {
+  --background: oklch(0.279 0.041 260.031); /* slate-800 */
+  --foreground: oklch(0.968 0.007 247.896); /* slate-100 */
+  --card: oklch(0.208 0.042 265.755); /* slate-900 */
+  --card-foreground: oklch(0.968 0.007 247.896); /* slate-100 */
+  --muted: oklch(0.279 0.041 260.031); /* slate-800 */
+  --muted-foreground: oklch(0.869 0.022 252.894); /* slate-300 */
+  --accent: oklch(0.279 0.041 260.031); /* slate-800 */
+  --accent-foreground: oklch(0.984 0.003 247.858); /* slate-50 */
+  --border: oklch(0.279 0.041 260.031); /* slate-800 */
+  --input: oklch(0.372 0.044 257.287); /* slate-700 */
+  --ring: oklch(0.765 0.177 163.223); /* emerald-400 */
+  --primary: oklch(0.696 0.17 162.48); /* emerald-500 */
+  --primary-hover: oklch(0.765 0.177 163.223); /* emerald-400 */
+  --primary-foreground: oklch(0.262 0.051 172.552); /* emerald-950 */
+  --primary-text: oklch(0.765 0.177 163.223); /* emerald-400 */
+  --destructive: oklch(0.637 0.237 25.331); /* red-500 */
+  --destructive-foreground: oklch(0.971 0.013 17.38); /* red-50 */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+}
+
 /* Iosevka (Latin subset) — woff2 only, no woff fallback. Each weight is bundled
    by Vite (bare `url()` is auto-resolved to a hashed URL under dist/assets/)
    and fingerprinted for long-term precache. Only the four weights actually
