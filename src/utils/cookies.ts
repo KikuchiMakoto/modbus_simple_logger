@@ -107,10 +107,8 @@ export const writeJsonStorage = (key: string, value: JsonValue): WriteResult => 
 
 // Settings that describe how THIS screen looks — theme, UI scale — rather than
 // what the logger is measuring.
-export const writeLocalPreference = (key: string, value: JsonValue): WriteResult => {
-  if (!isBrowser) return 'failed';
-  return writeRaw(key, value);
-};
+// Same write path as writeJsonStorage; the separate name only marks intent.
+export const writeLocalPreference = writeJsonStorage;
 
 /**
  * Like readJsonStorage(), plus the one-way migration of a legacy cookie into

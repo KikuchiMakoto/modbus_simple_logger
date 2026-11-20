@@ -33,7 +33,7 @@ const VALID_VOLTAGE_MODES = new Set<string>(VOLTAGE_MODES.map((m) => m.value));
 
 // Every voltage config that comes from outside this build goes through here:
 // localStorage written by an older version can carry a mode this build no
-// longer has (the retired 'unknown', say), and rawToDisplayValue has no case
+// longer has (the retired 'unknown', say), and rawToVoltageValue has no case
 // for one — it would return undefined and take the whole channel grid down on
 // the next frame.
 export const sanitizeVoltageConfig = (raw: unknown): VoltageMode[] => {
@@ -86,9 +86,6 @@ export const hx711RawToMvPerV = (raw: number): number =>
 export const hx711RawToMicroStrain = (raw: number): number =>
   hx711RawToMvPerV(raw) * 2e3;
 
-export const ads1115RawToVolt = (raw: number): number =>
-  raw / 32768.0 * 6.144;
-
 /**
  * Returns raw-to-voltage conversion value directly as a primitive number,
  * avoiding object allocations in high-frequency polling/export loops.
@@ -112,11 +109,6 @@ export const VOLTAGE_UNITS: Record<VoltageMode, string> = {
   ads1115_6144mv: 'V',
   ads1115_12288mv: 'V',
 };
-
-export const rawToDisplayValue = (raw: number, mode: VoltageMode): { value: number; unit: string } => ({
-  value: rawToVoltageValue(raw, mode),
-  unit: VOLTAGE_UNITS[mode],
-});
 
 // --- HX711 Calibration window helpers ---------------------------------------
 

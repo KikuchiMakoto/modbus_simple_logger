@@ -614,7 +614,8 @@ function App() {
   const [savePointCount, setSavePointCount] = useState(0);
   const [displayRevision, setDisplayRevision] = useState(0);
   // Bumped to force a full Plotly purge + remount of every chart (used as the
-  // Plot's React key). Only the save-path re-decimation bumps it — the periodic
+  // Plot's React key). Only handleConnect bumps it, while the charts are still
+  // empty — re-decimation must not (see AGENTS.md). The periodic
   // timed purge was removed in v3.1 (see constants.ts); ChartPanel now releases
   // the WebGL context explicitly, which is what the timer was really after.
   const [chartEpoch, setChartEpoch] = useState(0);
@@ -1089,7 +1090,7 @@ function App() {
       }
     } else {
       // Not saving: a sliding preview of the last NON_SAVING_CHART_PREVIEW_POINTS
-      // points, which at the fixed chart input rate is a ~77 s window. No
+      // points, which at the fixed chart input rate is a ~60 s window. No
       // decimation — every point the chart is fed is drawn.
       bufferChanged = true;
       for (const p of pointsToAdd) buffer.push(p);
