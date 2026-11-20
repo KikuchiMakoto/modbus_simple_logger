@@ -2219,6 +2219,9 @@ function App() {
     if (tsvWriterRef.current || saveStartInProgressRef.current) return;
     saveStartInProgressRef.current = true;
     filePickerOpenRef.current = true;
+    // A disconnect that starts, or even finishes, while the picker is open
+    // bumps the generation; checked together with the link refs below.
+    const generationAtStart = pollGenerationRef.current;
     try {
       const writer = await createTsvWriter(
         AI_CHANNELS,
@@ -2252,10 +2255,20 @@ function App() {
       // The device can go away while the picker is open (cable pulled →
       // handleDisconnect, which found no writer to close). Starting the save
       // now would leave a recording armed on a disconnected app, and the next
-      // connection's rows would land in this file.
-      if (!clientRef.current) {
+      // connection's rows would land in this file. clientRef alone is not
+      // enough: it stays set until the very end of a disconnect, which is slow
+      // exactly when a cable has been pulled.
+      if (
+        !clientRef.current ||
+        disconnectInProgressRef.current ||
+        pollGenerationRef.current !== generationAtStart
+      ) {
         writer.close().catch(() => {});
-        logSystem('WARN', SOURCE.save, 'Save not started: the device disconnected while the file was being chosen');
+        logSystem(
+          'WARN',
+          SOURCE.save,
+          'Save not started: the device disconnected while the file was being chosen (the chosen file contains only the header)',
+        );
         return;
       }
       try {
@@ -2324,6 +2337,17 @@ function App() {
     savePointCountRef.current = 0;
     lastSaveCountPublishRef.current = 0;
     setSavePointCount(0);
+    // Before the close, not after it: close() can take up to its timeout, the
+    // header shows Start Save again the moment tsvWriterRef is cleared, and a
+    // save started during that wait would otherwise have its fresh chart buffer
+    // and its first record deadline wiped by this run's late cleanup.
+    pendingDataPoints.current = [];
+    // Re-phase the recording deadline the same way the save start did. The poll
+    // rate measurement is deliberately left alone: the loop kept running through
+    // all of this, so zeroing its readout would only blank a live number.
+    nextRecordAtRef.current = 0;
+    dataBufferRef.current = [];
+    setDisplayRevision((v) => v + 1);
 
     try {
       await writerToClose.close();
@@ -2332,17 +2356,11 @@ function App() {
       logSystem('WARN', SOURCE.storage, `Error closing TSV writer: ${(err as Error).message}`);
     }
 
-
-    pendingDataPoints.current = [];
-    // Re-phase the recording deadline the same way the save start did. The poll
-    // rate measurement is deliberately left alone: the loop kept running through
-    // all of this, so zeroing its readout would only blank a live number.
-    nextRecordAtRef.current = 0;
-
-    dataBufferRef.current = [];
-    setDisplayRevision((v) => v + 1);
-
-    setStatus('Stopped saving', 'save');
+    // Only if no newer save has started (or is starting) meanwhile — its
+    // "Saving data to file" must not be overwritten by this one's ending.
+    if (!tsvWriterRef.current && !saveStartInProgressRef.current) {
+      setStatus('Stopped saving', 'save');
+    }
   };
 
   // The page background and its full-height box live on <body> (index.css)
