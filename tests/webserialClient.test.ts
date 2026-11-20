@@ -107,4 +107,25 @@ describe('WebSerialModbusClient', () => {
     expect(client.getPort()).toBeNull();
     expect(port.state.isOpen).toBe(false);
   }, 10000);
+
+  test('a link that stays silent for several polls recovers when replies resume', async () => {
+    // Exercises the parked read: it is waited on (and given up on) by several
+    // transfers in a row, then has to deliver to whichever transfer is current
+    // once bytes finally arrive.
+    let silent = true;
+    const port = fakePort(() => (silent ? null : holdingReply));
+    const client = new WebSerialModbusClient(1, undefined, serialApi(port), false);
+    await client.connect();
+    for (let i = 0; i < 3; i++) {
+      await expect(client.readHoldingRegisters(0, 8)).rejects.toThrow();
+    }
+    silent = false;
+    let ok = false;
+    for (let i = 0; i < 10 && !ok; i++) {
+      ok = await client.readHoldingRegisters(0, 8).then(() => true, () => false);
+      if (!ok) await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(ok).toBe(true);
+    await client.disconnect();
+  }, 20000);
 });

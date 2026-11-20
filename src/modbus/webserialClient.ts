@@ -64,6 +64,22 @@ type ReadOutcome =
   | { ok: false; error: unknown };
 
 /**
+ * The parked read, subscribed to exactly once. Whoever is waiting on it right
+ * now registers as `waiter`; if it settles with nobody waiting, the outcome is
+ * kept in `settled` for the next caller.
+ *
+ * Not a bare promise raced against each caller's timer: every
+ * `Promise.race([pending, timer])` attaches another reaction to `pending`, and
+ * those are only released when it settles. On a silent link (slave off, wrong
+ * ID, RS-485 open) the read never settles, so each timed-out poll left one
+ * behind — a few MB an hour for as long as the device stayed quiet.
+ */
+type PendingReadSlot = {
+  settled: ReadOutcome | null;
+  waiter: ((outcome: ReadOutcome) => void) | null;
+};
+
+/**
  * Backoff between automatic port-reopen attempts, in ms, one per consecutive
  * failure. The last entry repeats once the list runs out, and each wait is
  * measured from the *end* of the previous attempt.
@@ -352,7 +368,7 @@ export class WebSerialModbusClient {
    * cancelled) so a transfer that gives up waiting does not destroy the
    * stream — see readChunk() for why cancelling is fatal on mobile.
    */
-  private pendingRead: Promise<ReadOutcome> | null = null;
+  private pendingRead: PendingReadSlot | null = null;
   /**
    * How late the last read deadline fired, in ms past the requested delay.
    * Non-zero only when readChunk() gave up, and read by transfer() to tell a
@@ -946,23 +962,38 @@ export class WebSerialModbusClient {
     }
     if (!this.pendingRead) {
       this.pendingReadIssuedAt = Date.now();
-      this.pendingRead = reader.read().then(
-        (result): ReadOutcome => ({ ok: true, result }),
-        (error): ReadOutcome => ({ ok: false, error }),
-      );
+      const slot: PendingReadSlot = { settled: null, waiter: null };
+      reader
+        .read()
+        .then(
+          (result): ReadOutcome => ({ ok: true, result }),
+          (error): ReadOutcome => ({ ok: false, error }),
+        )
+        .then((outcome) => {
+          slot.settled = outcome;
+          const waiter = slot.waiter;
+          slot.waiter = null;
+          waiter?.(outcome);
+        });
+      this.pendingRead = slot;
     }
-    const pending = this.pendingRead;
+    const slot = this.pendingRead;
     const parkedForMs = Date.now() - this.pendingReadIssuedAt;
 
     const requestedMs = Math.max(0, timeoutMs);
     const armedAt = Date.now();
     let timeoutId: number | undefined;
-    const outcome = await Promise.race<ReadOutcome | null>([
-      pending,
-      new Promise<null>((resolve) => {
-        timeoutId = setBackgroundTimeout(() => resolve(null), requestedMs);
-      }),
-    ]);
+    const outcome: ReadOutcome | null =
+      slot.settled ??
+      (await new Promise<ReadOutcome | null>((resolve) => {
+        slot.waiter = resolve;
+        timeoutId = setBackgroundTimeout(() => {
+          // Unsubscribe before giving up, so the slot holds no reference to
+          // this call once it has returned.
+          if (slot.waiter === resolve) slot.waiter = null;
+          resolve(null);
+        }, requestedMs);
+      }));
     if (timeoutId !== undefined) {
       clearBackgroundTimer(timeoutId);
     }
