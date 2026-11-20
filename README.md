@@ -27,7 +27,7 @@ bun run build           # 型チェック + dist/ 生成
 bun run launcher:build  # Windows では launcher/bin/modbus_simple_logger.exe を生成
 ```
 
-React 19 / TypeScript 7 / Vite 8 / Tailwind CSS 4 / Plotly.js / Pyodide / Bun。Web 版は Service Worker でアセットをプリキャッシュし、オフラインでも動作します。計測中のデータはメモリ上のバッファで管理し、保存時は File System Access API 経由で TSV に書き出します。
+React 19 / TypeScript 7 / Vite 8 / Tailwind CSS 4 / shadcn/ui / Plotly.js / Pyodide / Bun。Web 版は Service Worker でアセットをプリキャッシュし、オフラインでも動作します。計測中のデータはメモリ上のバッファで管理し、保存時は File System Access API 経由で TSV に書き出します。
 
 ## ライセンス
 

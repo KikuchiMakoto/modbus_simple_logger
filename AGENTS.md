@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-- **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4** で構成された Modbus RTU ロガー SPA
+- **React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4 + shadcn/ui** で構成された Modbus RTU ロガー SPA
 - 通信は **Web Serial API**（非対応環境では自前の WebUSB CDC-ACM 実装 `src/modbus/webusbSerial.ts` でフォールバック）
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測中のプレビューはメモリ上の TypedArray バッファ、保存データは TSV（File System Access API ストリーミング）で扱う
@@ -71,7 +71,10 @@ src/
 │   ├── HamburgerMenu.tsx            # スライドインメニュー
 │   ├── SlideToConfirm.tsx            # スワイプ確定コントロール。誤クリックで起きては困る操作（Disconnect / Output Setter の全ch 0V / ScriptRunner の Clear）専用。ジェスチャ完了が確認そのもので、ダイアログは出さない
 │   ├── SlidePanel.tsx               # 共通スライドインパネル（HamburgerMenu 専用・backdrop アニメーション付き）
-│   └── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
+│   ├── FloatingWindow.tsx           # 共通フローティングウィンドウ（react-rnd・ドラッグ/リサイズ/前面化）
+│   └── ui/                          # shadcn/ui コンポーネント（button / card / input / textarea / native-select / checkbox）。下記「UI コンポーネント（shadcn/ui）」参照
+├── lib/
+│   └── utils.ts                     # shadcn/ui の `cn()`（clsx + tailwind-merge）
 └── utils/
     ├── calibration.ts               # キャリブレーション計算（HX711 mV/V・μɛ, ADS1115 V, スペック→a/b/c, 最小二乗フィット）
     ├── calibrationExport.ts         # キャリブレーションの JSON 入出力
@@ -98,6 +101,14 @@ scripts/
 ```
 
 ## アーキテクチャ上の重要点
+
+### UI コンポーネント（shadcn/ui）
+- **shadcn/ui の流儀で導入**（`components.json`・`@/` エイリアス＝`tsconfig.json` の `paths` と `vite.config.ts` の `resolve.alias`・`src/lib/utils.ts` の `cn()`・`src/components/ui/`）。コンポーネントはリポジトリが所有するコードであり、npm パッケージではない。追加は `bunx shadcn@latest add <name>` でも手書きでもよいが、**下記の制約に合わせて書き換えてから**入れること
+- **配色はトークン経由**（`index.css` の `:root` / `.dark` → `@theme inline`）。値は shadcn 既定のニュートラルではなく**アプリの配色ルール（emerald / slate）そのもの**。`--primary` = emerald-500、`--primary-hover` = emerald-400、`--primary-text` = emerald-600/400、`--input` = slate-300/700 等。トークンは `var(--color-emerald-500)` ではなく **oklch リテラル**で持つ（Tailwind は使われたテーマ変数しか出力しないため、参照先が無くなりうる）
+- **Button のバリアントは「見た目」ではなく「意味」**: `default`（その場の「進む」操作）/ `outline`（通常）/ `destructive`（作業を消す・ローズ枠）/ `recording`（計測中の停止ボタン・赤パルス）/ `accent`（緑枠・Grab）/ `ghost`。サイズは `default` / `touch`（ヘッダーの Connect・Start Save）/ `sm` / `xs` / `2xs` / `icon` / `icon-lg`。**disabled でも pointer-events を殺さない**（上流 shadcn と違う）— 「なぜ無効か」を `title` で出しているボタンがあるため
+- **ポータルを使う Radix 系（Select / Dialog / Popover / Tooltip / DropdownMenu 等）は導入しないこと**。ポータルは `<body>` 直下へ描画され、`#root` の CSS `zoom`（UI 拡大率）の外に出る — トリガーだけ拡大されてポップアップが等倍のまま、位置も別座標系で計算されてずれる。選択肢は **`NativeSelect`**（ブラウザ描画のネイティブポップアップなので問題が無い）、ツールチップは既存の `group-hover` の absolute ボックスで書く。Checkbox（Radix）はポータルを持たないので可
+- アイコンは lucide-react を入れず**インライン SVG**（Checkbox のチェックも同様）。プリキャッシュされ exe に焼かれるバンドルに、1〜2個のグリフのためにアイコンパッケージを載せない
+- 意図的に shadcn 化していないもの: `SlideToConfirm` / `HoldToConfirm`（ジェスチャ自体が仕様）、`ThemeToggle`、タブ/セグメント切替（`ManualPanel` / `TutorialPanel` / `InputCalibratorPanel` / `ScriptRunnerPanel`）、`HamburgerMenu` の行、`main.tsx` の Error Boundary のフォールバック（壊れたときの画面は依存を最小にする）。`HoldToConfirm` に見た目を合わせるときは `buttonVariants({ variant, size })` の文字列を `className` に渡す
 
 ### Modbus 通信（`webserialClient.ts`）
 - `AsyncMutex` で転送の排他制御
@@ -239,7 +250,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **表示は `formatFloat32`（`utils/floatFormat.ts`）＝ 読み戻して同じ float32 になる最短の10進文字列**。Parameter は `Float32Array`（SAB）なので `0.3` は `0.30000001192092896` として出てくる。**`toFixed(3)` で丸めて隠さないこと** — 桁を固定すると 2.5e-5 も 120000.5 も嘘の値で表示され、「書き戻すのと違う値を見せるエディタ」になる。最短往復表記なら `0.3` は `0.3`、本当に9桁要る値は9桁出る（JS が double に対してやっているのと同じ規則を1段下で適用しているだけ）
   - **Parameter の値が出る場所は全部このルール**（v6.9〜）: Param Editor のセル・**メインページの Parameter カード**（`App.tsx`）・**TSV の `par_*` 列**（`tsvFormat.ts`）。以前カードと TSV だけ `toFixed(3)` だったため、**同じ ch が窓では `0.000025`、カードと保存ファイルでは `0`** という状態になっていた。AI 側の `toFixed(physicalPrecision)` を Parameter に流用しないこと — あちらは分解能の宣言された物理量、こちらはスクリプトが勝手にスケールを決める無単位の値で、3桁に根拠が無い
   - カードは幅が固定なので `truncate` + `title` で溢れを処理する（**カードを広げない**。16枚が横一列に並ぶレイアウトが崩れる）。全桁を見る場所は Param Editor
-- **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中はメインページのラベル入力が編集不可（Param Editor 側はそもそも表示専用）。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE` / `LABEL_LOCKED_CLASS`）
+- **ラベルは Accept Risk でも解放しない**。`locked`（＝`scriptRunner.scriptRunning`）中はメインページのラベル入力が編集不可（Param Editor 側はそもそも表示専用）。理由は値と違って競合ではなく記録の方 — スクリプト自身が `SetParamLabel` で改名しうるし、その名前で System Log と TSV ヘッダーが書かれる。途中で名前が変わった run は後から突き合わせられない。**AI/AO のラベルにも同じロックを掛けてある**（あちらにスクリプト経路は無いが、「ラベルはこの run が何だったかの記録」を全ページで1つの規則にするため。`App.tsx` の `LABEL_LOCKED_TITLE`。見た目は `ui/input.tsx` の disabled スタイル）
 - **ヘッダーの `Accept Risk` チェックボックスは値だけの実行中ロック解除**。既定では ScriptRunner 実行中はラベルも値も編集不可（`locked`）だが、チェックを入れると `valuesLocked = locked && !acceptRisk` で**値だけ**を解放する。**ロックが再度かかる（新しい Run が始まる）たびに自動でオフへ戻す**（前回の Run で受け入れたリスクを次の Run に持ち越させない）。有効時は amber の注記に切り替え、無効時（ロック中・未チェック）は既存の slate 注記のまま
 - **最下部の全消去は `SlideToConfirm`**（16ch の値を 0 に。**ラベルには触らない** — 表示しかしていないパネルが名前を消すのはおかしい）。**スクロール領域の外**に置くこと — 中に入れると「一番下までスクロールしたときだけ現れる操作」になり、スクロールの延長で手が届いてしまう。実行中（`locked`）は Accept Risk に関係なく無効（全消去は狙ったセルへの編集ではない）
 
@@ -428,7 +439,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - `RELEASE_NOTE.md` はタグ間のコミットを要約する。各版にタグ作成日（`YYYY-MM-DD`、軽量タグのみ対象コミットの日付）を記し、最低1行、目標5行、最大20行とする。変更量の少ない版は短く、重要な変更が多い版は項目を分けて記す。タグのない中間版は次のタグに含める
 - **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う
-- **`.card` / `.button-*` を上書きする派生クラスは `index.css` の末尾に置く**（`.card-tight` / `.button-compact` / `.button-touch`）。これらは**未レイヤーの素の CSS** で、Tailwind のユーティリティは `@layer utilities` にあるため、`class` 属性に `p-1` や `py-0.5` を並べても**書いた順序に関係なく必ず負ける**。派生クラスが効くのは定義順のみが根拠なので、`.button-stop-save-pulse` などより後ろから動かさないこと
+- **旧 `.card` / `.button-*` / `.input-*` の未レイヤー CSS クラスは撤去済み**（shadcn/ui 移行）。カード・ボタン・入力は `@/components/ui/*` を使い、サイズや余白の上書きは `className` で渡す（`cn()` の tailwind-merge が同種ユーティリティを置き換える。例: `<Card className="p-1">`）。**`index.css` に未レイヤーのコンポーネントクラスを新設しないこと** — Tailwind のユーティリティ（`@layer utilities`）に必ず勝ってしまい、`className` での上書きが効かなくなる。唯一の例外は `.stop-save-pulse`（`recording` バリアントのアニメーション。キーフレームが背景色を持つので意図的に未レイヤー）
 - **`launcher/` は `.gitignore` 対象**。新規ファイルを追加したら `git add -f launcher/<file>` が必要（既存ファイルの更新は不要）。`launcher/bin/` は対象外のまま — exe バイナリは**コミットしない**
 - **実行形態の判定に `location.hostname` を使わないこと**。判定は `utils/appMode.ts` の `isLauncherMode` / `isLauncherServed` のみを根拠とし、その実体は launcher が `index.html` の `<head>` へ差し込む `<meta name="msl-runtime">` である。hostname 判定（v3.12 以前）は「launcher だけがループバックを bind する」ことに依存していたため脆く、マーカーを差し込むのは `launcher/server.ts` の `stampRuntimeMarker` の1箇所で、`dist/` 自体は書き換えない（Pages 配信物とバイト同一を維持するため）
 - 不要な大規模リファクタリングは避け、目的に対して最小差分で変更する
@@ -438,7 +449,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **UI レイアウト**: AI Input カードの縦レベルメーターは `w-4`、AO カードにはレベルメーターを設けない。数値色は `getLevelColor()` で Raw/Phy はレベル連動、Voltage は固定青 (`text-sky-600`) を維持する
 - **AI Raw の表示桁は整数のまま**（i16t の1通りしかないので）
 - **配色ルール（重要）**: 基調は **緑（emerald）とグレー（slate）**。状態を伝える必要が無い新規 UI 要素は、この2色だけで組む。
-  - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（`.button-primary` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
+  - 緑はライト/ダークで濃淡を変える: 塗り = `bg-emerald-500 text-emerald-950 hover:bg-emerald-400`（Button の `default` バリアント＝トークン `--primary` / `--primary-hover` と同一）、文字/枠 = `text-emerald-600 dark:text-emerald-400` / `hover:border-emerald-400`、選択タブなどの塗り = `bg-emerald-500 text-emerald-950`
   - UI 表示文言は英語で統一する（アプリ既存 UI に合わせる）
   - **状態色は許可されている**（v4.5 で明文化）。禁止されているのは「装飾として色を増やすこと」であって、状態を色で伝えること自体ではない:
     - **警告 = 黄／橙**（`amber` / `yellow`）。「このままだと困ったことになる」「取り戻せないデータがある」の類。文字/枠 = `text-amber-600 dark:text-amber-400`、塗り = `bg-amber-500`
@@ -452,7 +463,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **キャリブレーションのロック**: ScriptRunner 実行中（`scriptRunner.scriptRunning`）は、スケール係数の書き換えを凍結する。`CalibrationPanel` は a・b セルと Load を無効化し、**オフセット c の直接編集と Tare は許可**（c調整は Tare と等価な原点調整のため）。`InputCalibratorPanel` は「適用」（a/b/c 一括上書き）のみ無効化し、プレビューまでは可能。スクリプトからのキャリブレーション書込み口は `SetAiTare`（c のみ）だけなので、Tare 系のみ通せば実行中の制御ループの Phy スケールが動く事故を防げる。Save 中はロックしない（TSV に raw も常時記録されるため phy は復元可能）
 - **Input Calibrator の2方式**（`InputCalibratorPanel` + `utils/calibration.ts`）: HX711(CH00-07)・ADS1115(CH08-15) を**1ウィンドウ**で扱う。チャネル選択は CH00-15 の単一ドロップダウンで、どちらのフロントエンドかは ch 番号（AI マップの前半/後半）から決まる。チップ種別を先に選ばせるタブは置かない（ch の属性であって、ユーザーが選ぶモードではないため）。**既定タブは実測フィット**（仕様書が手元に無い前提。Measured を先頭・初期表示に）。
   - ①実測フィット = `fitCalibration()`（2点→直線 a=0 / 3点以上・3種以上のRaw→2次最小二乗 / Raw2種→直線最小二乗 / それ未満→null）。各行の Grab は タップ=瞬間Raw / 長押し=離すまでの平均Raw。UI は3ゾーン（上部固定=ch/タブ/XYプロット(自前SVG・X:Raw Y:Phy＋フィット曲線)/点数コントロール/列見出し「# Physical Raw」、中央=測定点行のみスクロール、下部固定=プレビュー/適用）で、点数が増えてもプロットと見出しが見え続ける。
-  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`rawToDisplayValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
+  - ②スペック計算 = `specToCalibration(感度, slopePerRaw)` で `b = 感度 × slopePerRaw`, a=0, c=0。`slopePerRaw` は基準（分母）単位ごとに `getChannelInfo(ch).options` が供給する（チップ名・基準単位の見出し・既定単位も同じ1関数が ch から返す）: HX711 は μV/V・mV/V・με の固定傾き（`hx711SlopePerRaw`）、ADS1115 は V/mV のみ（`App.tsx` で `rawToVoltageValue(1, voltageConfig[ch])` から算出）。以前の Raw オプション（傾き1）は `b = 感度` の単なる上書きで意味がないため削除済み。
   - 物理量(Phy)側の単位ラベルは持たない（従来どおり単位なしの Phy 表記）。適用は当該chの a/b/c を丸ごと上書き。TSV エクスポートはウィンドウ名がチップを示さなくなったため、`Sensor` キーで HX711/ADS1115 を別途記録する。
 - **Output Setter**（`OutputTesterPanel`）: AO(GP8403) の手動出力窓。UI 名: Output Setter。ch 選択 → 0/0.5/1V 刻みのプリセットは**押下即出力**、手入力欄のみ Apply（打ちかけの数値をハードウェアに送らないため）。物理量スケールは持たない（AI 側のキャリブレーションに相当するものが出力側には無く、扱うのは DAC 実寸の 0-10 V だけ）。未接続時と ScriptRunner 実行中（AO の所有者が二重になる）は出力を無効化する。
 
