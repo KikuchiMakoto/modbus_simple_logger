@@ -11,6 +11,7 @@ import {
 } from '../utils/scriptTabs';
 import { FloatingWindow } from './FloatingWindow';
 import { HoldToConfirm } from './HoldToConfirm';
+import { logSystem, SOURCE } from '../utils/systemLog';
 import { Button, buttonVariants } from '@/components/ui/button';
 
 type ChannelLabels = {
@@ -70,10 +71,18 @@ export function ScriptRunnerPanel({
   };
 
   const copyAiPrompt = () => {
-    navigator.clipboard.writeText(buildAiPrompt(language, channelLabels, deviceMemo)).then(() => {
-      setPromptCopied(true);
-      window.setTimeout(() => setPromptCopied(false), 1500);
-    });
+    navigator.clipboard
+      .writeText(buildAiPrompt(language, channelLabels, deviceMemo))
+      .then(() => {
+        setPromptCopied(true);
+        window.setTimeout(() => setPromptCopied(false), 1500);
+      })
+      .catch((err) => {
+        // Otherwise nothing says the copy failed, and the user pastes whatever
+        // older prompt is still on the clipboard into the assistant.
+        console.warn('Clipboard write failed:', err);
+        logSystem('WARN', SOURCE.runner, 'Could not copy the AI prompt to the clipboard');
+      });
   };
 
   // A tab's code exists nowhere but this app — no file behind it, and only
