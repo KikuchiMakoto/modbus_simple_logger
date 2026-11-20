@@ -63,6 +63,10 @@ let initPromise: Promise<void> | null = null;
 // thread sends `init` only once, when it creates the worker.
 let initArgs: Extract<ScriptWorkerRequest, { type: 'init' }> | null = null;
 let running = false;
+// Every `run` message gets the next number; an `interrupt` that arrives while
+// nothing is executing cancels all runs numbered up to then (see 'interrupt').
+let runSeq = 0;
+let cancelledThroughSeq = 0;
 let aiRawShare: Float32Array | null = null;
 let aiPhysicalShare: Float32Array | null = null;
 let aoShare: Float32Array | null = null;
@@ -232,15 +236,24 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       } catch {
         // Ignore: the task may have already finished.
       }
-    } else if (interruptBuffer) {
+    } else {
       // No script executing yet (e.g. Stop pressed while Pyodide is still
-      // initializing): keep the stop request armed so a pending run aborts.
-      interruptBuffer[0] = INTERRUPT_PENDING;
+      // initializing): cancel every run queued so far. Done by sequence number
+      // and NOT by re-arming the shared byte: the main thread wrote PENDING
+      // itself when Stop was pressed, and if the user has pressed Run again
+      // since, it has already cleared the byte for that newer run — writing
+      // PENDING here (this message is handled after that) would abort the new
+      // run instead of the old one.
+      cancelledThroughSeq = runSeq;
     }
     return;
   }
 
   if (message.type === 'run') {
+    const seq = ++runSeq;
+    // Set once this message has claimed the runner; only then does `finally`
+    // own `running` and the interrupt byte.
+    let claimed = false;
     if (!initPromise) {
       // A previous initialization failed (its promise was cleared so it could be
       // retried). Retry here rather than leaving the worker permanently dead:
@@ -267,6 +280,19 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
       if (!pyodide) {
         throw new Error('Pyodide is not available');
       }
+      // Stopped while Pyodide was booting. Silent: the main thread already
+      // reported this run as stopped when Stop was pressed, and an
+      // 'interrupted' sent now would be taken as the end of whatever run the
+      // user has started since (Run → Stop → Run during boot).
+      if (seq <= cancelledThroughSeq) return;
+      // Two runs queued during boot that were never cancelled cannot both
+      // start: the main thread blocks Run while one is executing, but the
+      // check above the await cannot see a run that is itself still waiting.
+      if (running) {
+        postWorkerMessage({ type: 'error', message: 'Script is already running' });
+        return;
+      }
+      claimed = true;
       if (interruptBuffer && interruptBuffer[0] === INTERRUPT_PENDING) {
         // Stop was pressed while initialization was still in progress: abort
         // instead of clearing the request and starting anyway.
@@ -305,8 +331,10 @@ self.onmessage = async (event: MessageEvent<ScriptWorkerRequest>) => {
         });
       }
     } finally {
-      running = false;
-      if (interruptBuffer) interruptBuffer[0] = INTERRUPT_NONE;
+      if (claimed) {
+        running = false;
+        if (interruptBuffer) interruptBuffer[0] = INTERRUPT_NONE;
+      }
     }
   }
 };
