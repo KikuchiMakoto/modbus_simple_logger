@@ -1,22 +1,23 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { FloatingWindow } from './FloatingWindow';
+import { DocLanguageSelect } from './DocLanguageSelect';
+import { useDocLang, type DocLang } from '../utils/docLanguage';
 
-// Only this window is bilingual. The rest of the app is English, but the wiring
-// references it quotes (NDIS colour conventions, the Showa Sokki page) are
-// Japanese-language material, and the people running the cables read Japanese.
-// English is the default so the window matches the app on first open; the
-// choice then sticks for the session.
-type ManualLang = 'en' | 'ja';
-
-type Bilingual = { en: string; ja: string };
+// Multilingual, like the Tutorial (see utils/docLanguage.ts for why only these
+// two windows are). The wiring references it quotes (NDIS colour conventions,
+// the Showa Sokki page) are Japanese-language material; the people running the
+// cables read any of the supported languages. English is the default so the
+// window matches the app on first open; the choice is shared with the Tutorial
+// and remembered across launches.
+type Localized = Record<DocLang, string>;
 
 const CABLE_ROWS: {
   color: string;
   dot: string;
   abbr: string;
   name: string;
-  strain: Bilingual;
-  elec: Bilingual;
+  strain: Localized;
+  elec: Localized;
   ndis: string;
 }[] = [
   {
@@ -24,8 +25,8 @@ const CABLE_ROWS: {
     dot: 'bg-red-500',
     abbr: 'E+',
     name: 'Excitation +',
-    strain: { en: 'Input +', ja: '入力 +' },
-    elec: { en: 'Supply', ja: '電源' },
+    strain: { en: 'Input +', ja: '入力 +', 'zh-CN': '输入 +', 'zh-TW': '輸入 +', es: 'Entrada +', ko: '입력 +' },
+    elec: { en: 'Supply', ja: '電源', 'zh-CN': '电源', 'zh-TW': '電源', es: 'Alimentación', ko: '전원' },
     ndis: 'A',
   },
   {
@@ -33,8 +34,8 @@ const CABLE_ROWS: {
     dot: 'bg-green-500',
     abbr: 'S+',
     name: 'Signal +',
-    strain: { en: 'Output +', ja: '出力 +' },
-    elec: { en: 'Positive output', ja: '正出力' },
+    strain: { en: 'Output +', ja: '出力 +', 'zh-CN': '输出 +', 'zh-TW': '輸出 +', es: 'Salida +', ko: '출력 +' },
+    elec: { en: 'Positive output', ja: '正出力', 'zh-CN': '正输出', 'zh-TW': '正輸出', es: 'Salida positiva', ko: '정(+) 출력' },
     ndis: 'B',
   },
   {
@@ -42,8 +43,8 @@ const CABLE_ROWS: {
     dot: 'bg-slate-800 dark:bg-slate-400',
     abbr: 'E−',
     name: 'Excitation −',
-    strain: { en: 'Input −', ja: '入力 −' },
-    elec: { en: 'Ground', ja: 'グランド' },
+    strain: { en: 'Input −', ja: '入力 −', 'zh-CN': '输入 −', 'zh-TW': '輸入 −', es: 'Entrada −', ko: '입력 −' },
+    elec: { en: 'Ground', ja: 'グランド', 'zh-CN': '地', 'zh-TW': '接地', es: 'Tierra', ko: '접지' },
     ndis: 'C',
   },
   {
@@ -51,8 +52,8 @@ const CABLE_ROWS: {
     dot: 'bg-slate-200 border border-slate-400',
     abbr: 'S−',
     name: 'Signal −',
-    strain: { en: 'Output −', ja: '出力 −' },
-    elec: { en: 'Negative output', ja: '負出力' },
+    strain: { en: 'Output −', ja: '出力 −', 'zh-CN': '输出 −', 'zh-TW': '輸出 −', es: 'Salida −', ko: '출력 −' },
+    elec: { en: 'Negative output', ja: '負出力', 'zh-CN': '负输出', 'zh-TW': '負輸出', es: 'Salida negativa', ko: '부(−) 출력' },
     ndis: 'D',
   },
   {
@@ -60,13 +61,13 @@ const CABLE_ROWS: {
     dot: 'bg-yellow-400',
     abbr: 'SH',
     name: 'Shield',
-    strain: { en: 'Shield', ja: 'シールド' },
-    elec: { en: 'Shield', ja: 'シールド' },
+    strain: { en: 'Shield', ja: 'シールド', 'zh-CN': '屏蔽', 'zh-TW': '遮蔽', es: 'Blindaje', ko: '실드' },
+    elec: { en: 'Shield', ja: 'シールド', 'zh-CN': '屏蔽', 'zh-TW': '遮蔽', es: 'Blindaje', ko: '실드' },
     ndis: 'E',
   },
 ];
 
-const TEXT: Record<ManualLang, {
+const TEXT: Record<DocLang, {
   silkFirst: string;
   cableHeading: string;
   cableWarning: string;
@@ -193,10 +194,182 @@ const TEXT: Record<ManualLang, {
     referenceHeading: '参考資料',
     referenceLink: '昭和測器 — コネクタ種類と接続方法',
   },
+  'zh-CN': {
+    silkFirst:
+      '一切以电路板上的丝印为准。以下各图均只是多种版本中的一种——接线前请务必核对板上的实际印字。',
+    cableHeading: 'HX711 电缆接线（称重传感器 / 位移计）',
+    cableWarning: '⚠️ 电缆颜色因厂家而异。务必查阅数据手册。',
+    colColor: '颜色',
+    colAbbr: '缩写',
+    colName: '功能（英文）',
+    colStrain: '应变侧功能',
+    colElec: '电气功能',
+    ndisHeading: 'NDIS 连接器引脚排列',
+    ndisNote: '7 针 NDIS 连接器，广泛用于称重传感器和位移计。',
+    ndisView: '（插座，正视图）',
+    ndisUnused: '本板未使用。',
+    screwEntry: '入线口',
+    hxLabel: 'HX711 输入 — 秋月电子模块，1×04',
+    hxIntro: '每通道一个端子台，4 个端子。',
+    hxBlockCaption: '入线口朝下：从左起依次为 E+、E−、S−、S+。',
+    hxExcitationDesc: '电桥激励。E+ 为供电端，E− 为回线。',
+    hxSignalDesc: '电桥信号，S+ 和 S−。',
+    hxShieldDesc: '屏蔽线（黄），电缆带屏蔽层时使用。将其接到 E− 上。',
+    hxVariantNote: '定制版使用 1×05，第 5 个端子为 SH。',
+    hxVariantCaption: '入线口朝下：从左起依次为 E+、E−、S−、S+、SH。',
+    hxVariantShieldDesc: '屏蔽线有专用端子。请勿再同时接到 E− 上。',
+    adsLabel: 'ADS1115 输入 — 1×02，每通道一个',
+    adsIntro: '共 8 个端子台，每通道一个。',
+    adsBlockCaption: '入线口朝下：左为 GND，右为 SIG。',
+    adsSigDesc: '信号端。丝印为十六进制通道号：8–15 印作 8–F。',
+    adsGroundDesc: '地。',
+    adsGroundShortSilk: '部分电路板的丝印仅为 "G"。',
+    gpLabel: '模拟输出 — Gravity GP8403，1×03，2 通道',
+    gpIntro: '每个端子台 2 个通道，共用中间的 GND。',
+    gpBlockCaption: '入线口朝下：从左起依次为 1、GND、0——通道 0 在右侧。',
+    gpOutDesc: '0–10 V 输出。丝印为 VOUT1 和 VOUT0。',
+    gpGroundDesc: '地，两个通道共用。',
+    gpVariantNote:
+      '使用 Gravity 模块以外的 DAC 时，输出端可能与 ADS1115 侧一样采用 1×02 端子台。部分电路板将两个端子台合并为一个 1×04。',
+    gpVariantCaption: '入线口朝下：左为 GND，右为通道号。',
+    gpVariantOutDesc: '0–10 V 输出，每通道一个端子台。',
+    gpVariantGroundDesc: '地，每个端子台一个，不共用。',
+    referenceHeading: '参考资料',
+    referenceLink: '昭和测器 — 连接器类型与接线方法（日文）',
+  },
+  'zh-TW': {
+    silkFirst:
+      '一律以電路板上的絲印為準。以下各圖都只是多種版本中的其中一種，接線前請先確認實物上的印字。',
+    cableHeading: 'HX711 線材接線（荷重元／位移計）',
+    cableWarning: '⚠️ 線材顏色因廠牌而異，請務必確認規格書。',
+    colColor: '顏色',
+    colAbbr: '縮寫',
+    colName: '功能（英文）',
+    colStrain: '功能（應變計）',
+    colElec: '電氣功能',
+    ndisHeading: 'NDIS 連接器腳位配置',
+    ndisNote: '7 針 NDIS 連接器，廣泛用於荷重元與位移計。',
+    ndisView: '（插座，正視圖）',
+    ndisUnused: '本電路板未使用。',
+    screwEntry: '入線口',
+    hxLabel: 'HX711 輸入 — 秋月模組，1×04',
+    hxIntro: '每個通道一組端子台，每組四個端子。',
+    hxBlockCaption: '入線口朝下：由左至右為 E+、E−、S−、S+。',
+    hxExcitationDesc: '電橋激勵。E+ 為供電端，E− 為回流端。',
+    hxSignalDesc: '電橋訊號，S+ 與 S−。',
+    hxShieldDesc: '遮蔽線（黃色），若線材有的話。接到 E−。',
+    hxVariantNote: '客製版使用 1×05，第五個端子為 SH。',
+    hxVariantCaption: '入線口朝下：由左至右為 E+、E−、S−、S+、SH。',
+    hxVariantShieldDesc: '遮蔽線有專用端子。請勿同時接到 E−。',
+    adsLabel: 'ADS1115 輸入 — 1×02，每通道一組',
+    adsIntro: '共八組，每個通道一組。',
+    adsBlockCaption: '入線口朝下：左為 GND，右為 SIG。',
+    adsSigDesc: '訊號端。絲印為十六進位的通道編號：8–15 標示為 8–F。',
+    adsGroundDesc: '接地。',
+    adsGroundShortSilk: '部分電路板的絲印只標「G」。',
+    gpLabel: '類比輸出 — Gravity GP8403，1×03，兩通道',
+    gpIntro: '每組兩個通道，共用中間的 GND。',
+    gpBlockCaption: '入線口朝下：1、GND、0 — 通道 0 在右側。',
+    gpOutDesc: '0–10 V 輸出。絲印為 VOUT1 與 VOUT0。',
+    gpGroundDesc: '接地，兩個通道共用。',
+    gpVariantNote:
+      '若使用 Gravity 模組以外的 DAC，輸出端可能與 ADS1115 側相同，採用 1×02 端子台。部分電路板會將兩組合併為一個 1×04。',
+    gpVariantCaption: '入線口朝下：左為 GND，右為通道編號。',
+    gpVariantOutDesc: '0–10 V 輸出，每個通道一組。',
+    gpVariantGroundDesc: '接地，每組各一個，不共用。',
+    referenceHeading: '參考資料',
+    referenceLink: '昭和測器（Showa Sokki）— 連接器種類與接線方式（日文）',
+  },
+  'es': {
+    silkFirst:
+      'La serigrafía de tu placa siempre manda. Cada esquema de abajo corresponde a solo una de varias versiones de la placa: comprueba lo impreso en la tuya antes de cablear.',
+    cableHeading: 'Cableado del HX711 (célula de carga / transductor de desplazamiento)',
+    cableWarning: '⚠️ Los colores de los cables varían según el fabricante. Consulta siempre la hoja de datos.',
+    colColor: 'Color',
+    colAbbr: 'Abrev.',
+    colName: 'Función (inglés)',
+    colStrain: 'Función en el puente',
+    colElec: 'Función eléctrica',
+    ndisHeading: 'Asignación de pines del conector NDIS',
+    ndisNote: 'Conector NDIS de 7 pines. Muy usado en células de carga y transductores de desplazamiento.',
+    ndisView: '(conector hembra, vista frontal)',
+    ndisUnused: 'No se usa en esta placa.',
+    screwEntry: 'entrada de cable',
+    hxLabel: 'Entrada HX711 — módulo Akizuki, 1×04',
+    hxIntro: 'Un bloque por canal, cuatro bornes.',
+    hxBlockCaption: 'Entrada de cable hacia abajo: E+, E−, S−, S+ desde la izquierda.',
+    hxExcitationDesc: 'Excitación del puente. E+ alimentación, E− retorno.',
+    hxSignalDesc: 'Señal del puente, S+ y S−.',
+    hxShieldDesc: 'Blindaje (amarillo), si el cable lo tiene. Conéctalo a E−.',
+    hxVariantNote: 'Una versión a medida usa un 1×05, con SH como quinto borne.',
+    hxVariantCaption: 'Entrada de cable hacia abajo: E+, E−, S−, S+, SH desde la izquierda.',
+    hxVariantShieldDesc: 'El blindaje tiene su propio borne. No lo conectes también a E−.',
+    adsLabel: 'Entrada ADS1115 — 1×02, uno por canal',
+    adsIntro: 'Ocho bloques, uno por canal.',
+    adsBlockCaption: 'Entrada de cable hacia abajo: GND a la izquierda, SIG a la derecha.',
+    adsSigDesc: 'Lado de señal. Serigrafiado con el número de canal en hexadecimal: 8–15 aparece como 8–F.',
+    adsGroundDesc: 'Tierra.',
+    adsGroundShortSilk: 'Algunas placas lo serigrafían solo como "G".',
+    gpLabel: 'Salida analógica — Gravity GP8403, 1×03, dos canales',
+    gpIntro: 'Dos canales por bloque, que comparten el GND central.',
+    gpBlockCaption: 'Entrada de cable hacia abajo: 1, GND, 0 — el canal 0 está a la derecha.',
+    gpOutDesc: 'Salida de 0–10 V. Serigrafiado VOUT1 y VOUT0.',
+    gpGroundDesc: 'Tierra, compartida por ambos canales.',
+    gpVariantNote:
+      'Con un DAC distinto del módulo Gravity, la salida puede usar el mismo bloque 1×02 que el lado ADS1115. Algunas placas unen los dos en un único 1×04.',
+    gpVariantCaption: 'Entrada de cable hacia abajo: GND a la izquierda, número de canal a la derecha.',
+    gpVariantOutDesc: 'Salida de 0–10 V, un bloque por canal.',
+    gpVariantGroundDesc: 'Tierra, una por bloque. No se comparte.',
+    referenceHeading: 'Referencia',
+    referenceLink: 'Showa Sokki — tipos de conectores y cableado (en japonés)',
+  },
+  'ko': {
+    silkFirst:
+      '항상 보드의 실크 인쇄를 우선하십시오. 아래 그림은 모두 여러 구성 중 하나의 예일 뿐입니다. 배선 전에 실제 인쇄를 확인하십시오.',
+    cableHeading: 'HX711 케이블 결선 (로드셀 / 변위계)',
+    cableWarning: '⚠️ 케이블 색상은 제조사마다 다릅니다. 반드시 데이터시트를 확인하십시오.',
+    colColor: '색상',
+    colAbbr: '약칭',
+    colName: '기능(영문)',
+    colStrain: '스트레인 측 역할',
+    colElec: '전기적 역할',
+    ndisHeading: 'NDIS 커넥터 핀 배치',
+    ndisNote: '7핀 NDIS 커넥터입니다. 로드셀과 변위계에 널리 사용됩니다.',
+    ndisView: '(소켓, 정면도)',
+    ndisUnused: '이 보드에서는 사용하지 않습니다.',
+    screwEntry: '삽입구',
+    hxLabel: 'HX711 입력 — Akizuki 모듈, 1×04',
+    hxIntro: '채널당 블록 1개, 단자 4개입니다.',
+    hxBlockCaption: '삽입구를 아래로: 왼쪽부터 E+, E−, S−, S+.',
+    hxExcitationDesc: '브리지 여기 전원입니다. E+는 공급, E−는 귀환입니다.',
+    hxSignalDesc: '브리지 신호, S+ 및 S−.',
+    hxShieldDesc: '케이블에 실드(노란색)가 있는 경우, E−에 함께 접속하십시오.',
+    hxVariantNote: '주문 제작품은 1×05를 사용하며, 다섯 번째 단자가 SH입니다.',
+    hxVariantCaption: '삽입구를 아래로: 왼쪽부터 E+, E−, S−, S+, SH.',
+    hxVariantShieldDesc: '실드 전용 단자입니다. E−에 중복으로 접속하지 마십시오.',
+    adsLabel: 'ADS1115 입력 — 1×02, 채널당 1개',
+    adsIntro: '채널당 1개, 총 8개 블록입니다.',
+    adsBlockCaption: '삽입구를 아래로: 왼쪽 GND, 오른쪽 SIG.',
+    adsSigDesc: '신호 측입니다. 실크에는 채널 번호가 16진수로 인쇄되어 있어 8–15는 8–F로 표기됩니다.',
+    adsGroundDesc: '접지.',
+    adsGroundShortSilk: '실크가 "G"로만 표기된 보드도 있습니다.',
+    gpLabel: '아날로그 출력 — Gravity GP8403, 1×03, 2채널',
+    gpIntro: '블록당 2채널이며, 가운데 GND를 공유합니다.',
+    gpBlockCaption: '삽입구를 아래로: 1, GND, 0 — 채널 0이 오른쪽입니다.',
+    gpOutDesc: '0–10 V 출력. 실크 표기는 VOUT1 및 VOUT0입니다.',
+    gpGroundDesc: '접지. 두 채널이 공유합니다.',
+    gpVariantNote:
+      'Gravity 모듈 이외의 DAC를 사용하는 경우, 출력 측도 ADS1115 측과 동일한 1×02 블록일 수 있습니다. 두 개를 하나의 1×04로 합친 보드도 있습니다.',
+    gpVariantCaption: '삽입구를 아래로: 왼쪽 GND, 오른쪽 채널 번호.',
+    gpVariantOutDesc: '0–10 V 출력. 채널당 블록 1개입니다.',
+    gpVariantGroundDesc: '접지. 블록마다 1개이며 공유하지 않습니다.',
+    referenceHeading: '참고 자료',
+    referenceLink: 'Showa Sokki — 커넥터 종류 및 결선 방법(일본어)',
+  },
 };
 
 export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [lang, setLang] = useState<ManualLang>('en');
+  const lang = useDocLang();
   const t = TEXT[lang];
 
   return (
@@ -206,7 +379,7 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
       title="Connector Manual"
       defaultWidth={520}
       defaultHeight={620}
-      headerActions={<LangToggle lang={lang} onChange={setLang} />}
+      headerActions={<DocLanguageSelect label="Manual language" />}
     >
       <div
         lang={lang}
@@ -416,33 +589,6 @@ export function ManualPanel({ open, onClose }: { open: boolean; onClose: () => v
 
       </div>
     </FloatingWindow>
-  );
-}
-
-function LangToggle({ lang, onChange }: { lang: ManualLang; onChange: (next: ManualLang) => void }) {
-  return (
-    <div
-      role="group"
-      aria-label="Manual language"
-      translate="no"
-      className="flex overflow-hidden rounded border border-slate-300 dark:border-slate-700"
-    >
-      {(['en', 'ja'] as const).map((value) => (
-        <button
-          key={value}
-          type="button"
-          onClick={() => onChange(value)}
-          aria-pressed={lang === value}
-          className={`px-2.5 py-1 text-xs font-semibold uppercase leading-none ${
-            lang === value
-              ? 'bg-emerald-500 text-white'
-              : 'text-slate-600 hover:text-emerald-500 dark:text-slate-300 dark:hover:text-emerald-400'
-          }`}
-        >
-          {value}
-        </button>
-      ))}
-    </div>
   );
 }
 
