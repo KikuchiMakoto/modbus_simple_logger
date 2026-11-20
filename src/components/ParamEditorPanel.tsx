@@ -3,6 +3,9 @@ import { FloatingWindow } from './FloatingWindow';
 import { SlideToConfirm } from './SlideToConfirm';
 import { PARAM_CHANNELS } from '../constants';
 import { formatFloat32 } from '../utils/floatFormat';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 
 type ParamValueCellProps = {
   value: number;
@@ -64,8 +67,7 @@ const ParamValueCell = memo(function ParamValueCell({
 
   return (
     <>
-      <input
-        type="text"
+      <Input
         inputMode="decimal"
         value={draft}
         disabled={disabled}
@@ -79,7 +81,7 @@ const ParamValueCell = memo(function ParamValueCell({
           if (e.key === 'Escape') revert();
         }}
         title={pending ? 'Not applied yet — press Set or Enter (Escape to discard)' : undefined}
-        className={`w-20 shrink-0 rounded border px-1 py-0 text-right text-xs font-semibold text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:text-slate-100 dark:disabled:bg-slate-800 dark:disabled:text-slate-500 ${
+        className={`w-20 shrink-0 px-1 py-0 text-right text-xs font-semibold dark:disabled:bg-slate-800 ${
           pending && !valid
             ? 'border-rose-400 bg-rose-50 dark:border-rose-500 dark:bg-rose-950/40'
             : pending
@@ -87,8 +89,9 @@ const ParamValueCell = memo(function ParamValueCell({
               : 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-700'
         }`}
       />
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="2xs"
         onClick={apply}
         disabled={!canApply}
         aria-label={`Apply ${ariaLabel}`}
@@ -99,10 +102,10 @@ const ParamValueCell = memo(function ParamValueCell({
               ? 'Write this value to the channel'
               : 'Nothing to apply'
         }
-        className="shrink-0 rounded border border-slate-300 px-1.5 py-0 text-[0.65rem] font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400 dark:disabled:border-slate-700 dark:disabled:text-slate-600"
+        className="text-[0.65rem] dark:border-slate-600"
       >
         Set
-      </button>
+      </Button>
     </>
   );
 });
@@ -171,11 +174,12 @@ export function ParamEditorPanel({
       headerActions={
         locked && (
           <label className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium text-amber-600 dark:text-amber-400">
-            <input
-              type="checkbox"
+            {/* Amber, not the default emerald: ticking this is accepting a
+                warning, not a "go". */}
+            <Checkbox
               checked={acceptRisk}
-              onChange={(e) => setAcceptRisk(e.target.checked)}
-              className="h-3 w-3 accent-amber-500"
+              onCheckedChange={(checked) => setAcceptRisk(checked === true)}
+              className="size-3 border-amber-500 data-[state=checked]:border-amber-500 data-[state=checked]:bg-amber-500 data-[state=checked]:text-white"
             />
             Accept Risk
           </label>

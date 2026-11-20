@@ -34,6 +34,8 @@ import {
   type SystemLogEntry,
   type SystemLogLevel,
 } from '../utils/systemLog';
+import { Button } from '@/components/ui/button';
+import { NativeSelect } from '@/components/ui/native-select';
 
 // Slate for the two levels below the default threshold — they are detail, and
 // detail that shouts is detail nobody can read past. Amber/red/rose climb from
@@ -257,10 +259,10 @@ export function SystemLogBody({
 export function SystemLogLevelSelect({ className = '' }: { className?: string }) {
   const level = useSystemLogLevel();
   return (
-    <select
+    <NativeSelect
       value={level}
       onChange={(event) => setSystemLogLevel(event.target.value as SystemLogLevel)}
-      className={`rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${className}`}
+      className={className}
       aria-label="Minimum log level"
       title="Show this level and above. INFO is the run's story; DEBUG and TRACE add the detail behind a failure."
     >
@@ -269,7 +271,7 @@ export function SystemLogLevelSelect({ className = '' }: { className?: string })
           {entry}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
@@ -311,14 +313,15 @@ export function SystemLogCopyButton() {
   };
 
   return (
-    <button
-      type="button"
-      className="button-secondary py-1 text-xs disabled:opacity-50"
+    <Button
+      variant="outline"
+      size="sm"
+      className="text-foreground"
       onClick={copyLog}
       disabled={entries.length === 0}
       title="Copy the whole log to the clipboard, every level, in full"
     >
       {copied ? 'Copied!' : 'Copy'}
-    </button>
+    </Button>
   );
 }

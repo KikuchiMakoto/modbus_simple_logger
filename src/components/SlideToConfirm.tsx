@@ -31,7 +31,7 @@ export type SlideTone = 'warn' | 'neutral';
  *
  *   pill  a track with fully round ends. The default, and what this control
  *         looks like on its own: unmistakably something you drag.
- *   boxy  the same corner radius as an ordinary .button-* — for the one slot
+ *   boxy  the same corner radius as an ordinary Button (rounded-lg) — for the one slot
  *         where this control SWAPS with a plain button (header Connect →
  *         Disconnect) and the swap should not restyle the header.
  */
@@ -39,7 +39,7 @@ export type SlideShape = 'pill' | 'boxy';
 
 const SHAPE = {
   pill: { track: 'rounded-full', knob: 'rounded-full' },
-  // Track matches .button-primary's rounded-lg exactly. The knob is a step
+  // Track matches the Button's rounded-lg exactly. The knob is a step
   // tighter, as a nested corner has to be, and stays square-ish so it still
   // reads as the grabbable part rather than as part of the track.
   boxy: { track: 'rounded-lg', knob: 'rounded-md' },

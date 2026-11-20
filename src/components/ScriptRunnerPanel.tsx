@@ -11,6 +11,7 @@ import {
 } from '../utils/scriptTabs';
 import { FloatingWindow } from './FloatingWindow';
 import { HoldToConfirm } from './HoldToConfirm';
+import { Button, buttonVariants } from '@/components/ui/button';
 
 type ChannelLabels = {
   ai: string[];
@@ -156,9 +157,9 @@ export function ScriptRunnerPanel({
                 if (file) void importFile(file);
               }}
             />
-            <button
-              type="button"
-              className="button-secondary py-1 text-xs disabled:opacity-50"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => fileInputRef.current?.click()}
               disabled={scriptRunner.scriptRunning || !scriptRunner.canAddTab}
               title={
@@ -170,10 +171,10 @@ export function ScriptRunnerPanel({
               }
             >
               Import
-            </button>
-            <button
-              type="button"
-              className="button-secondary py-1 text-xs disabled:opacity-50"
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={exportActiveTab}
               disabled={scriptRunner.scriptRunning}
               title={
@@ -183,7 +184,7 @@ export function ScriptRunnerPanel({
               }
             >
               Export
-            </button>
+            </Button>
           </span>
           {/* Was a slide-to-confirm, which cost the width of a track this header
               no longer has to spare. Held instead of swiped: the gesture is
@@ -199,18 +200,14 @@ export function ScriptRunnerPanel({
             holdingLabel="Hold…"
             onConfirm={scriptRunner.clearScriptCode}
             disabled={!scriptRunner.scriptEditable}
-            // .button-danger carries no disabled state of its own, and a
-            // control that is dead while a script runs has to look it.
-            className="button-danger py-1 text-xs disabled:opacity-50"
+            // Styled as the destructive Button (HoldToConfirm renders its own
+            // <button> for the hold gesture, so it borrows the class string).
+            className={buttonVariants({ variant: 'destructive', size: 'sm' })}
             title={`Hold to reset ${scriptRunner.activeTab.name} to the example script`}
           />
-          <button
-            type="button"
-            className={
-              scriptRunner.scriptRunning
-                ? 'button-stop-save-pulse py-1 text-sm'
-                : 'button-primary py-1 text-sm'
-            }
+          <Button
+            size="touch"
+            variant={scriptRunner.scriptRunning ? 'recording' : 'default'}
             onClick={scriptRunner.toggleScriptRunner}
             disabled={!scriptRunner.scriptRunnerSupported}
             // One runner, one script at a time — so while something runs this
@@ -222,7 +219,7 @@ export function ScriptRunnerPanel({
             }
           >
             {scriptRunner.scriptRunning ? 'Stop' : 'Run'}
-          </button>
+          </Button>
         </>
       }
     >
@@ -357,9 +354,10 @@ export function ScriptRunnerPanel({
           <div className="flex select-none items-center justify-between px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200">
             API Reference
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="button-secondary py-0.5 text-[0.7rem]"
+              <Button
+                variant="outline"
+                size="xs"
+                className="text-[0.7rem]"
                 onClick={copyAiPrompt}
                 title="Copy an AI-ready prompt of this API reference to the clipboard"
               >
@@ -367,7 +365,7 @@ export function ScriptRunnerPanel({
                     act: the prompt goes somewhere the app cannot show, so
                     "Copied to Clipboard!" tells the reader where to paste it. */}
                 {promptCopied ? 'Copied to Clipboard!' : 'Copy AI Prompt'}
-              </button>
+              </Button>
               <CollapseButton
                 collapsed={!apiOpen}
                 onToggle={() => setApiOpen((v) => !v)}

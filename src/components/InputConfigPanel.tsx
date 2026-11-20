@@ -1,6 +1,7 @@
 import { type VoltageMode, VOLTAGE_MODES } from '../types';
 import { AI_CHANNELS } from '../constants';
 import { FloatingWindow } from './FloatingWindow';
+import { NativeSelect } from '@/components/ui/native-select';
 
 const HX711_MODES = new Set<string>([
   'hx711_mv_per_v', 'hx711_micro_strain',
@@ -53,14 +54,14 @@ export function InputConfigPanel({
                 <span className="w-12 shrink-0 text-[0.7rem] text-slate-500 dark:text-slate-400">
                   {isHx711 ? 'HX711' : 'ADS1115'}
                 </span>
-                <select
+                <NativeSelect
                   value={mode}
                   onChange={(e) => {
                     const next = [...voltageConfig];
                     next[idx] = e.target.value as VoltageMode;
                     onVoltageConfigChange(next);
                   }}
-                  className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-1.5 py-0 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                  className="min-w-0 flex-1 px-1.5 py-0 dark:border-slate-600 dark:bg-slate-700"
                 >
                   {VOLTAGE_MODES
                     .filter((m) => allowedModes.has(m.value))
@@ -69,7 +70,7 @@ export function InputConfigPanel({
                         {m.label}
                       </option>
                     ))}
-                </select>
+                </NativeSelect>
               </div>
             );
           })}

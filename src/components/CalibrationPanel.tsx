@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, memo } from 'react';
 import type { AiCalibration } from '../types';
 import { FloatingWindow } from './FloatingWindow';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 type CalibCellProps = {
   value: number;
@@ -19,12 +21,11 @@ const CalibCell = memo(function CalibCell({ value, onChange, disabled = false }:
   }, [value]);
 
   return (
-    <input
-      type="text"
+    <Input
       inputMode="decimal"
       value={localValue}
       disabled={disabled}
-      className="w-full rounded border border-slate-300 bg-white px-1 py-0 text-right text-xs font-semibold text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 dark:disabled:bg-slate-800 dark:disabled:text-slate-500"
+      className="w-full px-1 py-0 text-right text-xs font-semibold dark:border-slate-600 dark:bg-slate-700 dark:disabled:bg-slate-800"
       onFocus={() => {
         focusedRef.current = true;
       }}
@@ -94,21 +95,12 @@ export function CalibrationPanel({
             }}
             style={{ display: 'none' }}
           />
-          <button
-            type="button"
-            disabled={locked}
-            onClick={() => fileInputRef.current?.click()}
-            className="rounded border border-slate-300 px-1.5 py-0.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300 disabled:hover:border-slate-200 disabled:hover:text-slate-300 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400 dark:disabled:border-slate-800 dark:disabled:text-slate-600"
-          >
+          <Button variant="outline" size="xs" disabled={locked} onClick={() => fileInputRef.current?.click()}>
             Load
-          </button>
-          <button
-            type="button"
-            onClick={onSaveCalibration}
-            className="rounded border border-slate-300 px-1.5 py-0.5 text-xs font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
-          >
+          </Button>
+          <Button variant="outline" size="xs" onClick={onSaveCalibration}>
             Save
-          </button>
+          </Button>
         </>
       }
     >
@@ -154,14 +146,15 @@ export function CalibrationPanel({
                     onChange={(v) => onUpdateCalibration(idx, 'c', v)}
                   />
                 </div>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="2xs"
                   onClick={() => onTareCalibration(idx)}
                   title="Set offset c so the current physical value reads 0 (a and b unchanged)"
-                  className="shrink-0 rounded border border-slate-300 px-1.5 py-0 text-[0.7rem] font-semibold text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-600 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
+                  className="text-[0.7rem] dark:border-slate-600"
                 >
                   Tare
-                </button>
+                </Button>
               </div>
             </div>
           ))}

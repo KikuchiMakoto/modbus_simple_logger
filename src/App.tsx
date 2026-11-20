@@ -122,6 +122,10 @@ import { useScriptRunner } from './hooks/useScriptRunner';
 import { useKeepAwake } from './hooks/useKeepAwake';
 import { useUnloadGuard } from './hooks/useUnloadGuard';
 import { webUsbSerial } from './modbus/webusbSerial';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 
 function isMobileDevice(): boolean {
   const userAgent = navigator.userAgent.toLowerCase();
@@ -246,8 +250,6 @@ const formatAiChannelDisplayLabel = (idx: number): string =>
 // rule: "labels are what this run was called" holds for the whole page or it is
 // a detail to look up per panel.
 const LABEL_LOCKED_TITLE = 'Locked while a script is running';
-const LABEL_LOCKED_CLASS =
-  'disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:disabled:bg-slate-800 dark:disabled:text-slate-500';
 
 // The hard limits below come from the converter ICs, not from this app: they
 // cannot be raised by changing an Input Config range or a calibration coefficient,
@@ -360,14 +362,13 @@ const AiChannelCard = memo(function AiChannelCard({
             note={id < 8 ? HX711_SPEC_NOTE : ADS1115_SPEC_NOTE}
             align={id % 8 < 4 ? 'left' : 'right'}
           />
-          <input
-            type="text"
+          <Input
             value={label}
             onChange={(e) => onLabelChange(id, e.target.value)}
             disabled={isLocked}
             title={isLocked ? LABEL_LOCKED_TITLE : undefined}
             placeholder="Label"
-            className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+            className="shrink-0 flex-1 border-border px-1 py-0 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:text-slate-300"
           />
         </div>
         <div className="space-y-0 pt-px text-base leading-none">
@@ -430,14 +431,13 @@ const AoChannelCard = memo(function AoChannelCard({
             note={GP8403_SPEC_NOTE}
             align={id % 8 < 4 ? 'left' : 'right'}
           />
-          <input
-            type="text"
+          <Input
             value={label}
             onChange={(e) => onLabelChange(id, e.target.value)}
             disabled={isLocked}
             title={isLocked ? LABEL_LOCKED_TITLE : undefined}
             placeholder="Label"
-            className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+            className="shrink-0 flex-1 border-border px-1 py-0 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:text-slate-300"
           />
         </div>
         <div className="pt-px text-base leading-none">
@@ -480,14 +480,13 @@ const ParamChannelCard = memo(function ParamChannelCard({
         <span className="shrink-0 whitespace-nowrap tracking-tighter text-xs font-semibold leading-none text-slate-700 dark:text-slate-200">
           {`CH ${id.toString().padStart(2, '0')}`}
         </span>
-        <input
-          type="text"
+        <Input
           value={label}
           onChange={(e) => onLabelChange(id, e.target.value)}
           disabled={isLocked}
           title={isLocked ? LABEL_LOCKED_TITLE : undefined}
           placeholder="Label"
-          className={`min-w-0 shrink-0 flex-1 rounded border border-slate-200 bg-white px-1 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 ${LABEL_LOCKED_CLASS}`}
+          className="shrink-0 flex-1 border-border px-1 py-0 text-center text-xs leading-none text-slate-600 dark:border-slate-700 dark:text-slate-300"
         />
       </div>
       <div className="pt-px text-base leading-none">
@@ -2416,7 +2415,7 @@ function App() {
                       // in the header would be shouting at someone who is only
                       // ever looking at the channel grid behind it.
                       tone="neutral"
-                      // Squared off to .button-primary's rounded-lg. This slot
+                      // Squared off to the Button's rounded-lg. This slot
                       // alternates between a plain button and this control, and
                       // a pill swapping in for a button was the header visibly
                       // restyling itself at the moment the link came up — read
@@ -2437,13 +2436,9 @@ function App() {
                       aria-label="Slide to disconnect the device"
                     />
                   ) : (
-                    <button
-                      type="button"
-                      className="button-touch button-primary min-w-[6rem]"
-                      onClick={handleToggleConnection}
-                    >
+                    <Button size="touch" className="min-w-[6rem]" onClick={handleToggleConnection}>
                       Connect
-                    </button>
+                    </Button>
                   )}
                   {/* Next to Start Save, because it is a property of the run
                       rather than of the link: the poll
@@ -2454,27 +2449,26 @@ function App() {
                       row is the app's widest fixed element and this label was
                       the longest thing in it that is not a control. Two short
                       lines at leading-none still measure less than the
-                      button-touch height next to it, so the row does not grow. */}
+                      touch-size button next to it, so the row does not grow. */}
                   <label className="flex items-center gap-1 text-[0.7rem] leading-tight text-slate-600 dark:text-slate-400">
                     <span className="shrink-0 text-right">
                       Save
                       <br />
                       Rate
                     </span>
-                    <select
+                    <NativeSelect
                       value={saveRate.valueMs}
                       onChange={(e) => {
                         const next = SAVE_RATE_OPTIONS.find((option) => option.valueMs === Number(e.target.value));
                         if (next) setSaveRate(next);
                       }}
-                      className="rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
                       {SAVE_RATE_OPTIONS.map((option) => (
                         <option key={option.valueMs} value={option.valueMs}>
                           {option.label}
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                   </label>
                   {/* The file the picker creates stays 0 bytes until the writer
                       closes it: a FileSystemWritableFileStream buffers into a
@@ -2493,13 +2487,13 @@ function App() {
                       something to restore. */}
                   <div className="group relative">
                     {!tsvWriterRef.current ? (
-                      <button type="button" className={`button-touch min-w-[6rem] ${connected ? 'button-primary' : 'button-secondary opacity-60 cursor-not-allowed'}`} onClick={connected ? handleStartSave : undefined} disabled={!connected} aria-describedby="save-file-note">
+                      <Button size="touch" variant={connected ? 'default' : 'outline'} className="min-w-[6rem]" onClick={connected ? handleStartSave : undefined} disabled={!connected} aria-describedby="save-file-note">
                         Start Save
-                      </button>
+                      </Button>
                     ) : (
-                      <button type="button" className="button-stop-save-pulse button-touch min-w-[6rem]" onClick={handleStopSave} aria-describedby="save-file-note">
+                      <Button size="touch" variant="recording" className="min-w-[6rem]" onClick={handleStopSave} aria-describedby="save-file-note">
                         Stop Save
-                      </button>
+                      </Button>
                     )}
                     <div
                       id="save-file-note"
@@ -2509,10 +2503,11 @@ function App() {
                       The file is written when you press <strong>Stop Save</strong>. It stays 0 bytes while recording, and data is lost if the browser closes first.
                     </div>
                   </div>
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setHamburgerMenuOpen(true)}
-                    className="button-secondary button-compact flex items-center justify-center"
+                    className="px-2.5 text-foreground"
                     aria-label="Open menu"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
@@ -2520,7 +2515,7 @@ function App() {
                       <line x1="3" y1="12" x2="21" y2="12" />
                       <line x1="3" y1="18" x2="21" y2="18" />
                     </svg>
-                  </button>
+                  </Button>
             </div>
           </header>
         </div>
@@ -2531,7 +2526,7 @@ function App() {
           It matches the gap between the cards inside a group (gap-1), so the
           page reads as one grid rather than four stacked panels. */}
       <div className="space-y-1 p-1.5">
-        <section className="card card-tight">
+        <Card className="p-1">
         <div className="mb-px flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Analog Input (16)</h2>
           <div className="flex items-center gap-2">
@@ -2562,9 +2557,9 @@ function App() {
           ))}
         </div>
         )}
-      </section>
+      </Card>
 
-      <section className="card card-tight">
+      <Card className="p-1">
         <div className="mb-px flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Analog Output (8)</h2>
           <CollapseButton collapsed={aoCollapsed} onToggle={() => setAoCollapsed((v) => !v)} label="Analog Output" />
@@ -2583,9 +2578,9 @@ function App() {
           ))}
         </div>
         )}
-      </section>
+      </Card>
 
-      <section className="card card-tight">
+      <Card className="p-1">
         <div className="mb-px flex items-center justify-between">
           <h2 className="text-lg font-semibold leading-none">Parameter (16)</h2>
           <CollapseButton collapsed={paramCollapsed} onToggle={() => setParamCollapsed((v) => !v)} label="Parameter" />
@@ -2604,7 +2599,7 @@ function App() {
           ))}
         </div>
         )}
-      </section>
+      </Card>
 
       <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-4">
         {chartSlots.map((slot) => (

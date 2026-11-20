@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Button } from '@/components/ui/button';
 
 type SlidePanelProps = {
   open: boolean;
@@ -81,17 +82,12 @@ export function SlidePanel({
             </div>
             <div className="flex items-center gap-2">
               {headerActions}
-              <button
-                type="button"
-                onClick={onClose}
-              className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:border-emerald-400 hover:text-emerald-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-400 dark:hover:text-emerald-400"
-              aria-label={`Close ${title}`}
-            >
+              <Button variant="outline" size="icon-lg" onClick={onClose} aria-label={`Close ${title}`}>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
-            </button>
+            </Button>
             </div>
           </div>
 
