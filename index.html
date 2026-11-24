@@ -9,10 +9,8 @@
     <meta name="theme-color" content="#0f172a" />
     <meta name="description" content="Modbus WebUSB data logger and visualization tool" />
     <link rel="manifest" href="manifest.json" />
-    <!-- PNG, not SVG: the "SVG" this replaced was a 945x945 PNG wrapped in an
-         <image> element, so there was never any vector artwork to lose — only
-         the 33% base64 overhead of carrying it that way, on an asset the
-         Service Worker precaches and the launcher exe embeds. -->
+    <!-- Favicon: SVG for modern browsers, PNG fallback for legacy -->
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
     <link rel="icon" type="image/png" href="icon.png" />
 
     <!-- Apple Touch Icon -->

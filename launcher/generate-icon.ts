@@ -1,11 +1,9 @@
-// Build-time, best-effort generation of a Windows .ico from public/icon.png.
+// Build-time, best-effort generation of a Windows .ico from public/icon.svg (or public/icon.png).
 //
-// The source is a 512x512 PNG and the ICO wants 256x256, so it still has to be
-// resampled. Rather than take on a native image library we reuse the very
-// browser the launcher already requires: draw the PNG into a 256x256 frame and
-// capture it via Chromium headless `--screenshot`, then wrap the result in a
-// minimal ICO container (Windows Vista+ accepts a PNG-encoded icon image
-// directly). If any step fails, we skip silently — the exe still builds, just
+// The source vector SVG is rendered directly into a 256x256 frame via Chromium
+// headless `--screenshot` (falling back to resampling 512x512 PNG if SVG is missing),
+// then wrapped in a minimal ICO container (Windows Vista+ accepts a PNG-encoded icon
+// image directly). If any step fails, we skip silently — the exe still builds, just
 // without a custom icon.
 //
 // The image goes into a zero-margin HTML wrapper before screenshotting.
@@ -17,7 +15,8 @@ import { join, resolve } from 'node:path';
 import { findBrowser } from './browser';
 
 const ROOT = resolve(import.meta.dir, '..');
-const SOURCE = resolve(ROOT, 'public/icon.png');
+const SVG_SOURCE = resolve(ROOT, 'public/icon.svg');
+const PNG_SOURCE = resolve(ROOT, 'public/icon.png');
 const OUT = resolve(import.meta.dir, 'icon.ico');
 
 // Wrap a single 256x256 PNG in an ICO container. Width/height bytes are 0,
@@ -51,25 +50,33 @@ const skip: (reason: string) => never = (reason) => {
   process.exit(0);
 };
 
-if (!existsSync(SOURCE)) skip('public/icon.png not found');
+const hasSvg = existsSync(SVG_SOURCE);
+const hasPng = existsSync(PNG_SOURCE);
+if (!hasSvg && !hasPng) skip('neither public/icon.svg nor public/icon.png found');
 
 const browser = findBrowser();
-if (!browser) skip('no Chromium browser found to rasterize the SVG');
+if (!browser) skip('no Chromium browser found to rasterize the icon');
 
 const work = join(tmpdir(), `msl-icon-${process.pid}`);
 mkdirSync(work, { recursive: true });
 const png = join(work, 'icon.png');
 
-// Embed the PNG as a data: URI in a zero-margin page sized to exactly 256x256
-// so the artwork fills the frame with no offset or clipping. Inline rather than
-// a file:// <img src>, so the page has no subresource to load and the
-// screenshot can never race an unresolved request.
-const dataUri = `data:image/png;base64,${readFileSync(SOURCE).toString('base64')}`;
+// If public/icon.svg exists, inline the vector SVG markup directly in the 256x256 frame
+// for razor-sharp rendering. Otherwise fall back to data: URI image embedding.
+let innerHtml: string;
+if (hasSvg) {
+  const svg = readFileSync(SVG_SOURCE, 'utf-8');
+  innerHtml = `<div id="w">${svg}</div>`;
+} else {
+  const dataUri = `data:image/png;base64,${readFileSync(PNG_SOURCE).toString('base64')}`;
+  innerHtml = `<div id="w"><img src="${dataUri}"></div>`;
+}
+
 const html =
   '<!doctype html><meta charset="utf-8">' +
-  '<style>html,body{margin:0;padding:0;background:transparent}' +
-  '#w{width:256px;height:256px}#w img{display:block;width:256px;height:256px}</style>' +
-  `<div id="w"><img src="${dataUri}"></div>`;
+  '<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}' +
+  '#w{width:256px;height:256px}#w svg,#w img{display:block;width:256px;height:256px}</style>' +
+  innerHtml;
 const htmlPath = join(work, 'icon.html');
 writeFileSync(htmlPath, html);
 const htmlUrl = `file:///${htmlPath.replace(/\\/g, '/')}`;

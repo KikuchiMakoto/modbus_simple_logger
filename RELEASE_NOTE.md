@@ -6,6 +6,11 @@ v7 以降のバージョン番号は Linux kernel stable version の数字に追
 
 ## 7.x
 
+- **v7.3.6 (2026-11-24)**
+  - アプリアイコンとロゴを新しい幾何学ベクター SVG（MSL パスパターン）へ刷新。
+  - モダンブラウザ向けに SVG ファビコン（`image/svg+xml`）と PWA マニフェストの SVG アイコン対応を追加し、Apple Touch Icon やレガシー向けに 512x512 PNG も維持。
+  - Application Info パネルに SVG ロゴを表示。
+  - Windows ランチャー（`icon.ico`）の生成元をベクター SVG から直接 256x256 でラスタライズする方式へ改善。
 - **v7.3.5 (2026-11-20)**
   - UI を shadcn/ui（Button / Card / Input / NativeSelect / Checkbox / Switch / SegmentedControl / Alert / Badge）へ移行。配色トークンはパレット変数参照、ポータル系コンポーネントは UI 拡大率と両立しないため不採用。
   - Tutorial / Connector Manual を 6 言語化（English / 日本語 / 简体中文 / 繁體中文 / Español / 한국어）。言語は両窓で共有し保存。
