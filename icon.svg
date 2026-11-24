@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500" role="img" aria-label="modbus_simple_logger logo">
+  <rect width="500" height="500" rx="100" fill="#182923"/>
+
+  <circle cx="250" cy="250" r="180" fill="#315D4C"/>
+  <circle cx="430" cy="250" r="55" fill="#42866D"/>
+  <circle cx="340" cy="94.115" r="55" fill="#42866D"/>
+  <circle cx="160" cy="94.115" r="55" fill="#42866D"/>
+  <circle cx="70" cy="250" r="55" fill="#42866D"/>
+  <circle cx="160" cy="405.885" r="55" fill="#42866D"/>
+  <circle cx="340" cy="405.885" r="55" fill="#42866D"/>
+
+  <path d="M 70,145 L 120,145" fill="none" stroke="#94BDA7" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 380,145 L 430,145" fill="none" stroke="#94BDA7" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 120,145 L 120,65 L 220,65 L 220,145 L 280,145 L 280,65 L 380,65 L 380,145"
+        fill="none" stroke="#E8E5DA" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M 70,210 L 120,210" fill="none" stroke="#94BDA7" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 380,290 L 430,290" fill="none" stroke="#94BDA7" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 120,210 L 250,210 L 250,290 L 380,290"
+        fill="none" stroke="#E8E5DA" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M 70,355 L 120,355" fill="none" stroke="#94BDA7" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 380,435 L 430,435" fill="none" stroke="#94BDA7" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 120,355 L 120,435 L 380,435"
+        fill="none" stroke="#E8E5DA" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
