@@ -26,8 +26,7 @@ const PADDING_PX = 8;
 
 // react-simple-code-editor ships CommonJS only (no `exports` map, no `module`
 // field), so the default import can arrive wrapped as `{ default: … }` — which
-// React reports as "Element type is invalid … but got: object". Same treatment
-// as Plotly gets in src/plotly.ts.
+// React reports as "Element type is invalid … but got: object".
 const Editor = interopDefault(EditorImport);
 
 type CodeEditorProps = {

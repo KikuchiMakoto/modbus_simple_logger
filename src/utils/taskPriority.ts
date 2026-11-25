@@ -13,7 +13,7 @@
 //   background     behind everything else, run when nothing better is queued
 //
 // Note what this does NOT do: it orders tasks that have not started, it does not
-// interrupt one that has. A Plotly redraw already underway will hold the thread
+// interrupt one that has. A synchronous chart redraw already underway will hold the thread
 // for as long as it takes at any priority, which is why the caller also has to
 // choose the moment it starts — see the poll-in-flight fence in App.tsx.
 

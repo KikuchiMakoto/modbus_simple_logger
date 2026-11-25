@@ -75,9 +75,9 @@ export function setUiScalePercent(percent: number) {
   applyUiScale();
   for (const listener of listeners) listener();
 
-  // Plotly 4 observes each graph div with ResizeObserver. CSS zoom changes
-  // its layout width, so no synthetic window resize (and no unrelated window
-  // resize handlers) is needed here.
+  // ChartPanel observes its plotter container with ResizeObserver and reads
+  // useUiScalePercent(), so CSS zoom changes redraw at the new pixel density
+  // without firing synthetic window resize events.
 }
 
 /** Move `delta` steps along UI_SCALE_STEPS, clamped at both ends. */

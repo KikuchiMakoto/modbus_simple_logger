@@ -1,44 +1,12 @@
 import { useSyncExternalStore } from 'react';
 
-// Rendering backend that Plotly actually used. `scattergl` is a WebGL/regl
-// trace, so on a healthy machine this reports GPU-backed WebGL; if the browser
-// falls back to a software rasterizer (SwiftShader/llvmpipe) it reports CPU so
-// the degradation is visible rather than silent.
+// Rendering backend actually used by ModbusSimplePlotter (`WebGL2` GPU or
+// `Canvas2D` CPU fallback when WebGL2 is unavailable, lost, or backed by a
+// software rasterizer such as SwiftShader/llvmpipe).
 export type RenderBackend = { api: string; accel: 'GPU' | 'CPU' | ''; detail: string };
 
-function describe(gl: WebGLRenderingContext | WebGL2RenderingContext, api: string): RenderBackend {
-  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-  const renderer = dbg
-    ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
-    : String(gl.getParameter(gl.RENDERER));
-  const software = /swiftshader|llvmpipe|software|microsoft basic/i.test(renderer);
-  return { api, accel: software ? 'CPU' : 'GPU', detail: renderer };
-}
-
-// getContext() only returns the context that was actually created, so both
-// types are probed — asking for 'webgl2' on a 'webgl' canvas yields null.
-function contextOf(canvas: HTMLCanvasElement): { gl: WebGLRenderingContext | WebGL2RenderingContext; api: string } | null {
-  const gl2 = canvas.getContext('webgl2');
-  if (gl2) return { gl: gl2, api: 'WebGL2' };
-  const gl1 = (canvas.getContext('webgl') ||
-    canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
-  if (gl1) return { gl: gl1, api: 'WebGL' };
-  return null;
-}
-
-/** Inspect the canvas Plotly rendered into. */
-export function detectRenderBackend(graphDiv: HTMLElement): RenderBackend {
-  const canvas = graphDiv.querySelector('canvas') as HTMLCanvasElement | null;
-  if (!canvas) return { api: 'SVG/Canvas2D', accel: '', detail: 'no WebGL canvas' };
-
-  const ctx = contextOf(canvas);
-  if (!ctx) return { api: 'Canvas2D', accel: 'CPU', detail: 'no WebGL context' };
-  return describe(ctx.gl, ctx.api);
-}
-
 // Module-level store instead of React state: the charts detect the backend but
-// App Info displays it, and they are unrelated subtrees. Passing it up through
-// App would add a prop path for a value nothing else consumes.
+// App Info and App's redraw-floor heuristic consume it across unrelated subtrees.
 let current: RenderBackend | null = null;
 const listeners = new Set<() => void>();
 

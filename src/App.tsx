@@ -67,7 +67,7 @@ import {
   saveParamFreeLabels,
 } from './utils/calibration';
 import { createTsvWriter, type TsvSink } from './utils/tsvExport';
-import { foldDataBufferHalf } from './utils/m4Decimation';
+import { foldDataBufferHalf } from './modbus_simple_plotter';
 import {
   discardRecoveredRun,
   downloadRecoveredRun,
@@ -613,11 +613,9 @@ function App() {
   const [saveElapsedMs, setSaveElapsedMs] = useState(0);
   const [savePointCount, setSavePointCount] = useState(0);
   const [displayRevision, setDisplayRevision] = useState(0);
-  // Bumped to force a full Plotly purge + remount of every chart (used as the
-  // Plot's React key). Only handleConnect bumps it, while the charts are still
-  // empty — re-decimation must not (see AGENTS.md). The periodic
-  // timed purge was removed in v3.1 (see constants.ts); ChartPanel now releases
-  // the WebGL context explicitly, which is what the timer was really after.
+  // Bumped to force a fresh PlotCanvas mount of every chart (used as the
+  // PlotCanvas React key). Only handleConnect bumps it, while the charts are
+  // still empty, so each session starts with fresh WebGL2 buffers and context.
   const [chartEpoch, setChartEpoch] = useState(0);
   const [calibrationPanelOpen, setCalibrationPanelOpen] = useState(false);
   const [inputCalibratorPanelOpen, setInputCalibratorPanelOpen] = useState(false);
@@ -980,11 +978,11 @@ function App() {
     });
   }, []);
 
-  // What Plotly actually rendered with. Detected by the charts, reported through
-  // a module store; read here only to pick the redraw floor below.
+  // What ModbusSimplePlotter actually rendered with. Detected on init/fallback,
+  // reported through a module store; read here only to pick the redraw floor.
   const renderBackend = useRenderBackend();
 
-  // The redraw floor follows the machine, because 5 fps of four scattergl charts
+  // The redraw floor follows the machine, because 5 fps of four WebGL2 charts
   // is cheap on a GPU and expensive without one. Two signals, either sufficient:
   //
   //   CPU rasterizer — every redraw becomes main-thread pixel work, contending
@@ -1015,9 +1013,8 @@ function App() {
     if (chartRedrawDueSinceRef.current === 0) chartRedrawDueSinceRef.current = now;
 
     // Acquisition first, and this is the part priority alone cannot buy: a
-    // Plotly redraw is tens of ms of synchronous work, and once started nothing
-    // preempts it. Landing it while a transfer is awaiting its reply delays that
-    // promise continuation — jitter in the capture timestamps, and read timeouts
+    // synchronous chart redraw, once started, holds the thread. Landing it while
+    // a transfer is awaiting its reply delays that promise continuation — jitter in the capture timestamps, and read timeouts
     // at the fast poll rates. So it waits for the gap between polls, which costs
     // the chart a fraction of a second and the recording nothing.
     if (
@@ -1106,7 +1103,7 @@ function App() {
     // its stride every time the buffer fills, so new chart points arrive every
     // 100 ms at stride 1 but only every 6.4 s at stride 64 — while the flush
     // itself keeps running 10x/s throughout. Arming on every flush therefore
-    // redrew four scattergl charts a dozen times per actual change late in a
+    // redrew four charts a dozen times per actual change late in a
     // capture, each redraw painting a trace identical to the last, and the
     // waste grew without bound as the run got longer. That cost landed on the
     // main thread between two Modbus transfers, which is exactly where this app

@@ -1,6 +1,6 @@
 # ModbusSimpleLogger
 
-Modbus RTU の計測・制御用 SPA / PWA。AI 16ch（HX711 × 8、ADS1115 × 8）を 100ms 周期で読み取り、AO 8ch（GP8403）を制御します。Plotly.js のチャート、AI キャリブレーション、TSV 保存、Python（Pyodide）による Script Runner を備えています。通信は Web Serial API、対応デバイスでは WebUSB CDC-ACM を使用します。
+Modbus RTU の計測・制御用 SPA / PWA。AI 16ch（HX711 × 8、ADS1115 × 8）を 100ms 周期で読み取り、AO 8ch（GP8403）を制御します。WebGL2 + Canvas2D フォールバックのリアルタイムチャート（`ModbusSimplePlotter`）、AI キャリブレーション、TSV 保存、Python（Pyodide）による Script Runner を備えています。通信は Web Serial API、対応デバイスでは WebUSB CDC-ACM を使用します。
 
 - [Web 版 / PWA](https://kikuchimakoto.github.io/modbus_simple_logger/)
 - [Windows 向け単一 exe 版（Releases）](https://github.com/KikuchiMakoto/modbus_simple_logger/releases)：Edge または Chrome のインストールが必要です。ブラウザ本体は同梱しません。アプリのアセットは exe に同梱します。
@@ -27,7 +27,7 @@ bun run build           # 型チェック + dist/ 生成
 bun run launcher:build  # Windows では launcher/bin/modbus_simple_logger.exe を生成
 ```
 
-React 19 / TypeScript 7 / Vite 8 / Tailwind CSS 4 / shadcn/ui / Plotly.js / Pyodide / Bun。Web 版は Service Worker でアセットをプリキャッシュし、オフラインでも動作します。計測中のデータはメモリ上のバッファで管理し、保存時は File System Access API 経由で TSV に書き出します。
+React 19 / TypeScript 7 / Vite 8 / Tailwind CSS 4 / shadcn/ui / WebGL2 (ModbusSimplePlotter) / Pyodide / Bun。Web 版は Service Worker でアセットをプリキャッシュし、オフラインでも動作します。計測中のデータはメモリ上のバッファで管理し、保存時は File System Access API 経由で TSV に書き出します。
 
 ## ライセンス
 

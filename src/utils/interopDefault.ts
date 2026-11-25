@@ -7,8 +7,7 @@
  * assumed either way. React is the loud case: handed the wrapper, it renders
  * "Element type is invalid: … but got: object".
  *
- * Used by src/plotly.ts (`plotly.js/lib/*`, `react-plotly.js/factory`) and
- * components/CodeEditor.tsx (`react-simple-code-editor`). Any dependency
+ * Used by components/CodeEditor.tsx (`react-simple-code-editor`). Any dependency
  * published as CJS — no `exports` map and no `module` field in its
  * package.json — needs this.
  */

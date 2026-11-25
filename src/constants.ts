@@ -5,11 +5,16 @@ export const PARAM_CHANNELS = 16;
 export const AI_START_REGISTER = 0;
 export const AO_START_REGISTER = 0;
 
-// Target points for Chart M4 (utils/m4Decimation.ts). Output — time series and
-// XY alike, gap markers included — is capped at 1.5x this (1536). Fewer points
-// come out when extrema coincide. Increase only after real-device and low-end
-// measurements.
-export const CHART_RENDER_TARGET_POINTS = 1024;
+// Target points for Chart M4 (modbus_simple_plotter/decimation.ts). Output — time series and
+// XY alike, gap markers included — is capped at 1.5x this. Fewer points come
+// out when extrema coincide.
+//
+// With WebGL2 instanced rendering, up to 8,192 points per chart (4x = 32k total)
+// stays well below 1 ms on integrated GPUs (e.g. N100/N95), so inputs <= 8,192
+// pass straight through without decimation. Canvas2D software fallback uses
+// a tighter 1,024-point budget to keep CPU usage minimal.
+export const CHART_RENDER_TARGET_POINTS_GPU = 8192;
+export const CHART_RENDER_TARGET_POINTS_CPU = 1024;
 // Maximum capacity of the in-memory capture buffer during data saving.
 // Once reached, Origami folding retains [0, 2, 4, ...] (so the buffer drops to
 // half) and the intake stride doubles. The full-rate data continues to go to TSV.
@@ -38,10 +43,9 @@ export const CHART_INPUT_INTERVAL_MS = 100;
 // data pushes it out.
 export const NON_SAVING_CHART_PREVIEW_POINTS = 600;
 // Minimum interval between chart redraws (setDisplayRevision bumps), saving or
-// not. Chart data flushes up to 10x/s and redrawing four scattergl charts every
-// flush is wasteful and feeds WebGL/regl resource churn, so this keeps the
-// steady GPU/React cost off the acquisition loop — the competition that matters.
-// Recording is unaffected either way.
+// not. Chart data flushes up to 10x/s and redrawing four charts every
+// flush is wasteful, so this keeps the steady GPU/React cost off the acquisition
+// loop — the competition that matters. Recording is unaffected either way.
 //
 // One constant, not one per mode: the saving case used to be slower (500 vs
 // 200 ms) on the argument that a whole-capture view moves less per sample, but
@@ -61,14 +65,14 @@ export const NON_SAVING_CHART_PREVIEW_POINTS = 600;
 // seconds — the redraw rate follows the points rather than this constant.
 export const CHART_REDRAW_INTERVAL_MS = 200;
 // Redraw floor on a device that cannot afford the fast one. 5 fps of four
-// scattergl charts is cheap on a GPU and expensive without one, and this app's
+// charts is cheap on a GPU and expensive without one, and this app's
 // standing rule is that display cost must never be paid out of the acquisition
 // loop's budget — so the display is what gives way, back to the 2 fps that was
 // the flat rate before.
 export const CHART_REDRAW_INTERVAL_CONSTRAINED_MS = 500;
 // What counts as "cannot afford it", checked at runtime (see App.tsx):
 //
-//   - Plotly reporting a CPU rasterizer (utils/renderBackend). The decisive
+//   - ModbusSimplePlotter falling back to CPU/Canvas2D (utils/renderBackend). The decisive
 //     signal: every redraw is then main-thread pixel work, competing directly
 //     with the serial I/O continuations rather than running on the GPU.
 //   - this many logical cores or fewer. Cores are what the WORKERS need — the

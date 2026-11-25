@@ -8,7 +8,7 @@
 - 通信は **Web Serial API**（非対応環境では自前の WebUSB CDC-ACM 実装 `src/modbus/webusbSerial.ts` でフォールバック）
 - AI 16ch（HX711 × 8 + ADS1115 × 8）/ AO 8ch（GP8403）のポーリングと制御
 - 計測中のプレビューはメモリ上の TypedArray バッファ、保存データは TSV（File System Access API ストリーミング）で扱う
-- Plotly.js（`react-plotly.js`）によるリアルタイムチャート表示
+- 自前のゼロ依存プロッタ `src/modbus_simple_plotter/`（WebGL2 インスタンス描画 ＋ Canvas2D フォールバック、M4 間引き・Origami 内包）によるリアルタイムチャート表示
 - Web Worker + SharedArrayBuffer による ScriptRunner 機能（**Python**（Pyodide）のみ）
 - PWA: Service Worker によるキャッシュとオフラインフォールバック
 - Wake Lock API による計測中の画面スリープ抑止
@@ -42,7 +42,12 @@ src/
 ├── modbus/
 │   ├── webserialClient.ts           # Web Serial トランスポート + Modbus RTU フレーム送受信
 │   └── frameScan.ts                 # 応答フレーミングの純粋関数（scanModbusFrame）＋ ModbusExceptionError。slaveId/fc/CRC 検証と例外フレーム判定
-├── plotly.ts                        # Plotly カスタム最小バンドル（core + scattergl のみ）
+├── modbus_simple_plotter/           # ゼロ依存リアルタイムプロッタ（WebGL2 インスタンス描画 + Canvas2D 軸/フォールバック + M4 間引き/Origami）
+│   ├── index.ts                     # 公開エントリポイント
+│   ├── plotterRenderer.ts           # ModbusSimplePlotter（WebGL2/Canvas2D 描画・ソフトウェア3D自動回避・軸キャッシュ）
+│   ├── axisTicks.ts                 # Linear / Timestamp 軸目盛り生成・paddedRange
+│   ├── chartBuffer.ts               # Float64→Float32 ピクセル空間変換・GAP_SENTINEL
+│   └── decimation.ts                # 2D M4 間引き（decimate2DM4）と Origami 折り畳み（foldDataBufferHalf）
 ├── pyodideWorker.ts                 # Python(Pyodide) 実行 Worker
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
 ├── timerWorker.ts                   # タイマー抑制回避用 Worker（setTimeout/setInterval をワーカースレッドで保持）
@@ -53,7 +58,7 @@ src/
 │   ├── useSystemLog.ts              # System Log の購読（useSyncExternalStore）。**App では購読しないこと**（チャートが 10Hz で再描画される）。表示するコンポーネントだけが購読する
 │   └── useKeepAwake.ts              # ランチャーへのスリープ抑制要求（exe 限定）。ページ可視時のみ効く Screen Wake Lock を、最小化中も補う
 ├── components/
-│   ├── ChartPanel.tsx               # Plotly チャート（X/Y 軸切替、空状態表示）。App.tsx が4枚描画
+│   ├── ChartPanel.tsx               # リアルタイムチャート（X/Y 軸切替、空状態表示、ModbusSimplePlotter ラッパ）。App.tsx が4枚描画
 │   ├── FooterBar.tsx                # 画面下端固定の唯一のバー（ScriptRunner 状態 → System Log 最新1行のロール表示 → 右端＝実測ポーリング周期）。常設なので h-6/h-8 スペーサを持つ。**2段目を足さないこと**（旧 AppStatusBar は廃止し System Log へ統合済み）
 │   ├── SystemLogBody.tsx            # ログ行本体＋レベル絞り込みプルダウン＋Copy。ウィンドウ・フッターの2面で共有（行は memo 済み）
 │   ├── SystemLogPanel.tsx           # System Log ウィンドウ（UI 名: System Log）
@@ -86,7 +91,7 @@ src/
     ├── opfsRecovery.ts              # 起動時の残存ミラー検出・ダウンロード・削除（主スレッド側）
     ├── tsvFormat.ts                 # TSV ヘッダー／行整形の純粋関数（Worker が使用）
     ├── tsvWorkerProtocol.ts         # TSV Worker とのメッセージ型定義
-    ├── renderBackend.ts             # Plotly 描画バックエンド検出（WebGL2/WebGL・GPU/CPU）と共有ストア。ChartPanel が報告し、各チャート右上のバッジと AppInfoPanel（全 renderer 文字列）が表示
+    ├── renderBackend.ts             # 描画バックエンド情報（WebGL2 GPU / Canvas2D CPU フォールバック）の共有ストア。ModbusSimplePlotter が報告し、ChartPanel バッジと App の再描画間隔制御が使用
     ├── backgroundTimer.ts           # timerWorker の主スレッド側（setBackgroundTimeout / Interval / clearBackgroundTimer）
     ├── appMode.ts                   # 実行形態の判定（web / launcher）。launcher が index.html へ差し込む meta マーカーが唯一の根拠
     ├── swUpdate.ts                   # SW 登録＋更新チェック（承諾ゲート付き）。main.tsx が起動時に、AppInfoPanel がボタンで呼ぶ
@@ -175,7 +180,7 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
   - **再間引きで `chartEpoch`（purge + remount）を bump しないこと**。計測中に4枚を作り直すのは v3.1 で廃止した定期パージと同じ悪手で、しきい値を下げた分だけ発生頻度が上がる。purge が必要なのは WebGL コンテキスト蓄積の抑制だけなので、**接続時（チャートが空でタイミングが問題にならない唯一の瞬間）に1回だけ**行う
   - チャート再描画の最小間隔は保存中・非保存時共通。通常 `CHART_REDRAW_INTERVAL_MS`(200ms)、CPU 描画または論理コア数4以下では `CHART_REDRAW_INTERVAL_CONSTRAINED_MS`(500ms)。計測中の主スレッド負荷を抑えるため、転送中の描画は遅延させる
   - **再描画は「バッファに点が増えたフラッシュ」だけがタイマーを張る**（`bufferChanged`）。間引きストライドは保存が伸びるほど倍々になるので、新しい点は stride 1 なら 100ms 毎だが stride 64 では 6.4 秒毎になる — 一方フラッシュ自体は終始 10 回/秒で回る。無条件に張っていた頃は、計測後半で**1回の変化あたり十数回**、前回と同一のトレースを4枚描き直しており、その無駄は計測時間に比例して増え続けた。しかもそのコストは Modbus 転送の合間の主スレッドに落ちる。上の間隔は**周期ではなく下限**として残す（stride 1 の序盤は実際に 10 点/秒来るため）。結果として再描画レートは「点のレート」と「この下限」の**遅い方**になり、どちらの端でも空打ちが出ない
-  - 保存時のバッファ上限は `SAVE_BUFFER_MAX_POINTS`(65536)。描画は `CHART_RENDER_TARGET_POINTS`(1024) を目標に M4 間引きする
+  - 保存時のバッファ上限は `SAVE_BUFFER_MAX_POINTS`(65536)。描画は WebGL2 GPU 時 `CHART_RENDER_TARGET_POINTS_GPU`(8192)、Canvas2D フォールバック時 `CHART_RENDER_TARGET_POINTS_CPU`(1024) を目標に `ModbusSimplePlotter` 内で M4 間引きする
 - ペンドデータポイントのバッチフラッシュ（5件 or 100ms ごと、表示バッファを更新）
 - **タイムスタンプは AI 読取り完了時刻（`lastAiReadCompletedAtRef`）を1つだけ使い、チャート・TSV・レート表示すべてに同じ値を渡す**。`updateDataHistory` は Promise チェーンの継続として走るため、**その中で `Date.now()` を読んではならない** — 表示キューが捌けた時刻が記録され、レンダリング遅延が時間軸に混入する
 - **表示系の state 更新には予算を設ける**（`READOUT_PUBLISH_INTERVAL_MS` = 実測レートと保存点数）。値そのものは ref で正確に持ち、React へ渡す頻度だけを絞る。1サンプルごとに setState すると **40枚のカードの再レンダリングが Modbus 転送の合間に挟まり、描画コストがそのままポーリングジッタになる**。AI カードは poll 完了時に直接 publish するが、**値が変わったチャネルだけ新オブジェクトにし、全チャネル不変なら `prev` を返して render ごと省く**（カードは primitive props の `memo`）。旧 `CHANNEL_CARD_MIN_INTERVAL_MS` は Polling 100ms 固定で何も絞らなくなったため撤去した — 速いポーリングを戻す場合はカードの絞りも戻すこと。**記録すると決めたサンプルのデータ経路（`updateDataHistory` 以降）は絞らないこと**
@@ -201,8 +206,8 @@ USBパケット遅延・詰まりによる通信エラーを防ぐため、**Mod
 - **置き場所は Menu のヘッダー**（v4.1〜。以前は Application Info の中）。テーマトグルと並ぶ。理由は2つ — 「見ながら合わせる」設定なのに、開くとページが隠れるパネルの奥にあっては使えない。もう1つは Menu の行はすべて「パネルを開く」動作なので、その場で値を変える操作は行ではなくヘッダーに置くのが筋。ヘッダーには説明を置く余地が無いが、`[-] [%] [+]` は説明不要で、押せば結果がその場で見える
 - 実装は **`#root` への CSS `zoom`**（`index.css`、値は `<html>` の `--ui-scale`）。`transform: scale()` ではない: `zoom` はレイアウトに参加するので拡大後のサイズで再フローしスクロール範囲も正しくなるが、transform は同じレイアウトを大きく描くだけで右端が画面外に出たまま届かなくなる。アプリの対象環境は README のブラウザ要件を参照
 - **ページ背景と全画面ボックスは `<body>` に置く**（`index.css`）。`#root` の内側で `min-h-screen` を書くと 100vh が**ズーム後の座標系**で解決され、125% では画面より 1/4 高い箱になって空のページにスクロールバーが出る
-- **ズーム内側の座標を扱うコードは補正が要る**。`window.innerWidth/Height` は非ズームの CSS px、`FloatingWindow` のジオメトリはズーム内側の px なので、クランプ側で `getUiScale()` で割る。ドラッグ量も同様にずれるため `Rnd` に `scale` を渡す（Plotly は `_invScaleX/Y` で自前に補正するので不要）
-- **Plotly 4 の `responsive: true` はグラフ div を `ResizeObserver` で監視する**。拡大率変更によるレイアウト幅の変化も検知するため、`setUiScalePercent` から人工的な `window.resize` を投げない（v7.3.1〜）。旧 Plotly 3 では1フレーム後のイベント発火が必要だったが、現在は無関係な resize ハンドラーまで起動するだけになる。Plotly を差し替える際は、データ更新が止まった状態でも拡大率変更後にキャンバス寸法が追従することを確認する
+- **ズーム内側の座標を扱うコードは補正が要る**。`window.innerWidth/Height` は非ズームの CSS px、`FloatingWindow` のジオメトリはズーム内側の px なので、クランプ側で `getUiScale()` で割る。ドラッグ量も同様にずれるため `Rnd` に `scale` を渡す
+- **`PlotCanvas` はコンテナを `ResizeObserver` で監視し、`useUiScalePercent` を購読する**。拡大率変更やレイアウト幅変化で `effectiveDpr` に `uiScale` を掛け合わせて再描画するため、`setUiScalePercent` から人工的な `window.resize` を投げない（データ更新が止まった状態でも拡大率変更後にキャンバス寸法と画素密度が追従する）
 - 拡大率は **`writeLocalPreference`** で保存し、`main.tsx` が **React の描画前**に `initUiScale()` で適用する（mount 後に戻すと 100% の1フレームが見えてページ全体が再フローする）
 
 ### ScriptRunner（`pyodideWorker.ts`）
@@ -223,7 +228,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - **`apiDocs` の `desc` は「パネル用の1行」、`promptDesc` は「プロンプト用の長い方」**。パネルの API Reference は左端の呼び出し名を縦に舐めて探すものなので、説明が折り返すと次の名前が画面外へ押し出され、表ではなく散文に見える。幅720の既定サイズで名前チップの右に1行で収まる長さに揃えること（長短が混ざると、長い方が重要に見えてしまう＝長さが測っていないものを測ってしまう）。float32 の丸めなど「試せば分かる人」には要らないが「一度読むだけの相手」には要る注意は `promptDesc` へ逃がす。**`await asyncio.sleep(s)` はリスト先頭**（他は対象物順だが、これだけは全スクリプトに必ず要り、抜けるとブラウザが固まる）
 - **「Copy AI Prompt」のプロンプトは3段構成**（`buildAiPrompt`）。`promptRules` は**破ると壊れる、または壊れているのに気づけないもの**（フリーズ・起動失敗・NameError に加え、極性を確認せずに書いたコードやラベル/キャリブレーション未確認のチャンネルが実機を誤った方向へ動かす類）、`RUNNER_GUIDELINES` は**後で効いてくるもの**（Stop→Start の再開性・Param 濫用の抑制・ログ量・出力の後始末、モータ／EP は `SetMotorSpeed(mm_per_min)` `SetEpKpa(kpa)` のような命名済みヘルパ経由でしか動かさない＝チャンネル番号・極性・校正係数・クランプの置き場を1箇所に決める）。混ぜて1つの箇条書きにしないこと — 助言側は平坦なリストを渡されると「守らなかったルール」と「省いた推奨」を同じ重さで扱う。またガイドライン側は**言語ではなくランナーの制約**なので、言語が増えても各言語エントリで共有する。3段目の `CALIBRATION_PREREQUISITES` は**スクリプトではなく実機の話**で、言語エントリを経由せず `buildAiPrompt` が直接持つ — 唯一「頼まれたスクリプトをまだ書くな（先に校正スクリプトを出せ）」が正解になりうる節。冒頭で**プランモードでの実行を強く推奨**し、チャンネル・センサ・単位・極性・対象・安全限界を根掘り葉掘り聞き切るまで実装に入るなと要求する（間違いがまだテキストで済む唯一の段階だから）。続いてアクチュエータ（モータ／空圧・油圧）× 制御量（速度・力／圧力・変位）の組み合わせごとに前提を並べ、**校正が前提にしているハードウェア設定は固定・変更したら再校正**（モータ側はギア比とドライバ設定、空圧・油圧側は元圧とバルブ設定）を両系統に持たせ、加えて**校正値を紙に残せ**（Input Calib Value の a/b/c、PID/MPC ゲイン、V→mm/min・kPa・N、固定したハードウェア設定）を毎回押す。係数がこの PC のブラウザストレージにしか無く、消えたときに過去データの前提を復元できないため。**結果の戻り経路は System Log の Copy ボタン**であることも明記してある — 校正スクリプトを書く→ユーザーが走らせる→数値が返る、というループはこれが無いと閉じない。**Copy は画面のレベル閾値に関係なく全レベルを全文コピーする**という点まで書くこと（フィルタされると思い込んだ助言側は「先にレベルを下げてください」と余計な手順を要求するか、生き残ると踏んだレベルで print してしまう）。**チャンネルラベルはコピー時点のスナップショット**なので、ラベル付け・校正などでユーザーをアプリへ戻したら「戻ったら Copy AI Prompt を押し直して貼れ」と言わせる — 会話の中からは古さを検知できず、直す手段がボタン再押下しか無い（ラベルの JSON ブロック自体にも同じ断り書きを付けてある）。**制御方式の選び方も同節**：既定は PID（利用者が自分で再調整できる）、精度・超低速・プロファイル追従を求める相手には MPC を提案（校正定数がモデルなので、それが揃ってから）、LQR 等の最適制御は提案はしてよいがユーザー判断、**バンバン制御は禁止**（ループが約 5Hz ＝ 0.2s なので全開指令が 200ms 無補正で残る）。ただし **AO を DO 代わりに使う場合（Enable / DIR / 開閉弁）は可** — 中間を持たない離散2値の電圧出力で、その2値が何 V かは機器側の都合（0/5V も 0/10V もある）なので決め打ちせずユーザーに聞かせる
 - **多言語なのは Tutorial と Connector Manual の2窓だけ**（`utils/docLanguage.ts`。en / ja / zh-CN / zh-TW / es / ko）。他の UI は英語のまま（ブラウザのページ翻訳に任せてよい）だが、この2窓は配線・安全手順を含む長文で、機械翻訳された配線手順は便利さではなく危険なので、レビュー済みの訳文を持つ。言語は**両窓で1つを共有し localStorage に保存**する（片方を中文にした人がもう片方で英語に出会わないように）。**`<UiRef>` の中身は訳さない**（英語 UI の画面上の名前と一致していることが目的）。チップ名・信号略号・API 名・単位も訳さない。文面を足すときは全言語の `TEXT` に入れること — `Record<DocLang, …>` なので欠けると型エラーになる
-- **データを表示する要素には `translate="no"` を付ける**。UI 全体は英語のままで、Chrome のページ翻訳に**かけてよい**（むしろ日本語話者には利益）。ただし翻訳されると壊れるものが混ざっている: **数値**（`1.5` → `1,5` にされた欄をアプリが数値としてパースし直す＝校正値の静かな書き換え）、**スクリプト本文**（識別子も文字列リテラルも書き換わり、走らないスクリプトが「あなたが書いたもの」として表示される）、**System Log / フッターのログ行**（print 出力と Python のトレースバック。翻訳されたトレースバックは存在しない行を指す。しかもユーザーはこれを助言側に貼り戻す）、**ユーザー自身のラベル・タブ名・Device Memo**、**バージョン/ライセンス/パッケージ名/ファイル名**。属性は**継承する**ので、原則カード・行・コンテナ単位で1つ付ければ中身は全部守れる（葉ノードに撒かない）。**Plotly はラッパー div に付ける** — 軸タイトル・目盛り・凡例は Plotly が書く SVG `<text>`＝翻訳対象の DOM テキストで、軸タイトルの中身はユーザーのチャンネルラベルそのもの。継承するので再描画のたびに付け直す必要は無い。逆に**散文（説明文・エラーの案内文・空状態のメッセージ）には付けないこと**、そこは翻訳されて困らない
+- **データを表示する要素には `translate="no"` を付ける**。UI 全体は英語のままで、Chrome のページ翻訳に**かけてよい**（むしろ日本語話者には利益）。ただし翻訳されると壊れるものが混ざっている: **数値**（`1.5` → `1,5` にされた欄をアプリが数値としてパースし直す＝校正値の静かな書き換え）、**スクリプト本文**（識別子も文字列リテラルも書き換わり、走らないスクリプトが「あなたが書いたもの」として表示される）、**System Log / フッターのログ行**（print 出力と Python のトレースバック。翻訳されたトレースバックは存在しない行を指す。しかもユーザーはこれを助言側に貼り戻す）、**ユーザー自身のラベル・タブ名・Device Memo**、**バージョン/ライセンス/パッケージ名/ファイル名**。属性は**継承する**ので、原則カード・行・コンテナ単位で1つ付ければ中身は全部守れる（葉ノードに撒かない）。`PlotCanvas` もラッパー div に付ける（Canvas 描画のため現在は DOM `<text>` を持たないが、将来のオーバーレイ追加にも備えて保護）。逆に**散文（説明文・エラーの案内文・空状態のメッセージ）には付けないこと**、そこは翻訳されて困らない
 - **Device Memo（Menu → Device Memo, `utils/deviceMemo.ts` + `components/DeviceMemoPanel.tsx`）は「ただのメモ帳」であることが仕様**。項目もバリデーションもスキーマも持たせないこと — 機械が何か、どのシリンダが付いているか、モータがどちら向きか、いつ誰が校正したかは**アプリがモデル化も推論もできない事実**で、構造化した瞬間に「欄に無いこと」が書けなくなる。存在理由は `buildAiPrompt` の末尾に**そのまま**入ること（ラベルは1チャンネル1行しか無く、助言側が聞きたいことの大半はそこに入らない）。プロンプト側では**Memo が上位**と明言してある（人間が自分の機械について書いたものなので）。**run 中もロックしない** — 他の編集パネルのロックは「実行中のスクリプトが読む値が変わるから」であって、この文字列はランナーから見えない。むしろメモを書きたくなる瞬間は実機で妙なことが起きた瞬間＝run 中。永続化は `readJsonStorage`/`writeJsonStorage`（Cookie 経由ではない。新キーで移行対象が無く、メモは cookie の ~4KB を普通に超える）。**AO の校正値はアプリのどこにも保存されない**ので、V→mm/min・kPa・N はここが唯一の置き場。**「どの言語でもよい」を、プレースホルダとサブタイトルの2箇所で明示している**。文言は `Any language — 日本語 / 中文 / English / …` の形を保つこと: **規則は「any language」のほうで、後ろの表記は「本当にそうだ」という証拠にすぎない**。特定言語を名指しして終わると、それは「入るべきリスト」になり、自分の言語が載っていない読者は規則ではなくリストを読む。一方で英語だけの一文では、結局「英語で書け」と言っている箱にしかならないので、**英語だけにも見えない**必要がある。UI 全体は英語のままでよいが、ここだけは中身がユーザー自身の言葉なので例外（第二言語の丁寧なメモより第一言語の雑なメモ、さらに言えば「メモ無し」よりは遥かにマシ）。プロンプト側にも「貼る行はユーザーが使っている言語で渡せ、翻訳や清書を要求するな」と入れてある。Export/Import は**素の UTF-8 .txt**（機械の隣の PC で Notepad で開けて、印刷して試験データと一緒に綴じられることが要件。パースが要る形式ではその用途が死ぬ）。ファイル名は校正 TSV と同じ先頭タイムスタンプで、同じフォルダで並ぶようにしてある
 - **`promptRules` は「素の Python を素直に書け」も含む**。`await asyncio.sleep(s)` を持つ普通のループ1本が並行性の全てで、`create_task` / `gather` / `TaskGroup` / `Queue` / threading / `run_in_executor` 等は禁止（既にイベントループ内で走っており、本流の外に出たものは Stop 後も生き残るか、Stop が頼っているループを覆い隠す）。**明示要求が無い限り `while True:` に break 無しも禁止** — Stop はいつでも効くが、Stop でしか終われないループは「完走したのか中断されたのか」を言えない。**`defaultScript` もこの規則に従わせること**（規則の文面より、コピーされる実例のほうが強い規範）
 - **Run と応答は runId で対応付ける**（`scriptWorkerProtocol.ts`）。`run` メッセージが `runId` を持ち、`done` / `interrupted` / `error` がそれを返す。`useScriptRunner` は**現在実行中の run の id と一致する応答だけ**で run を終わらせる（Run → Stop → Run で前の run の遅れた `interrupted` が今の run を「停止」扱いにし、出力を動かしている run から Stop ボタンを奪っていた）。Pyodide 起動待ちの run の取消は**メッセージではなく共有メモリの active-run セル**（`runSab`、`Atomics`）で伝える — `interrupt` メッセージは起動処理の後ろに積まれたまま、起動完了直後のマイクロタスクで run が先に走りうるため。**Worker 側で割込みバイトを再度 PENDING にしないこと**（メインスレッドが次の Run のために NONE へ戻した後に書くことになり、新しい run の方を止める）
@@ -305,7 +310,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 
 ### PWA / Service Worker（最重要・絶対条件）
 - **ユーザーの99%がPWAとして利用する**ため、「**PWAで確実に動く、確実に更新できること**」が本アプリの絶対条件である
-  - オフライン動作や更新過渡期における白画面・ロード失敗を構造的に防ぐため、主要機能・チャート描画（Plotly 等）の**遅延ロード（React.lazy / 動的 import）は原則禁止**。全アセットを静的バンドル・プリキャッシュし、初回オフライン訪問でも完全動作を保証する
+  - オフライン動作や更新過渡期における白画面・ロード失敗を構造的に防ぐため、主要機能・チャート描画の**遅延ロード（React.lazy / 動的 import）は原則禁止**。全アセットを静的バンドル・プリキャッシュし、初回オフライン訪問でも完全動作を保証する
 - `sw.js` は全レスポンスに COOP/COEP ヘッダーを注入
 - **プリキャッシュ（オフライン対応の要）**: install 時に**全ビルドアセット**（ハッシュ付き JS/CSS バンドル・Pyodide ワーカーチャンク・**Pyodide ランタイム一式（`pyodide/` 配下 約13MB）**・`index.html`・`manifest.json`・`icon.svg`・`icon.png`）をキャッシュ。これによりオンライン初回訪問（＝SW install 完了）以降は ScriptRunner 含め完全オフライン動作。
   - プリキャッシュ一覧は **`vite.config.ts` の `precache-manifest` プラグイン**がビルド時に `dist/sw.js` へ注入（`const PRECACHE_MANIFEST = [];` を実ファイル一覧へ置換）。手書き禁止
@@ -325,7 +330,7 @@ ScriptRunner が実行するのは Python (Pyodide) のみ。以下は言語が�
 - `DataPoint.aiRaw` / `aiPhysical` / `aiVoltage` は `Float32Array`
 - Modbus ADC 最高精度 ≈ 22bit < Float32 仮数部 24bit → 精度ロスなし
 - メモリ使用量: 65,536点時に約 **8MB 節約**（128B → 64B / チャネルセット）
-- Plotly.js は `Float32Array` をそのまま描画可能
+- `ModbusSimplePlotter` は `Float32Array` 頂点バッファ（`Float64` 原点シフト後）で直接 GPU へ転送可能
 - TSV 書き出しは `Float32Array` のまま Worker へ structured clone で渡す（**転送リストを使わない** — 呼び出し側の配列はチャート表示と共有されており neuter してはならない）。`Array.from()` 変換は行わない
 
 ## 検討済みの最適化と、その危険性（未実施・v7.1.0 時点）
@@ -384,7 +389,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - なお SW 登録は `window.addEventListener('load')` なので、**install の 19.5MB は初回描画を
   ブロックしていない**。ここを「初回表示が遅い」と誤診しないこと
 
-### Plotly の遅延ロード（検討したが却下 — PWA 動作保証を優先）
+### チャートの遅延ロード（旧 Plotly 時代に検討し却下 — PWA 動作保証を優先）
 
 `ChartPanel` の `Plot` を `React.lazy` で動的 import 化する案を検討・計測したが、**却下した**。
 ユーザーの99%がPWA環境でオフライン利用するため、動的 import に伴う非同期チャンク分割は、
@@ -405,7 +410,8 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 | `INPUT_READ_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AI 読取り最大失敗回数 |
 | `OUTPUT_HOLDING_RETRY_WINDOW_MS` | 60000 | AO 書込みリトライ制限の評価ウィンドウ |
 | `OUTPUT_HOLDING_MAX_FAILURES_PER_WINDOW` | 10 | ウィンドウ内 AO 書込み最大失敗回数 |
-| `CHART_RENDER_TARGET_POINTS` | 1024 | Chart M4 間引きの描画点数目標（時系列/XY 共通、最大1536点） |
+| `CHART_RENDER_TARGET_POINTS_GPU` | 8192 | WebGL2 GPU 描画時の Chart M4 描画点数目標（8192点以下は無間引き、最大 1.5×） |
+| `CHART_RENDER_TARGET_POINTS_CPU` | 1024 | Canvas2D フォールバック時の Chart M4 描画点数目標（最大 1536点） |
 | `SAVE_BUFFER_MAX_POINTS` | 65536 | 保存中キャプチャバッファの最大点数（達すると Origami 折り畳みで 1/2 に縮小） |
 | `NON_SAVING_CHART_PREVIEW_POINTS` | 600 | 非保存時チャートのプレビュー点数（×100ms ≒ 60秒） |
 | `BATCH_FLUSH_THRESHOLD` | 5 | バッチフラッシュのペンド件数閾値 |
@@ -429,21 +435,21 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - 通信方式は「Web Serial API」を基準に記述する（WebUSB は `src/modbus/webusbSerial.ts` のフォールバック）
 - **WebUSB 側で「未完了の `transferIn` を溜める」実装は禁止**。`web-serial-polyfill` は `pull()` が転送を await せず、受信 1 バイトにつき 1 転送を宙に浮かせ、Android の pending URB メモリ上限を数十秒で埋めていた（Polling Rate を下げても比例して延びるだけで直らない）。`webusbSerial.ts` は `pull()` が必ず転送を await し、未完了本数を `BULK_IN_PIPELINE_DEPTH`（8）で構造的に抑える。この不変条件を壊さないこと
 - ScriptRunner は COOP/COEP が必須。`sw.js` と `vite.config.ts` のヘッダー設定と整合させること
-- **Plotly はカスタム最小バンドル**（`src/plotly.ts`）。`plotly.js/lib/core` + `scattergl` トレースのみを登録し `react-plotly.js/factory` でコンポーネント化する。フル `plotly.js`（3D・地図・全トレース）を import すると本番バンドルが数 MB 肥大化するため禁止。チャートが `scattergl` 以外のトレースを使う場合のみ `src/plotly.ts` に登録を追加する
-- **`scattergl` は性能上の選択ではなくデータモデル上の必然**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。scatter トレースは点列を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**scatter 相当のパラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`
-- **`hoverinfo: 'skip'` + `hovermode: false` を外さないこと**（`ChartPanel.tsx`）。scattergl はホバー判定用の空間インデックスを毎更新で構築する。本アプリは `hovertemplate` も `onHover`/`onClick` も使っていないため純粋な無駄であり、初期の1024点検証でもこの前提を維持する。**ホバーでの値読みを復活させる場合は、実機測定なしに点数を引き上げないこと**
-- **WebGL コンテキストは明示的に解放する**（`ChartPanel.tsx` の `releaseWebglContext`）。`Plotly.purge()`（react-plotly.js がアンマウント時に呼ぶ）は scattergl の WebGL コンテキストを破棄しない（plotly.js #2852 / #6365、後者は未解決）。**解放は Plot の `onPurge` で行うこと** — react-plotly.js は `onPurge` → `Plotly.purge()` の順に呼び、purge がプロットコンテナ（canvas ごと）を DOM から外すため、親の effect から後で `querySelectorAll('canvas')` しても何も見つからない（v7.2 の `Y=----` 非表示で実際に解放漏れになっていた）。解放しないとチャート差し替えのたびにコンテキストが増え、ブラウザ上限（概ね 8〜16）に達した時点で**古いチャートが黙って描画を停止する**。v3.1 以前にあった定期パージ（15分ごとの remount）はこの問題を悪化させるだけだったため廃止した。**「GPU 状態が溜まるから定期的に作り直す」という対策を再導入しないこと**
-- **チャート間引きは描画モードで手法を変えること。** 時系列モード（X=time）は 1px ごとの **min/max 間引き**が使え、描画コストを O(点数)→O(ピクセル幅) に落としつつ尖頭値を保存できる。**XY パラメトリックモードでは min/max は使用不可** — 同一 x に往路と復路の異なる y が乗るため、列ごとの集約はループ形状（囲む面積＝散逸エネルギー）を破壊する。現行の Chart M4 は X/Y の局所極値と点列順を保持し、目標1024点・最大1536点（時系列/XY 共通・欠測マーカー込み）で描画する（下限は波形の重複により保証しない）。**不変条件：出力の連続する有限2点の間に、元データの無効点（X/Y いずれかが NaN）が存在しないこと** — 間引きで NaN を落とすと `connectgaps: false` でも欠測をまたいで線が引かれる（v7.2 で XY に混入し修正）。バケット内は有効区間（run）ごとに極値を取り、区間の間に NaN マーカーを1つ置く。予算が足りないバケットは短い run を落とす（落とした run は欠測側として扱い、決して結線しない）。`tests/m4Decimation.test.ts` がこの不変条件を検査する。なお保存中の Origami バッファ折り畳みは別経路で、既存点の `[0,2,4,...]` 抽出と取り込み stride 倍化だけを行い、個別チャンネルのピーク保持は保証しない。トレードオフ分析は `docs/chart-library-comparison.md` §4-4
+- **`ModbusSimplePlotter` は依存ゼロの WebGL2 + Canvas2D フォールバック構成**（`src/modbus_simple_plotter/`）。Plotly.js / react-plotly.js の重い SVG 軸再構築・`regl` オーバーヘッド・数 MB のバンドルを廃止し、`drawArraysInstanced` による 1.5px アンチエイリアス線（1 drawCall、非有限値ギャップ切断対応）＋ Canvas2D 軸レイヤーへ移行した
+- **パラメトリック XY 描画モデルが絶対条件**。X 軸は `time` 以外に任意チャネル（`raw_*`/`phy_*`/`par_*`、計49種・`App.tsx` の `axisOptions`）を選べ、ひずみ-応力の繰り返しヒステリシスループのような **x が非単調・非一意のパラメトリック曲線 (x(t), y(t))** を描く。点を**配列順に結線**するためこれを表現できるが、一般的な line チャートは y = f(x) を前提に **x 昇順ソートを要求**する。チャートライブラリを差し替える場合、**パラメトリック描画モデルを持つことが絶対条件**であり、これを満たさない uPlot（x は数値・一意・昇順が必須）・dygraphs・TradingView Lightweight Charts・TimeChart は**どれだけ軽量でも採用不可**。詳細と比較は `docs/chart-library-comparison.md`
+- **静的プロット（ホバー・ズーム無効）を前提に負荷を最小化**（`ChartPanel.tsx` / `plotterRenderer.ts`）。空間インデックスを構築せず、同一条件（サイズ・範囲・テーマ・`displayRevision`）の重複 `render()` や同一軸の `bgCanvas` 再描画をスキップする
+- **WebGL2 コンテキスト管理と自動フォールバック**（`plotterRenderer.ts`）。`dispose()` 時に VBO/VAO/Program を破棄し `WEBGL_lose_context` で即座にコンテキストを返却する（`purgeEpoch` バンプ・`Y=----`・空データ・アンマウントすべてで解放される）。また、初期化時に `WEBGL_debug_renderer_info` でソフトウェアレンダラ（SwiftShader / llvmpipe 等）を検出した場合、WebGL2 非対応時、および実行時 `webglcontextlost` 発生時は自動的に `<canvas>` を差し替えて Canvas2D フォールバック（`accel: 'CPU'`、1,024点間引き）へ遷移する
+- **チャート間引き（`src/modbus_simple_plotter/decimation.ts`）**: XY パラメトリックモードでは 1px ごとの min/max 間引きがループ形状（囲む面積＝散逸エネルギー）を壊すため、時系列・XY 共通で 2D M4 間引き（`decimate2DM4`）を用いる。WebGL2 GPU 時は目標 `8192` 点（以下は無間引き）、Canvas2D フォールバック時は目標 `1024` 点へ `ModbusSimplePlotter` 内部で自動間引きする。**不変条件：出力の連続する有限2点の間に、元データの無効点（X/Y いずれかが NaN）が存在しないこと** — `chartBuffer.ts` では非有限値を `GAP_SENTINEL` へ写像し、頂点シェーダと Canvas2D 双方で線分を切断する。`tests/m4Decimation.test.ts`・`tests/chartBuffer.test.ts`・`tests/plotterRenderer.test.ts` がこれらの不変条件を検査する。なお保存中の Origami バッファ折り畳み（`foldDataBufferHalf`）は別経路で、既存点の `[0,2,4,...]` 抽出と取り込み stride 倍化だけを行う
 - **間引き・描画の計算を主スレッドで重くしないこと。** 本アプリはデータロガーであり Modbus ポーリングも主スレッドで回るため、**描画側の負荷はポーリング周期のジッタ＝計測品質の劣化に直結する**。取り込み時の間引きは O(1)/点 を維持し、再描画時の走査が数 ms を超えるなら Worker へ移すこと（`tsvWriterWorker` / `pyodideWorker` に前例あり）
-- **`detectRenderBackend()`（`ChartPanel.tsx`）の GPU/CPU バッジは概算**。Canvas2D は Chromium で GPU アクセラレーション対象だが、Skia は**アンチエイリアス付きの凹パス**（長い折れ線）を GPU でラスタライズできず CPU 経路に落ちるため、「Canvas2D=CPU」「WebGL=GPU」の二分法は**どちらの方向にも不正確**。描画方式の性能判断は必ず実機計測で行い、この表示を根拠にしないこと
-- **ビルドチャンク分割**（`vite.config.ts`）: Plotly 等の vendor を `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
+- **`renderBackend` の GPU/CPU バッジ**は、`ModbusSimplePlotter` が実際に使用しているパス（ハードウェア `WebGL2` = `GPU`、ソフトウェア 3D 回避やコンテキスト失敗/ロスト時の `Canvas2D` フォールバック = `CPU`）を反映する。`App.tsx` は `accel === 'CPU'` のとき再描画最小間隔を `CHART_REDRAW_INTERVAL_CONSTRAINED_MS`(500ms) へ自動で落とす
+- **ビルドチャンク分割**（`vite.config.ts`）: 依存パッケージを `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）
 - **プリキャッシュ注入**（`vite.config.ts` の `precache-manifest` プラグイン）: ビルド時に `dist` の全アセットを走査し `dist/sw.js` の `PRECACHE_MANIFEST` / `CACHE_VERSION` / `APP_VERSION` を置換。`sw.js` 側のプレースホルダ（`const PRECACHE_MANIFEST = [];` / `const CACHE_VERSION = 'dev';` / `const APP_VERSION = '';`）の文字列を変更するとマッチしなくなり**オフライン動作や更新プロンプトのバージョン表示が壊れる**ため注意。アセット追加時は手書き不要（自動で含まれる）
 - **`base` はコマンド分岐**（`vite.config.ts`）: `build` / `preview` は `/modbus_simple_logger/`（GitHub Pages）、`dev` は `/`（sub-path HMR/manifest の不具合回避）。`index.html` の `manifest.json` / `icon.svg` / `icon.png` と `manifest.json` 内の `start_url`/`scope`/`icons` は **base 相対**で記述すること（subdir 直書き禁止）。SW 登録は `import.meta.env.BASE_URL` 経由で base 追従
 - **依存ライブラリのバージョン表示は自動生成**（`vite.config.ts` の `DEP_VERSIONS` → `VITE_DEP_VERSIONS`）: `package.json` の `dependencies`/`devDependencies` 全件について **`node_modules/<name>/package.json` の実インストール版**を JSON で注入する（`^19.2.8` のようなレンジではなく実際にバンドルされた版が出る）。`AppInfoPanel.tsx` の `LIBRARIES` は**表示名・パッケージ名・ライセンスのみ**を持ち、バージョンを直書きしないこと。ライブラリ追加時は 1 行足すだけでよく、バージョン更新時の同期作業は不要
 - **Prism のグラマーは必要な分だけ個別 import すること**（`utils/prism.ts`、現在は `prism-python` のみ。`prismjs/components/` 一括は ~300 言語がバンドル・プリキャッシュ・exe に載る）。グラマーによっては他のグラマーへの依存があり、import 順を誤ると**モジュール評価時に throw してアプリ全体が起動しなくなる**ことがある（エディタだけの問題では済まない）。**言語を増やす際は依存する他のグラマーが無いか確認すること**。自動ハイライト（DOMContentLoaded 時の全文書走査）は `utils/prismManual.ts` の副作用で無効化しており、これは ES import の巻き上げのため別モジュールでなければならない
 - **エディタの Tab/undo は react-simple-code-editor 側の実装を使う**（`components/CodeEditor.tsx`）。v5.0 まで App.tsx に自前の Tab インデント handler があったが、ライブラリ内蔵と同等（2スペース・選択範囲対応）でありながら**ライブラリの undo スタックを迂回して Ctrl+Z を壊す**ため削除した。外から `onKeyDown` で `preventDefault()` するとライブラリ側の処理が丸ごと止まる仕様なので、キー処理を足すときはこの点に注意
-- **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: カスタム Plotly バンドルが `plotly.js/lib` ソースの Node `global` 参照を含むため必須。削除しないこと
-- **CJS interop**: `src/plotly.ts` の `interopDefault()` は `plotly.js/lib/*`・`react-plotly.js/factory` の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
+- **`global` シム**（`vite.config.ts` の `define: { global: 'globalThis' }`）: CommonJS 依存（`react-simple-code-editor` / `react-draggable` 等）の Node `global` 参照に備えて維持
+- **CJS interop**: `utils/interopDefault.ts` の `interopDefault()` は `react-simple-code-editor` 等の CJS default を dev(esbuild)/prod(rolldown) 両対応で正規化する。これらの import を直接呼ばないこと
 - ドキュメント更新時は README の技術スタック・ブラウザ要件と整合させる
 - `RELEASE_NOTE.md` はタグ間のコミットを要約する。各版にタグ作成日（`YYYY-MM-DD`、軽量タグのみ対象コミットの日付）を記し、最低1行、目標5行、最大20行とする。変更量の少ない版は短く、重要な変更が多い版は項目を分けて記す。タグのない中間版は次のタグに含める
 - **パネルの UI 表示名とコンポーネント名は一致しない**（v3.10 で表示名のみ変更）: `ManualPanel` = Connector Manual、`AppInfoPanel` = Application Info（`ScriptRunnerPanel` = Script Runner は v4.6 で名前を揃えた。Python 専用ではなくなったため、旧称 PyScriptRunner から改名した数少ないリネーム例）。ファイル名・`HamburgerMenu` の `key`・state 変数名は旧名のままで、**揃えるためのリネームは行わないこと** — 利得が無いのに import と、`HamburgerMenu` の `key` を読んでいる分岐すべてに波及する。（なお `FloatingWindow` のジオメトリはウィンドウ**タイトル**をキーにしたメモリ内 `Map` で storage には残らず、localStorage のキーも `theme_preference_v1` 等の意味的な名前なので、どちらもリネームの障害ではない。以前ここに挙げていたが誤り。）ドキュメントで UI を指すときは表示名、コードを指すときはコンポーネント名を使う

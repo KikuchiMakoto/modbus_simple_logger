@@ -1,21 +1,15 @@
-import {
-  type CSSProperties,
-  type ComponentType,
-  memo,
-  useCallback,
-  useId,
-  useMemo,
-  useRef,
-} from 'react';
-import { type Config, type Data, type Layout } from 'plotly.js';
-import { CHART_RENDER_TARGET_POINTS } from '../constants';
-import { Plot } from '../plotly';
+import { memo, useEffect, useId, useMemo, useRef } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { NativeSelect } from '@/components/ui/native-select';
+import {
+  type AxisDescriptor,
+  ModbusSimplePlotter,
+  type PlotRenderInput,
+} from '../modbus_simple_plotter';
 import type { DataPoint } from '../types';
-import { type AxisDescriptor, decimate2DM4 } from '../utils/m4Decimation';
-import { detectRenderBackend, reportRenderBackend, useRenderBackend } from '../utils/renderBackend';
-import { Badge } from '@/components/ui/badge';
+import { useRenderBackend } from '../utils/renderBackend';
+import { useUiScalePercent } from '../utils/uiScale';
 
 interface AxisOption {
   key: string;
@@ -26,9 +20,9 @@ interface ChartPanelProps {
   color: string;
   dataPoints: DataPoint[];
   displayRevision: number;
-  /** Used as the Plot's React key: bumping it unmounts the old plot (which
-   * runs Plotly.purge, freeing its WebGL/regl resources) and mounts a fresh
-   * one, bounding GPU-side accumulation over long sessions. */
+  /** Used as the PlotCanvas React key: bumping it unmounts the old canvas
+   * (disposing its WebGL2 context and vertex buffers) and mounts a fresh
+   * one for each session. */
   purgeEpoch: number;
   axisOptions: AxisOption[];
   yAxisOptions: AxisOption[];
@@ -44,21 +38,6 @@ interface ChartPanelProps {
   onYAxisChange: (value: string) => void;
 }
 
-type PlotProps = {
-  data: Data[];
-  layout: Partial<Layout>;
-  config: Partial<Config>;
-  style?: CSSProperties;
-  onInitialized?: (figure: unknown, graphDiv: HTMLElement) => void;
-  onUpdate?: (figure: unknown, graphDiv: HTMLElement) => void;
-  /** Runs before Plotly.purge(), i.e. while the canvases are still in the DOM. */
-  onPurge?: (figure: unknown, graphDiv: HTMLElement) => void;
-};
-
-// The factory in src/plotly.ts already returns the React component directly, so
-// no CJS/ESM default-export normalization is needed here.
-const NormalizedPlot = Plot as ComponentType<PlotProps>;
-
 // Plot area height. The empty state matches it exactly, so the card does not
 // change size the moment the first sample arrives.
 //
@@ -66,55 +45,6 @@ const NormalizedPlot = Plot as ComponentType<PlotProps>;
 // slots: that card is not a plot, but it sits in the same row and has to be
 // exactly as tall, or the grid steps.
 export const PLOT_HEIGHT = '240px';
-
-// Palettes for dark and light modes. Hoisted to module scope and frozen to avoid
-// object allocations on render passes.
-const DARK_PALETTE = Object.freeze({
-  paper: '#0f172a',
-  plot: '#1e293b',
-  grid: '#334155',
-  text: '#cbd5e1',
-});
-
-const LIGHT_PALETTE = Object.freeze({
-  paper: '#f8fafc',
-  plot: '#ffffff',
-  grid: '#e2e8f0',
-  text: '#0f172a',
-});
-
-// Invariant Plotly configuration hoisted to module scope to eliminate per-render useMemo overhead.
-// `staticPlot: true` disables all mouse/touch interactions (left-drag zoom,
-// axis-edge drag, wheel zoom, double-click, and the modebar) and skips
-// creating Plotly's `.drag` overlay rects altogether.
-const PLOT_CONFIG: Partial<Config> = Object.freeze<Partial<Config>>({
-  staticPlot: true,
-  displayModeBar: false,
-  responsive: true,
-  displaylogo: false,
-});
-
-// Force-release the WebGL context(s) behind a graph div.
-//
-// `Plotly.purge()` — which react-plotly.js calls on unmount — does NOT destroy
-// the scattergl (regl) WebGL context: plotly.js issue #2852 and the still-open
-// #6365. Without this, every chart rebuild allocates a new context and leaks the
-// old one, and once the browser's ~8-16 context budget is exhausted it drops the
-// oldest contexts and those charts silently stop rendering. WEBGL_lose_context
-// is the established workaround: it tells the driver to drop the context now
-// rather than whenever GC happens to collect the canvas.
-//
-// Both context types are probed because getContext() only returns the context
-// that was actually created — asking for 'webgl2' on a 'webgl' canvas yields null.
-function releaseWebglContext(graphDiv: HTMLElement) {
-  for (const canvas of Array.from(graphDiv.querySelectorAll('canvas'))) {
-    const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as
-      | WebGLRenderingContext
-      | WebGL2RenderingContext
-      | null;
-    gl?.getExtension('WEBGL_lose_context')?.loseContext();
-  }
-}
 
 const AXIS_DESC_CACHE = new Map<string, AxisDescriptor>();
 
@@ -137,16 +67,47 @@ function parseAxisKey(key: string): AxisDescriptor {
   return desc;
 }
 
-// matplotlib/MATLAB-style data margins: return [min, max] expanded by `fraction`
-// of the data span on each side (10% on X, 5% on Y). Returns null when the data
-// has no finite extent, so the caller falls back to Plotly autorange. A zero
-// span (all values equal) pads by 5%/10% of the magnitude, or 1 as a last
-// resort, so the axis never collapses to a single point.
-function paddedRange(min: number, max: number, fraction: number): [number, number] | null {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-  const span = max - min;
-  const pad = span > 0 ? span * fraction : Math.abs(max) * fraction || 1;
-  return [min - pad, max + pad];
+interface PlotCanvasProps {
+  renderInput: PlotRenderInput;
+}
+
+function PlotCanvas({ renderInput }: PlotCanvasProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const plotterRef = useRef<ModbusSimplePlotter | null>(null);
+  const latestInputRef = useRef<PlotRenderInput>(renderInput);
+  latestInputRef.current = renderInput;
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const plotter = new ModbusSimplePlotter(el);
+    plotterRef.current = plotter;
+
+    const observer = new ResizeObserver(() => {
+      plotter.render(latestInputRef.current);
+    });
+    observer.observe(el);
+
+    return () => {
+      observer.disconnect();
+      plotter.dispose();
+      if (plotterRef.current === plotter) plotterRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    plotterRef.current?.render(renderInput);
+  }, [renderInput]);
+
+  return (
+    <div
+      ref={containerRef}
+      translate="no"
+      className="relative w-full overflow-hidden"
+      style={{ height: PLOT_HEIGHT }}
+    />
+  );
 }
 
 function ChartPanelComponent({
@@ -168,179 +129,33 @@ function ChartPanelComponent({
   const yDesc = useMemo(() => parseAxisKey(yAxis), [yAxis]);
   const isPlotDisabled = yAxis === '----';
 
-  // Read from the shared store rather than from local state: this panel detects
-  // the backend below and App Info shows the full renderer string, so the badge
-  // here is one more reader of the same value, not a second detection.
+  // Read from the shared store rather than from local state: the plotter detects
+  // the backend on init/fallback and App Info / App consume the same value.
   const backend = useRenderBackend();
-  // Four charts are on the page at once, so the note's id has to be per-instance
-  // for aria-describedby to point at the right one.
+  const uiScalePercent = useUiScalePercent();
   const backendNoteId = useId();
 
-  // Last graph div handed to us by react-plotly.js. Tracked so the WebGL context
-  // of a replaced chart can be released explicitly — see releaseWebglContext.
-  const graphDivRef = useRef<HTMLElement | null>(null);
-
-  const handleGraphDiv = useCallback((_figure: unknown, graphDiv: HTMLElement) => {
-    if (graphDivRef.current === graphDiv) return;
-    graphDivRef.current = graphDiv;
-    // Published to the shared store rather than shown here — the App Info panel
-    // is what displays it. Probed only when a plot is (re)attached, not on
-    // every redraw.
-    reportRenderBackend(detectRenderBackend(graphDiv));
-  }, []);
-
-  // The one place the context can still be reached. Every way a Plot goes away
-  // — purgeEpoch remount, Y switched to '----', data cleared, panel unmount —
-  // is a React unmount, and react-plotly.js calls onPurge *before*
-  // Plotly.purge(), which removes the plot container and the canvases with it.
-  // Releasing from a parent effect afterwards (the previous approach) found no
-  // canvas to release for the '----' and empty-data paths.
-  const handlePurge = useCallback((_figure: unknown, graphDiv: HTMLElement) => {
-    releaseWebglContext(graphDiv);
-    if (graphDivRef.current === graphDiv) graphDivRef.current = null;
-  }, []);
-
-  const palette = isDarkMode ? DARK_PALETTE : LIGHT_PALETTE;
-
   const isEmpty = dataPoints.length === 0;
-
-  // Keep the O(n) scan independent of presentation changes such as trace color.
-  const decimated = useMemo(() => {
-    if (isEmpty || isPlotDisabled) return null;
-
-    // M4 decimation right before Plotly. Output is capped at 1.5x
-    // CHART_RENDER_TARGET_POINTS (gap markers included), extents come from the
-    // same pass, and no finite segment is drawn across a NaN — see decimate2DM4.
-    return decimate2DM4(
-      dataPoints,
-      xDesc,
-      yDesc,
-      CHART_RENDER_TARGET_POINTS,
-    );
-  }, [displayRevision, xDesc, yDesc, dataPoints, isEmpty, isPlotDisabled]);
-
-  const plot = useMemo((): { traces: Data[]; xRange: [number, number] | null; yRange: [number, number] | null } => {
-    if (!decimated) return { traces: [], xRange: null, yRange: null };
-    const [xData, yData, xMin, xMax, yMin, yMax] = decimated;
-
-    return {
-      traces: [
-        {
-          x: xData,
-          y: yData,
-          type: 'scattergl' as const,
-          mode: 'lines' as const,
-          line: { color, width: 1.5 },
-          name: `${yAxis} vs ${xAxis}`,
-          // scattergl builds a spatial pick-index for hover, and that cost
-          // scales with the rendered point count. Nothing here consumes hover: there is
-          // no hovertemplate and no onHover/onClick handler on the Plot, so the
-          // index is pure waste. 'skip' suppresses both the hover labels and the
-          // hover/click events ('none' would keep firing events).
-          //
-          // Trade-off: this also removes the user's ability to hover a point and
-          // read its value. Deleting this line restores it; keep the initial
-          // validation budget conservative until real and low-end devices are measured.
-          hoverinfo: 'skip' as const,
-          // Parameter NaN values represent failed/invalid readings. Keep those
-          // locations as visible line breaks rather than bridging them.
-          connectgaps: false,
-        },
-      ],
-      xRange: paddedRange(xMin, xMax, 0.1),
-      yRange: paddedRange(yMin, yMax, 0.05),
-    };
-  }, [decimated, color, xAxis, yAxis]);
-
-  // "Timestamp", not "Time": this axis is absolute local wall-clock — the
-  // instant each sample was captured — and "Time" reads just as naturally as
-  // elapsed time since the run started, which is not what is plotted. It also
-  // matches the TSV's own header for the same value, which is the vocabulary
-  // that matters: a chart is normally read next to the exported file.
-  //
-  // Every other axis shows the user's free-text label when there is one, and
-  // nothing when it is blank: the dropdown already identifies the channel, so a
-  // redundant "raw_0" on the axis is noise.
-  //
-  // This title is not free — all four charts default to x: time, so it is the
-  // difference between a 20px and a 36px bottom margin on every one of them
-  // (see `margin` below).
   const xTitle = xAxis === 'time' ? 'Timestamp' : xLabel;
   const yTitle = yLabel;
 
-  const plotLayout = useMemo(
+  const renderInput = useMemo<PlotRenderInput>(
     () => ({
-      autosize: true,
-      paper_bgcolor: palette.paper,
-      plot_bgcolor: palette.plot,
-      // 10px ticks, 11px axis titles. Plotly's default is 12px for both, which
-      // put the tick labels a step ABOVE the X: / Y: chrome (0.7rem ≈ 11px)
-      // directly over them — backwards for text that is glanced at, on a plot
-      // this small. Sized against that row rather than against the app's body
-      // text: these read as part of the same chart header. The titles keep a
-      // point on the ticks because a title is user-entered ("Load [kg]") and is
-      // the one string here worth reading first.
-      //
-      // Everything in the graph div scales with the UI-scale zoom on #root, so
-      // these are the 100% sizes, not a fixed floor.
-      font: { color: palette.text, size: 10 },
-      xaxis: {
-        title: { text: xTitle, font: { size: 11 } },
-        gridcolor: palette.grid,
-        type: xAxis === 'time' ? ('date' as const) : ('linear' as const),
-        // Explicit padded range (matplotlib-style 10% X margin). Falls back to
-        // Plotly autorange when the data has no finite extent.
-        ...(plot.xRange
-          ? { range: plot.xRange, autorange: false as const }
-          : { autorange: true as const }),
-        fixedrange: true,
-      },
-      yaxis: {
-        title: { text: yTitle, font: { size: 11 } },
-        gridcolor: palette.grid,
-        ...(plot.yRange
-          ? { range: plot.yRange, autorange: false as const }
-          : { autorange: true as const }),
-        fixedrange: true,
-      },
-      // Margins sized to what is actually drawn in them, not to a uniform frame.
-      // At 240px tall and a card wide, the difference is most of the plot: the
-      // old { t: 30, r: 30, b: 50, l: 50 } spent ~30% of the width and ~33% of
-      // the height on blank paper, four times over on this page.
-      //
-      // r: nothing is ever drawn right of the plot — no second axis, no legend
-      // (one trace) — so this is only enough to keep the last x tick label from
-      // being clipped at the edge.
-      // t: only enough to keep the topmost y tick label from clipping. It used
-      // to be 22 to clear the modebar; that bar is disabled (`displayModeBar:
-      // false`), so nothing is rendered here.
-      // b/l: tick labels always, plus a row/column for the axis title only when
-      // there is one — the time axis has no title, and a channel axis has none
-      // until the user labels the channel (see xTitle/yTitle). Both shrank again
-      // with the 10px ticks above: a tick row is ~14px rather than ~18, and a
-      // y label like "-1234.5" is ~36px wide rather than ~44.
-      margin: {
-        t: 8,
-        r: 12,
-        b: xTitle ? 36 : 20,
-        l: yTitle ? 52 : 40,
-      },
-      // Belt-and-braces with the trace's `hoverinfo: 'skip'`: stops Plotly from
-      // running hover hit-testing on mousemove at all. On its own this would
-      // only hide the labels (plotly.js#1987 — the spike lines still render),
-      // which is why both are set.
-      hovermode: false as const,
-      dragmode: false as const,
-      datarevision: displayRevision,
+      dataPoints,
+      displayRevision,
+      xDesc,
+      yDesc,
+      xTitle,
+      yTitle,
+      color,
+      isDarkMode,
+      uiScale: uiScalePercent / 100,
     }),
-    [xAxis, yAxis, palette, displayRevision, plot, xTitle, yTitle],
+    [dataPoints, displayRevision, xDesc, yDesc, xTitle, yTitle, color, isDarkMode, uiScalePercent],
   );
 
   return (
     <Card className="space-y-0.5 p-1">
-      {/* The axis pickers are chrome above a fixed-height plot, so they are kept
-          to the smallest row that stays clickable — every pixel spent here is a
-          pixel the chart itself does not get, four times over on this page. */}
       <div className="flex items-center gap-1.5">
         <label className="text-[0.7rem] leading-none text-slate-400">X:</label>
         <NativeSelect
@@ -368,32 +183,15 @@ function ChartPanelComponent({
             </option>
           ))}
         </NativeSelect>
-        {/* Back in the chart header, as it was before v3.2 — the row it shares
-            has since been slimmed, so it now costs no height of its own. App
-            Info keeps the full renderer string; this is the at-a-glance version,
-            and amber when the browser has fallen back to a software rasterizer
-            is the whole point: that degradation is otherwise silent. */}
         {!isEmpty && !isPlotDisabled && backend && (
-          // Same hover note as the channel cards' HX711 / ADS1115 / GP8403
-          // labels (group-hover on a plain absolute box, no tooltip library),
-          // rather than a native `title`: this reads as one more "what is the
-          // hardware behind this" note, and the renderer string is far too long
-          // for the OS tooltip that used to carry it. Anchored right — the badge
-          // sits at the end of its row.
           <div className="group/backend relative ml-auto shrink-0">
             <Badge
               translate="no"
               tabIndex={0}
               aria-describedby={backendNoteId}
               variant={backend.accel === 'GPU' ? 'success' : backend.accel === 'CPU' ? 'warning' : 'neutral'}
-              // The neutral case is a step lighter here than the Badge default:
-              // it sits on the chart card, not on the footer bar.
               className={`block cursor-help ${backend.accel === 'GPU' || backend.accel === 'CPU' ? '' : 'bg-slate-100 dark:bg-slate-800'}`}
             >
-              {/* GPU / CPU is the only part worth a badge; the API name is in
-                  the hover note below. `||` not `??`: accel is '' (not null)
-                  on the SVG/Canvas2D path, where the API name is all there
-                  is to show. */}
               {backend.accel || backend.api}
             </Badge>
             <div
@@ -401,11 +199,15 @@ function ChartPanelComponent({
               role="tooltip"
               className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-56 rounded border border-sky-400 bg-sky-50 p-2 text-left text-[0.7rem] font-normal normal-case leading-snug tracking-normal text-sky-900 shadow-lg group-hover/backend:block group-focus-within/backend:block dark:border-sky-500/60 dark:bg-slate-800 dark:text-sky-200"
             >
-              <strong translate="no">{backend.api}</strong> — Plotly render backend
+              <strong translate="no">{backend.api}</strong> — Plot render backend
               <ul className="mt-1 list-disc space-y-0.5 pl-3">
-                <li>scattergl traces, drawn by {backend.accel === 'CPU' ? 'the CPU' : 'the GPU'}</li>
+                <li>
+                  {backend.api === 'WebGL2'
+                    ? 'WebGL2 instanced traces (8k cap), drawn by the GPU'
+                    : 'Canvas2D fallback traces (1k cap), drawn by the CPU'}
+                </li>
                 <li translate="no" className="break-words">{backend.detail}</li>
-                {backend.accel === 'CPU' && <li>Software rasterizer — redraws will be slow</li>}
+                {backend.accel === 'CPU' && <li>Canvas2D fallback active — redraw rate capped to protect polling</li>}
               </ul>
             </div>
           </div>
@@ -418,31 +220,10 @@ function ChartPanelComponent({
           No data — connect device and start polling
         </div>
       ) : (
-        // translate="no" on the wrapper rather than on the plot: Plotly writes
-        // its own SVG <text> for the axis titles, ticks and legend, and those
-        // are DOM text nodes a page translation will happily rewrite — axis
-        // titles being the user's own channel labels. The attribute is
-        // inherited, so wrapping is enough and nothing has to be reapplied when
-        // Plotly redraws.
-        <div translate="no">
-          <NormalizedPlot
-            key={purgeEpoch}
-            data={plot.traces}
-            layout={plotLayout}
-            config={PLOT_CONFIG}
-            style={{ width: '100%', height: PLOT_HEIGHT }}
-            onInitialized={handleGraphDiv}
-            onUpdate={handleGraphDiv}
-            onPurge={handlePurge}
-          />
-        </div>
+        <PlotCanvas key={purgeEpoch} renderInput={renderInput} />
       )}
     </Card>
   );
 }
 
-// Memoized so the charts re-render only when their own inputs change
-// (displayRevision, axes, color, theme) — not on every App commit driven by the
-// full-rate numeric-readout state (setAiChannels etc.). All props are
-// stable-identity except displayRevision, which is the intended redraw trigger.
 export const ChartPanel = memo(ChartPanelComponent);

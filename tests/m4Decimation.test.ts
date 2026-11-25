@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { decimate2DM4, DECIMATION_MAX_OUTPUT_RATIO, foldDataBufferHalf } from '../src/utils/m4Decimation';
+import { decimate2DM4, DECIMATION_MAX_OUTPUT_RATIO, foldDataBufferHalf } from '../src/modbus_simple_plotter';
 import type { DataPoint } from '../src/types';
 
 const TIME = { kind: 'time', index: 0 } as const;
@@ -134,6 +134,19 @@ describe('decimate2DM4', () => {
     const [, , , , yMin, yMax] = decimate2DM4(pts, TIME, PAR0, 1024);
     expect(Number.isFinite(yMin)).toBe(false);
     expect(Number.isFinite(yMax)).toBe(false);
+  });
+
+  test('does not over-reserve budget for inactive trailing buckets when n barely exceeds target', () => {
+    // 8193 points with 8192 target and scattered NaNs in early buckets: activeBuckets < numBuckets.
+    const pts = makePoints(8193, (i) => i, (i) => (i < 50 && i % 3 === 1 ? NaN : Math.sin(i * 0.1)));
+    const [xs, ys] = decimate2DM4(pts, RAW0, PAR0, 8192);
+    expect(xs.length).toBeLessThanOrEqual(Math.floor(8192 * DECIMATION_MAX_OUTPUT_RATIO));
+    assertNoBridgedGap(pts, xs, ys, getR, getP);
+    // Early finite runs in bucket 0 should all be preserved, not dropped for non-existent trailing buckets.
+    expect(xs[0]).toBe(0);
+    expect(xs[1]).toBeNaN();
+    expect(xs[2]).toBe(2);
+    expect(xs[3]).toBe(3);
   });
 });
 

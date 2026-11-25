@@ -135,11 +135,7 @@ function precacheManifest(): Plugin {
 export default defineConfig(({ command, isPreview }) => ({
   plugins: [react(), pyodideAssets(), precacheManifest()],
   resolve: {
-    // typedarray-pool is a Plotly WebGL dependency. Its legacy CommonJS
-    // `require('buffer')` must resolve to the browser implementation rather
-    // than being externalized as a Node builtin by the browser build.
     alias: {
-      buffer: 'buffer/',
       // shadcn/ui convention (components.json): `@/components/ui/button`,
       // `@/lib/utils`. Mirrored by `paths` in tsconfig.json.
       '@': resolve(rootDir, 'src'),
@@ -150,10 +146,7 @@ export default defineConfig(({ command, isPreview }) => ({
     'import.meta.env.VITE_APP_NAME': JSON.stringify(pkg.name),
     'import.meta.env.VITE_PYODIDE_VERSION': JSON.stringify(pyodidePkg.version),
     'import.meta.env.VITE_DEP_VERSIONS': JSON.stringify(JSON.stringify(DEP_VERSIONS)),
-    // The custom Plotly bundle imports `plotly.js/lib` source, which references
-    // Node's `global` (the prebuilt plotly dist shims this internally). esbuild
-    // only substitutes free references, so locals named `global` (e.g. regl's
-    // codegen) are left intact.
+    // Provide globalThis for CommonJS dependencies referencing Node's `global`.
     global: 'globalThis',
     // react-draggable (via react-rnd) gates its debug logging on
     // `process.env.DRAGGABLE_DEBUG`; without this substitution the bare
@@ -169,9 +162,8 @@ export default defineConfig(({ command, isPreview }) => ({
     // The app targets modern browsers only (Web Serial / SharedArrayBuffer /
     // File System Access API), so we skip down-levelling to keep output lean.
     target: 'es2022',
-    // Split the rarely-changing vendor code (Plotly + its WebGL deps, React)
-    // into their own chunks. App code changes then no longer invalidate the
-    // multi-MB Plotly chunk in the Service Worker cache.
+    // Split rarely-changing vendor libraries (React, etc.) into their own
+    // chunks so app edits do not invalidate long-term Service Worker caches.
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -193,8 +185,7 @@ export default defineConfig(({ command, isPreview }) => ({
         },
       },
     },
-    // The Plotly vendor chunk is intentionally large and long-term cached.
-    chunkSizeWarningLimit: 1800,
+    chunkSizeWarningLimit: 600,
   },
   server: {
     // Dedicated dev origin. modbus_extra_logger runs on 5273 for the same

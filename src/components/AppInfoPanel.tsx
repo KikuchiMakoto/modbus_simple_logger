@@ -16,8 +16,6 @@ const DEP_VERSIONS: Record<string, string | undefined> = JSON.parse(
 const LIBRARIES = [
   { name: 'React', pkg: 'react', license: 'MIT' },
   { name: 'React DOM', pkg: 'react-dom', license: 'MIT' },
-  { name: 'Plotly.js', pkg: 'plotly.js', license: 'MIT' },
-  { name: 'react-plotly.js', pkg: 'react-plotly.js', license: 'MIT' },
   { name: 'react-rnd', pkg: 'react-rnd', license: 'MIT' },
   { name: 'Tailwind CSS', pkg: 'tailwindcss', license: 'MIT' },
   // shadcn/ui itself is copied-in source (src/components/ui/), not a package;
@@ -33,7 +31,6 @@ const LIBRARIES = [
   { name: 'TypeScript', pkg: 'typescript', license: 'Apache-2.0' },
   { name: 'Iosevka', pkg: '@fontsource/iosevka', license: 'OFL-1.1' },
   { name: 'Prism', pkg: 'prismjs', license: 'MIT' },
-  { name: 'buffer', pkg: 'buffer', license: 'MIT' },
   { name: 'react-simple-code-editor', pkg: 'react-simple-code-editor', license: 'MIT' },
   { name: 'Pyodide', pkg: 'pyodide', license: 'MPL-2.0' },
 ].map((lib) => ({ ...lib, version: DEP_VERSIONS[lib.pkg] ?? 'unknown' }));
