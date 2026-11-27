@@ -47,7 +47,8 @@ src/
 │   ├── plotterRenderer.ts           # ModbusSimplePlotter（WebGL2/Canvas2D 描画・ソフトウェア3D自動回避・軸キャッシュ）
 │   ├── axisTicks.ts                 # Linear / Timestamp 軸目盛り生成・paddedRange
 │   ├── chartBuffer.ts               # Float64→Float32 ピクセル空間変換・GAP_SENTINEL
-│   └── decimation.ts                # 2D M4 間引き（decimate2DM4）と Origami 折り畳み（foldDataBufferHalf）
+│   ├── columnCache.ts               # AxisColumnCache: 表示中の2軸を Float64 列で保持し、追記分だけ差分で埋める（間引きの全走査を DataPoint 経由にしない）
+│   └── decimation.ts                # 2D M4 間引き（decimateColumnsM4 が本体、decimate2DM4 は DataPoint 版ラッパ）と Origami 折り畳み（foldDataBufferHalf）
 ├── pyodideWorker.ts                 # Python(Pyodide) 実行 Worker
 ├── tsvWriterWorker.ts               # TSV 整形・バッファ・書込み用 Web Worker
 ├── timerWorker.ts                   # タイマー抑制回避用 Worker（setTimeout/setInterval をワーカースレッドで保持）
@@ -440,6 +441,7 @@ ScriptRunner が無い」が再発する。オフライン動作は PWA にし�
 - **静的プロット（ホバー・ズーム無効）を前提に負荷を最小化**（`ChartPanel.tsx` / `plotterRenderer.ts`）。空間インデックスを構築せず、同一条件（サイズ・範囲・テーマ・`displayRevision`）の重複 `render()` や同一軸の `bgCanvas` 再描画をスキップする
 - **WebGL2 コンテキスト管理と自動フォールバック**（`plotterRenderer.ts`）。`dispose()` 時に VBO/VAO/Program を破棄し `WEBGL_lose_context` で即座にコンテキストを返却する（`purgeEpoch` バンプ・`Y=----`・空データ・アンマウントすべてで解放される）。また、初期化時に `WEBGL_debug_renderer_info` でソフトウェアレンダラ（SwiftShader / llvmpipe 等）を検出した場合、WebGL2 非対応時、および実行時 `webglcontextlost` 発生時は自動的に `<canvas>` を差し替えて Canvas2D フォールバック（`accel: 'CPU'`、1,024点間引き）へ遷移する
 - **チャート間引き（`src/modbus_simple_plotter/decimation.ts`）**: XY パラメトリックモードでは 1px ごとの min/max 間引きがループ形状（囲む面積＝散逸エネルギー）を壊すため、時系列・XY 共通で 2D M4 間引き（`decimate2DM4`）を用いる。WebGL2 GPU 時は目標 `8192` 点（以下は無間引き）、Canvas2D フォールバック時は目標 `1024` 点へ `ModbusSimplePlotter` 内部で自動間引きする。**不変条件：出力の連続する有限2点の間に、元データの無効点（X/Y いずれかが NaN）が存在しないこと** — `chartBuffer.ts` では非有限値を `GAP_SENTINEL` へ写像し、頂点シェーダと Canvas2D 双方で線分を切断する。`tests/m4Decimation.test.ts`・`tests/chartBuffer.test.ts`・`tests/plotterRenderer.test.ts` がこれらの不変条件を検査する。なお保存中の Origami バッファ折り畳み（`foldDataBufferHalf`）は別経路で、既存点の `[0,2,4,...]` 抽出と取り込み stride 倍化だけを行う
+- **間引きは列（`AxisColumnCache`）の上で走らせる**（`plotterRenderer.ts` の `getDecimated`）。65,536 点の M4 全走査のコストは大半が「DataPoint をアクセサ経由で読む」部分で、Float64 列の走査にすると 1 回あたり約 2ms → 0.4ms（Bun 実測）。キャッシュは**同じ配列オブジェクトで、先頭と最後にキャッシュした要素が同一のときだけ追記**、それ以外（保存開始・接続・Origami fold＝配列の差し替え、プレビューの先頭 splice、軸変更）は全再読込。**DataPoint を生成後に書き換えないこと** — この不変条件が崩れるとキャッシュが黙って古い値を描く。バッファを in-place で並べ替え・置換する経路を足すなら、配列を差し替えるか `sync` の判定を見直すこと
 - **間引き・描画の計算を主スレッドで重くしないこと。** 本アプリはデータロガーであり Modbus ポーリングも主スレッドで回るため、**描画側の負荷はポーリング周期のジッタ＝計測品質の劣化に直結する**。取り込み時の間引きは O(1)/点 を維持し、再描画時の走査が数 ms を超えるなら Worker へ移すこと（`tsvWriterWorker` / `pyodideWorker` に前例あり）
 - **`renderBackend` の GPU/CPU バッジ**は、`ModbusSimplePlotter` が実際に使用しているパス（ハードウェア `WebGL2` = `GPU`、ソフトウェア 3D 回避やコンテキスト失敗/ロスト時の `Canvas2D` フォールバック = `CPU`）を反映する。`App.tsx` は `accel === 'CPU'` のとき再描画最小間隔を `CHART_REDRAW_INTERVAL_CONSTRAINED_MS`(500ms) へ自動で落とす
 - **ビルドチャンク分割**（`vite.config.ts`）: 依存パッケージを `vendor` / React を `react-vendor` チャンクへ分離（PWA キャッシュ効率のため）。`build.target` は `es2022`（モダンブラウザ限定のため down-level 不要）

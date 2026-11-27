@@ -6,7 +6,8 @@ import type { DataPoint } from '../types';
 import { reportRenderBackend, type RenderBackend } from '../utils/renderBackend';
 import { computeLinearTicks, computeTimeTicks, paddedRange, type AxisTick } from './axisTicks';
 import { buildPlotVertices, GAP_THRESHOLD } from './chartBuffer';
-import { decimate2DM4, type AxisDescriptor, type DecimationResult } from './decimation';
+import { AxisColumnCache } from './columnCache';
+import { decimateColumnsM4, type AxisDescriptor, type DecimationResult } from './decimation';
 
 export interface PlotRenderInput {
   dataPoints: readonly DataPoint[];
@@ -236,6 +237,7 @@ export class ModbusSimplePlotter {
   private mode: 'webgl2' | 'canvas2d';
   private vertexScratch: Float32Array | undefined;
   private decimationCache: DecimationCache | null = null;
+  private readonly columns = new AxisColumnCache();
   private lastAxisKey = '';
   private lastRenderKey = '';
   private lastFirstPoint: DataPoint | undefined;
@@ -421,7 +423,14 @@ export class ModbusSimplePlotter {
       return c.result;
     }
 
-    const result = decimate2DM4(input.dataPoints, input.xDesc, input.yDesc, targetPoints);
+    const n = this.columns.sync(input.dataPoints, input.xDesc, input.yDesc);
+    const result = decimateColumnsM4(
+      this.columns.xs,
+      this.columns.ys,
+      n,
+      input.xDesc.kind === 'time',
+      targetPoints,
+    );
     this.decimationCache = {
       points: input.dataPoints,
       length: len,
@@ -832,6 +841,7 @@ export class ModbusSimplePlotter {
     this.releaseGlResources();
     this.ctx2d = null;
     this.decimationCache = null;
+    this.columns.clear();
     this.lastInput = null;
     this.vertexScratch = undefined;
     this.container.replaceChildren();

@@ -30,13 +30,16 @@ export function getAxisAccessor(desc: AxisDescriptor): AxisAccessor {
 /** [outX, outY, xMin, xMax, yMin, yMax]. Extents are over finite values only. */
 export type DecimationResult = [Float64Array, Float64Array, number, number, number, number];
 
-/** Output cap as a multiple of the target. See decimate2DM4. */
+/** Output cap as a multiple of the target. See decimateColumnsM4. */
 export const DECIMATION_MAX_OUTPUT_RATIO = 1.5;
 
 // Scratch buffers reused across calls. Four charts decimate one after another
 // on the main thread on every redraw, and the buffer can hold 65,536 points;
 // reallocating ~1.3 MB of typed arrays per chart per redraw is pure GC churn.
 // Nothing here escapes: the returned arrays are always fresh copies.
+//
+// scratchX/Y are only the DataPoint wrapper's extraction target. The column
+// decimator never writes them, so it may be handed them as its input.
 let scratchX = new Float64Array(0);
 let scratchY = new Float64Array(0);
 let scratchValid = new Uint8Array(0);
@@ -47,12 +50,44 @@ function ensureScratch(n: number): void {
   const size = Math.max(n, scratchX.length * 2, 1024);
   scratchX = new Float64Array(size);
   scratchY = new Float64Array(size);
+}
+
+function ensureValidScratch(n: number): void {
+  if (scratchValid.length >= n) return;
+  const size = Math.max(n, scratchValid.length * 2, 1024);
   scratchValid = new Uint8Array(size);
   scratchBoundary = new Int32Array(size * 2 + 4);
 }
 
 /**
- * Chart M4 decimation for both time series and XY (parametric) curves.
+ * Chart M4 decimation for both time series and XY (parametric) curves, over
+ * DataPoint objects. Thin wrapper over {@link decimateColumnsM4}: extracts the
+ * two selected axes into scratch columns first. The plotter itself does not use
+ * this — it keeps an incrementally maintained {@link AxisColumnCache} so a
+ * redraw does not re-read every DataPoint (see columnCache.ts).
+ */
+export function decimate2DM4(
+  points: readonly DataPoint[],
+  xDesc: AxisDescriptor,
+  yDesc: AxisDescriptor,
+  targetPoints: number,
+): DecimationResult {
+  const n = points.length;
+  ensureScratch(n);
+  const getX = getAxisAccessor(xDesc);
+  const getY = getAxisAccessor(yDesc);
+  const xs = scratchX;
+  const ys = scratchY;
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    xs[i] = getX(p);
+    ys[i] = getY(p);
+  }
+  return decimateColumnsM4(xs, ys, n, xDesc.kind === 'time', targetPoints);
+}
+
+/**
+ * Chart M4 decimation over columnar axis values `xs[0..n)` / `ys[0..n)`.
  *
  * Splits the input into buckets by sample index and, within each bucket, keeps
  * the first/last sample and the Y extrema of every *valid run* — plus the X
@@ -63,30 +98,28 @@ function ensureScratch(n: number): void {
  * Invariant: between any two consecutive finite output points there is no
  * invalid input sample. A NaN in X or Y emits a single NaN gap marker so the
  * plotter breaks the line rather than bridging missing data.
+ *
+ * `xs`/`ys` are only read (they may be longer than `n`); the returned arrays
+ * are always fresh.
  */
-export function decimate2DM4(
-  points: readonly DataPoint[],
-  xDesc: AxisDescriptor,
-  yDesc: AxisDescriptor,
+export function decimateColumnsM4(
+  xs: Float64Array,
+  ys: Float64Array,
+  n: number,
+  xIsTime: boolean,
   targetPoints: number,
 ): DecimationResult {
-  const n = points.length;
-  const getX = getAxisAccessor(xDesc);
-  const getY = getAxisAccessor(yDesc);
   let xMin = Infinity;
   let xMax = -Infinity;
   let yMin = Infinity;
   let yMax = -Infinity;
 
   if (n <= targetPoints) {
-    const outX = new Float64Array(n);
-    const outY = new Float64Array(n);
+    const outX = xs.slice(0, n);
+    const outY = ys.slice(0, n);
     for (let i = 0; i < n; i++) {
-      const p = points[i];
-      const x = getX(p);
-      const y = getY(p);
-      outX[i] = x;
-      outY[i] = y;
+      const x = outX[i];
+      const y = outY[i];
       if (Number.isFinite(x)) {
         if (x < xMin) xMin = x;
         if (x > xMax) xMax = x;
@@ -99,21 +132,16 @@ export function decimate2DM4(
     return [outX, outY, xMin, xMax, yMin, yMax];
   }
 
-  const fast = decimateFinite(points, getX, getY, xDesc.kind !== 'time', targetPoints);
+  const fast = decimateFinite(xs, ys, n, !xIsTime, targetPoints);
   if (fast) return fast;
 
-  ensureScratch(n);
-  const xs = scratchX;
-  const ys = scratchY;
+  ensureValidScratch(n);
   const valid = scratchValid;
-  let monotonic = xDesc.kind === 'time';
+  let monotonic = xIsTime;
   let prevX = -Infinity;
   for (let i = 0; i < n; i++) {
-    const p = points[i];
-    const x = getX(p);
-    const y = getY(p);
-    xs[i] = x;
-    ys[i] = y;
+    const x = xs[i];
+    const y = ys[i];
     const fx = Number.isFinite(x);
     const fy = Number.isFinite(y);
     valid[i] = fx && fy ? 1 : 0;
@@ -280,13 +308,12 @@ function layout(n: number, trackX: boolean, targetPoints: number) {
 }
 
 function decimateFinite(
-  points: readonly DataPoint[],
-  getX: AxisAccessor,
-  getY: AxisAccessor,
+  xs: Float64Array,
+  ys: Float64Array,
+  n: number,
   trackX: boolean,
   targetPoints: number,
 ): DecimationResult | null {
-  const n = points.length;
   const { maxOutput, numBuckets, bucketSize } = layout(n, trackX, targetPoints);
   const outX = new Float64Array(maxOutput);
   const outY = new Float64Array(maxOutput);
@@ -303,9 +330,8 @@ function decimateFinite(
     if (start >= n) break;
     const end = Math.min(n, start + bucketSize);
 
-    const p0 = points[start];
-    const x0 = getX(p0);
-    const y0 = getY(p0);
+    const x0 = xs[start];
+    const y0 = ys[start];
     if (!Number.isFinite(x0) || !Number.isFinite(y0)) return null;
     if (!trackX) {
       if (x0 < prevX) return null;
@@ -321,9 +347,8 @@ function decimateFinite(
     let xhiI = start;
 
     for (let i = start + 1; i < end; i++) {
-      const p = points[i];
-      const x = getX(p);
-      const y = getY(p);
+      const x = xs[i];
+      const y = ys[i];
       if (x - x !== 0 || y - y !== 0) return null;
       if (trackX) {
         if (x < xlo) { xlo = x; xloI = i; }
@@ -367,17 +392,16 @@ function decimateFinite(
     for (let i = 0; i < count; i++) {
       const idx = cand[i];
       if (idx === prev) continue;
-      const p = points[idx];
-      outX[out] = getX(p);
-      outY[out] = getY(p);
+      outX[out] = xs[idx];
+      outY[out] = ys[idx];
       out++;
       prev = idx;
     }
   }
 
   if (!trackX) {
-    xMin = getX(points[0]);
-    xMax = getX(points[n - 1]);
+    xMin = xs[0];
+    xMax = xs[n - 1];
   }
   return [outX.subarray(0, out), outY.subarray(0, out), xMin, xMax, yMin, yMax];
 }

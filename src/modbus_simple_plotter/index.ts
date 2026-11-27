@@ -14,10 +14,12 @@ export {
 export {
   DECIMATION_MAX_OUTPUT_RATIO,
   decimate2DM4,
+  decimateColumnsM4,
   foldDataBufferHalf,
   getAxisAccessor,
   type AxisAccessor,
   type AxisDescriptor,
   type DecimationResult,
 } from './decimation';
+export { AxisColumnCache } from './columnCache';
 export { ModbusSimplePlotter, type PlotRenderInput } from './plotterRenderer';
