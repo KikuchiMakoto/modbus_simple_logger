@@ -468,7 +468,13 @@ export class WebSerialModbusClient {
    * @param slaveId - Modbus slave ID.
    * @param serialSettings - Serial communication settings.
    * @param serialApi - Web Serial API implementation (native or polyfill).
-   * @param verboseFrameLogging - True to include per-frame hex dumps in debug logs.
+   * @param verboseFrameLogging - True to emit the per-frame console.debug trace
+   *   (queued / mutex / interval wait / write start+complete / buildFrame, with
+   *   hex dumps). Off by default: at a 10 Hz poll that is ~100 console calls a
+   *   second on the main thread — each one capturing a stack trace while
+   *   DevTools is open, which also inflates any performance trace taken of the
+   *   app. Per-frame health still reaches the System Log via the periodic
+   *   DEBUG line; rare events (reopen, failures) keep their unconditional logs.
    */
   constructor(
     slaveId = 1,
@@ -500,6 +506,17 @@ export class WebSerialModbusClient {
         minMessageIntervalMs: this.minMessageIntervalMs,
       },
     );
+  }
+
+  /**
+   * Per-frame console trace, emitted only with `verboseFrameLogging`. Arguments
+   * here are cheap literals; anything that formats bytes (hex dumps) stays inside
+   * an explicit `if (this.verboseFrameLogging)` so it is not built for nothing.
+   */
+  private trace(message: string, data?: unknown): void {
+    if (!this.verboseFrameLogging) return;
+    if (data === undefined) console.debug(`${this.debugPrefix} ${message}`);
+    else console.debug(`${this.debugPrefix} ${message}`, data);
   }
 
   /**
@@ -925,14 +942,13 @@ export class WebSerialModbusClient {
     const crc = crc16(frame);
     frame.push(crc & 0xff, (crc >> 8) & 0xff);
     const rawFrame = new Uint8Array(frame);
-    const logData: Record<string, unknown> = {
-      functionCode,
-      payload,
-    };
     if (this.verboseFrameLogging) {
-      logData.frameHex = this.toHexString(rawFrame);
+      console.debug(`${this.debugPrefix} buildFrame`, {
+        functionCode,
+        payload,
+        frameHex: this.toHexString(rawFrame),
+      });
     }
-    console.debug(`${this.debugPrefix} buildFrame`, logData);
     return rawFrame;
   }
 
@@ -1212,16 +1228,18 @@ export class WebSerialModbusClient {
     if (!this.port) {
       throw new Error('Device not connected');
     }
-    console.debug(`${this.debugPrefix} transfer() queued`, {
-      expectedLength,
-      timeout,
-      txLength: frame.length,
-      ...(this.verboseFrameLogging ? { txHex: this.toHexString(frame) } : {}),
-    });
+    if (this.verboseFrameLogging) {
+      console.debug(`${this.debugPrefix} transfer() queued`, {
+        expectedLength,
+        timeout,
+        txLength: frame.length,
+        txHex: this.toHexString(frame),
+      });
+    }
 
     // Acquire mutex to ensure only one transfer at a time
     await this.transferMutex.acquire();
-    console.debug(`${this.debugPrefix} transfer() mutex acquired`);
+    this.trace(`transfer() mutex acquired`);
 
     const startTime = Date.now();
     let streamWasDead = this.streamDead;
@@ -1294,15 +1312,17 @@ export class WebSerialModbusClient {
       const timeSinceLastTransfer = now - this.lastTransferTime;
       if (timeSinceLastTransfer < this.minMessageIntervalMs) {
         const waitTime = this.minMessageIntervalMs - timeSinceLastTransfer;
-        console.debug(`${this.debugPrefix} transfer() waiting interval`, {
-          waitTime,
-          minMessageIntervalMs: this.minMessageIntervalMs,
-        });
+        if (this.verboseFrameLogging) {
+          console.debug(`${this.debugPrefix} transfer() waiting interval`, {
+            waitTime,
+            minMessageIntervalMs: this.minMessageIntervalMs,
+          });
+        }
         await new Promise<void>(resolve => setBackgroundTimeout(resolve, waitTime));
       }
 
       // Write frame
-      console.debug(`${this.debugPrefix} transfer() write start`);
+      this.trace(`transfer() write start`);
       this.frameRxChunks = 0;
       this.frameFirstByteMs = -1;
       try {
@@ -1316,7 +1336,7 @@ export class WebSerialModbusClient {
         throw writeErr;
       }
       this.txAt = Date.now();
-      console.debug(`${this.debugPrefix} transfer() write complete`);
+      this.trace(`transfer() write complete`);
 
       // The read deadline starts here, not at mutex acquisition.
       //
@@ -1422,11 +1442,13 @@ export class WebSerialModbusClient {
         buffer.length = 0;
       }
 
-      console.debug(`${this.debugPrefix} transfer() response assembled`, {
-        responseLength: responseArray.length,
-        isException,
-        ...(this.verboseFrameLogging ? { rxHex: this.toHexString(responseArray) } : {}),
-      });
+      if (this.verboseFrameLogging) {
+        console.debug(`${this.debugPrefix} transfer() response assembled`, {
+          responseLength: responseArray.length,
+          isException,
+          rxHex: this.toHexString(responseArray),
+        });
+      }
 
       // An exception is a real frame on the wire, so it owes the next request the
       // same silent interval a success does. Set before the throw below.
@@ -1436,7 +1458,7 @@ export class WebSerialModbusClient {
         throw new ModbusExceptionError(expectedFunctionCode, responseArray[2]);
       }
 
-      console.debug(`${this.debugPrefix} transfer() success`, {
+      this.trace(`transfer() success`, {
         elapsedMs: this.lastTransferTime - startTime,
         readElapsedMs: this.lastTransferTime - readStart,
       });
@@ -1522,7 +1544,7 @@ export class WebSerialModbusClient {
     } finally {
       // Always release the mutex
       this.transferMutex.release();
-      console.debug(`${this.debugPrefix} transfer() mutex released`);
+      this.trace(`transfer() mutex released`);
     }
   }
 
@@ -1533,7 +1555,7 @@ export class WebSerialModbusClient {
    * @returns Array of boolean values (true = ON, false = OFF)
    */
   async readCoils(start: number, count: number): Promise<boolean[]> {
-    console.debug(`${this.debugPrefix} readCoils()`, { start, count });
+    this.trace(`readCoils()`, { start, count });
     assertUint16('Start address', start);
     assertRegisterCount('Coil count', count, 2000);
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
@@ -1553,7 +1575,7 @@ export class WebSerialModbusClient {
       values.push((byte & (1 << bitIndex)) !== 0);
     }
 
-    console.debug(`${this.debugPrefix} readCoils() done`, { responseByteCount, valuesLength: values.length });
+    this.trace(`readCoils() done`, { responseByteCount, valuesLength: values.length });
     return values;
   }
 
@@ -1564,7 +1586,7 @@ export class WebSerialModbusClient {
    * @returns Array of signed 16-bit register values
    */
   async readHoldingRegisters(start: number, count: number): Promise<number[]> {
-    console.debug(`${this.debugPrefix} readHoldingRegisters()`, { start, count });
+    this.trace(`readHoldingRegisters()`, { start, count });
     assertUint16('Start address', start);
     assertRegisterCount('Register count', count, 125);
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
@@ -1577,7 +1599,7 @@ export class WebSerialModbusClient {
     for (let i = 0; i < count; i += 1) {
       values.push(view.getInt16(3 + i * 2, false));
     }
-    console.debug(`${this.debugPrefix} readHoldingRegisters() done`, {
+    this.trace(`readHoldingRegisters() done`, {
       byteCount,
       valuesLength: values.length,
       preview: values.slice(0, 10),
@@ -1592,7 +1614,7 @@ export class WebSerialModbusClient {
    * @returns Array of signed 16-bit register values
    */
   async readInputRegisters(start: number, count: number, timeoutMs = 1000): Promise<number[]> {
-    console.debug(`${this.debugPrefix} readInputRegisters()`, { start, count, timeoutMs });
+    this.trace(`readInputRegisters()`, { start, count, timeoutMs });
     assertUint16('Start address', start);
     assertRegisterCount('Register count', count, 125);
     const payload = [start >> 8, start & 0xff, count >> 8, count & 0xff];
@@ -1605,7 +1627,7 @@ export class WebSerialModbusClient {
     for (let i = 0; i < count; i += 1) {
       values.push(view.getInt16(3 + i * 2, false));
     }
-    console.debug(`${this.debugPrefix} readInputRegisters() done`, {
+    this.trace(`readInputRegisters() done`, {
       byteCount,
       valuesLength: values.length,
       preview: values.slice(0, 10),
@@ -1619,7 +1641,7 @@ export class WebSerialModbusClient {
    * @param value - Coil state (true = ON, false = OFF)
    */
   async writeSingleCoil(address: number, value: boolean): Promise<void> {
-    console.debug(`${this.debugPrefix} writeSingleCoil()`, { address, value });
+    this.trace(`writeSingleCoil()`, { address, value });
     assertUint16('Coil address', address);
     const coilValue = value ? 0xff00 : 0x0000;
     const payload = [address >> 8, address & 0xff, coilValue >> 8, coilValue & 0xff];
@@ -1627,7 +1649,7 @@ export class WebSerialModbusClient {
     const view = await this.transfer(frame, 8); // addr + fc + address + value + crc
     assertEcho('Coil address', view.getUint16(2, false), address);
     assertEcho('Coil value', view.getUint16(4, false), coilValue);
-    console.debug(`${this.debugPrefix} writeSingleCoil() done`);
+    this.trace(`writeSingleCoil() done`);
   }
 
   /**
@@ -1636,7 +1658,7 @@ export class WebSerialModbusClient {
    * @param value - 16-bit value to write
    */
   async writeSingleRegister(address: number, value: number): Promise<void> {
-    console.debug(`${this.debugPrefix} writeSingleRegister()`, { address, value });
+    this.trace(`writeSingleRegister()`, { address, value });
     assertUint16('Register address', address);
     assertUint16('Register value', value);
     const payload = [address >> 8, address & 0xff, value >> 8, value & 0xff];
@@ -1644,7 +1666,7 @@ export class WebSerialModbusClient {
     const view = await this.transfer(frame, 8);
     assertEcho('Register address', view.getUint16(2, false), address);
     assertEcho('Register value', view.getUint16(4, false), value);
-    console.debug(`${this.debugPrefix} writeSingleRegister() done`);
+    this.trace(`writeSingleRegister() done`);
   }
 
   /**
@@ -1653,7 +1675,7 @@ export class WebSerialModbusClient {
    * @param values - Array of boolean values to write (max 1968 coils per Modbus spec)
    */
   async writeMultipleCoils(start: number, values: boolean[]): Promise<void> {
-    console.debug(`${this.debugPrefix} writeMultipleCoils()`, { start, valuesLength: values.length });
+    this.trace(`writeMultipleCoils()`, { start, valuesLength: values.length });
     if (values.length === 0) {
       throw new Error('No values provided to write');
     }
@@ -1691,7 +1713,7 @@ export class WebSerialModbusClient {
     const view = await this.transfer(frame, expected);
     assertEcho('Coil start address', view.getUint16(2, false), start);
     assertEcho('Coil count', view.getUint16(4, false), count);
-    console.debug(`${this.debugPrefix} writeMultipleCoils() done`);
+    this.trace(`writeMultipleCoils() done`);
   }
 
   /**
@@ -1701,7 +1723,7 @@ export class WebSerialModbusClient {
    * @param values - Array of uint16 values to write (max 123 registers per Modbus spec)
    */
   async writeMultipleHoldingRegisters(start: number, values: number[]): Promise<void> {
-    console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters()`, {
+    this.trace(`writeMultipleHoldingRegisters()`, {
       start,
       valuesLength: values.length,
       preview: values.slice(0, 10),
@@ -1738,6 +1760,6 @@ export class WebSerialModbusClient {
     const view = await this.transfer(frame, expected);
     assertEcho('Register start address', view.getUint16(2, false), start);
     assertEcho('Register count', view.getUint16(4, false), count);
-    console.debug(`${this.debugPrefix} writeMultipleHoldingRegisters() done`);
+    this.trace(`writeMultipleHoldingRegisters() done`);
   }
 }
