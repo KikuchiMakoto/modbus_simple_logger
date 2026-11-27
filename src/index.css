@@ -138,51 +138,63 @@ html.msl-launcher body {
   min-width: 480px;
 }
 
+/* Opacity only, on purpose. background-color and box-shadow are paint
+   properties: animating them repaints the button on the MAIN thread every
+   frame for as long as a save runs — measured at ~45 ms/s of Paint plus
+   PrePaint/Layerize/Commit (~6% of the main thread), which is the thread
+   Modbus polling runs on. An opacity animation runs on the compositor and
+   costs the main thread nothing after it starts. So the bright fill and glow
+   are painted once, on a ::before layer, and only that layer's opacity moves. */
 @keyframes stop-save-sine-pulse {
-  0% {
-    background-color: rgb(239 68 68 / 0.4);
-    box-shadow: 0 0 0 0 rgb(239 68 68 / 0.2);
-  }
-  50% {
-    background-color: rgb(239 68 68 / 1);
-    box-shadow: 0 0 18px 2px rgb(239 68 68 / 0.65);
-  }
-  100% {
-    background-color: rgb(239 68 68 / 0.4);
-    box-shadow: 0 0 0 0 rgb(239 68 68 / 0.2);
-  }
-}
-
-@keyframes stop-save-color-pulse {
   0%,
   100% {
-    background-color: rgb(239 68 68 / 0.5);
+    opacity: 0;
   }
   50% {
-    background-color: rgb(239 68 68 / 1);
+    opacity: 1;
   }
 }
 
 /* The `recording` Button variant (components/ui/button.tsx): a run is in
    progress and this control stops it. Only colour and animation live here —
    shape, padding and text come from the variant's utilities. Unlayered on
-   purpose: it must beat the utility layer's background, since the keyframes own
-   the colour while animating. */
+   purpose: it must beat the utility layer's background.
+
+   Resting fill (the button) = the old pulse's dim end; the ::before overlay =
+   its bright end (full red + glow). Fading the overlay 0 -> 1 -> 0 reproduces
+   the old 0.4 -> 1 -> 0.4 pulse. `isolation: isolate` keeps the overlay's
+   z-index: -1 inside the button: above its background, below its text. */
 .stop-save-pulse {
-  /* Solid fallback so the button is always a visible red: the keyframes drive
-     the colour while animating, but if the animation is disabled (e.g. the OS
-     "reduce motion" setting, common on Windows) the button must still look like
-     a button rather than transparent text. */
+  position: relative;
+  isolation: isolate;
+  background-color: rgb(239 68 68 / 0.4);
+}
+
+.stop-save-pulse::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
   background-color: rgb(239 68 68 / 1);
+  box-shadow: 0 0 18px 2px rgb(239 68 68 / 0.65);
+  pointer-events: none;
+  will-change: opacity;
   animation: stop-save-sine-pulse 1.6s ease-in-out infinite;
 }
 
-/* Reduced motion: drop the expanding-glow motion but keep a gentle colour-only
-   pulse — this is a functional "saving in progress" indicator, not decoration,
-   so it should still draw the eye without any vestibular-triggering movement. */
+/* Reduced motion: drop the expanding glow but keep a gentle colour-only pulse
+   (0.5 -> 1) — this is a functional "saving in progress" indicator, not
+   decoration, so it should still draw the eye without vestibular-triggering
+   movement. Also opacity-only. */
 @media (prefers-reduced-motion: reduce) {
   .stop-save-pulse {
-    animation: stop-save-color-pulse 2s ease-in-out infinite;
+    background-color: rgb(239 68 68 / 0.5);
+  }
+
+  .stop-save-pulse::before {
+    box-shadow: none;
+    animation-duration: 2s;
   }
 }
 
